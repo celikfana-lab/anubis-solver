@@ -20,8 +20,3 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
----
-
-This license applies to the original code in this repository. It does NOT
-apply to the vendored third-party components listed in THIRD_PARTY_NOTICES.md
-(src/hashx.c is LGPL-3.0; third_party/argon2 is CC0-1.0/Apache-2.0).

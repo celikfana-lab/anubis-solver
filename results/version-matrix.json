@@ -1,0 +1,515 @@
+[
+  {
+    "tag": "v1.12.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 34233,
+    "solve_ms": 139.6,
+    "wall_ms": 294.5
+  },
+  {
+    "tag": "v1.13.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 175051,
+    "solve_ms": 281.1,
+    "wall_ms": 417.7
+  },
+  {
+    "tag": "v1.14.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 43599,
+    "solve_ms": 101.8,
+    "wall_ms": 235.9
+  },
+  {
+    "tag": "v1.14.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 1132,
+    "solve_ms": 105.4,
+    "wall_ms": 238.1
+  },
+  {
+    "tag": "v1.14.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 295950,
+    "solve_ms": 240.1,
+    "wall_ms": 385.3
+  },
+  {
+    "tag": "v1.15.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 14570,
+    "solve_ms": 181.3,
+    "wall_ms": 328.8
+  },
+  {
+    "tag": "v1.15.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 20585,
+    "solve_ms": 246.0,
+    "wall_ms": 389.4
+  },
+  {
+    "tag": "v1.15.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 165864,
+    "solve_ms": 337.0,
+    "wall_ms": 471.6
+  },
+  {
+    "tag": "v1.16.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 22798,
+    "solve_ms": 362.0,
+    "wall_ms": 507.2
+  },
+  {
+    "tag": "v1.17.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 34076,
+    "solve_ms": 114.7,
+    "wall_ms": 238.3
+  },
+  {
+    "tag": "v1.17.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 4469,
+    "solve_ms": 268.0,
+    "wall_ms": 427.1
+  },
+  {
+    "tag": "v1.18.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 96964,
+    "solve_ms": 289.6,
+    "wall_ms": 427.6
+  },
+  {
+    "tag": "v1.19.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 13316,
+    "solve_ms": 191.8,
+    "wall_ms": 361.2
+  },
+  {
+    "tag": "v1.19.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 5381,
+    "solve_ms": 418.3,
+    "wall_ms": 587.4
+  },
+  {
+    "tag": "v1.20.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 1017,
+    "solve_ms": 562.3,
+    "wall_ms": 738.8
+  },
+  {
+    "tag": "v1.20.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 20900,
+    "solve_ms": 293.8,
+    "wall_ms": 457.5
+  },
+  {
+    "tag": "v1.21.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 11209,
+    "solve_ms": 225.6,
+    "wall_ms": 402.7
+  },
+  {
+    "tag": "v1.21.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 52891,
+    "solve_ms": 107.5,
+    "wall_ms": 280.0
+  },
+  {
+    "tag": "v1.21.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 28693,
+    "solve_ms": 344.9,
+    "wall_ms": 562.8
+  },
+  {
+    "tag": "v1.21.1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 96244,
+    "solve_ms": 289.7,
+    "wall_ms": 500.1
+  },
+  {
+    "tag": "v1.21.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 18011,
+    "solve_ms": 174.6,
+    "wall_ms": 369.3
+  },
+  {
+    "tag": "v1.21.2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 28591,
+    "solve_ms": 284.4,
+    "wall_ms": 486.1
+  },
+  {
+    "tag": "v1.21.3",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 37017,
+    "solve_ms": 220.9,
+    "wall_ms": 385.0
+  },
+  {
+    "tag": "v1.21.3",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 45662,
+    "solve_ms": 90.1,
+    "wall_ms": 246.0
+  },
+  {
+    "tag": "v1.22.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 14639,
+    "solve_ms": 223.1,
+    "wall_ms": 415.0
+  },
+  {
+    "tag": "v1.22.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 4467,
+    "solve_ms": 234.5,
+    "wall_ms": 433.1
+  },
+  {
+    "tag": "v1.23.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 62719,
+    "solve_ms": 453.5,
+    "wall_ms": 633.6
+  },
+  {
+    "tag": "v1.23.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 80546,
+    "solve_ms": 196.1,
+    "wall_ms": 355.1
+  },
+  {
+    "tag": "v1.23.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 30899,
+    "solve_ms": 117.5,
+    "wall_ms": 357.7
+  },
+  {
+    "tag": "v1.23.1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 18815,
+    "solve_ms": 308.2,
+    "wall_ms": 541.0
+  },
+  {
+    "tag": "v1.24.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 16863,
+    "solve_ms": 430.3,
+    "wall_ms": 603.3
+  },
+  {
+    "tag": "v1.24.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 70434,
+    "solve_ms": 217.2,
+    "wall_ms": 403.5
+  },
+  {
+    "tag": "v1.25.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 109266,
+    "solve_ms": 153.8,
+    "wall_ms": 323.9
+  },
+  {
+    "tag": "v1.25.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 2435,
+    "solve_ms": 156.1,
+    "wall_ms": 365.6
+  },
+  {
+    "tag": "v1.26.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 5645,
+    "solve_ms": 74.2,
+    "wall_ms": 225.0
+  },
+  {
+    "tag": "v1.26.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 30590,
+    "solve_ms": 203.7,
+    "wall_ms": 359.8
+  },
+  {
+    "tag": "v1.26.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 337075,
+    "solve_ms": 100.3,
+    "wall_ms": 247.9
+  },
+  {
+    "tag": "v1.26.1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 139742,
+    "solve_ms": 77.8,
+    "wall_ms": 218.3
+  },
+  {
+    "tag": "v1.26.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 33061,
+    "solve_ms": 156.6,
+    "wall_ms": 299.5
+  },
+  {
+    "tag": "v1.26.2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 159742,
+    "solve_ms": 215.7,
+    "wall_ms": 354.4
+  },
+  {
+    "tag": "v1.27.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 14405,
+    "solve_ms": 47.9,
+    "wall_ms": 195.4
+  },
+  {
+    "tag": "v1.27.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 10149,
+    "solve_ms": 47.0,
+    "wall_ms": 204.8
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 44079,
+    "solve_ms": 105.0,
+    "wall_ms": 373.4
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 4860,
+    "solve_ms": 102.6,
+    "wall_ms": 358.2
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 2464,
+    "solve_ms": 3.4,
+    "wall_ms": 248.7
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 428,
+    "solve_ms": 0.4,
+    "wall_ms": 244.9
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 3,
+    "solve_ms": 361.8,
+    "wall_ms": 914.2
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 29280,
+    "solve_ms": 98.2,
+    "wall_ms": 345.8
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 181840,
+    "solve_ms": 207.5,
+    "wall_ms": 570.6
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 2522,
+    "solve_ms": 3.2,
+    "wall_ms": 381.2
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 1156,
+    "solve_ms": 0.6,
+    "wall_ms": 258.7
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 3,
+    "solve_ms": 610.9,
+    "wall_ms": 1239.2
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 99690,
+    "solve_ms": 162.3,
+    "wall_ms": 411.0
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 4836,
+    "solve_ms": 123.4,
+    "wall_ms": 371.8
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 173,
+    "solve_ms": 3.9,
+    "wall_ms": 356.7
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 508,
+    "solve_ms": 0.3,
+    "wall_ms": 257.1
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 10,
+    "solve_ms": 282.0,
+    "wall_ms": 1029.8
+  }
+]

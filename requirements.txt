@@ -1,0 +1,8 @@
+# Runtime dependency. The native library is built from source with make.
+requests>=2.31
+
+# Optional: browser TLS/HTTP2 fingerprint impersonation.
+#   pip install curl_cffi
+#
+# Test-only: cross-checks the Argon2id output in tests/test_core.py.
+#   pip install argon2-cffi

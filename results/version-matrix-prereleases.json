@@ -1,0 +1,992 @@
+[
+  {
+    "tag": "1.17.0-beta2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 246873,
+    "solve_ms": 94.5,
+    "wall_ms": 220.4
+  },
+  {
+    "tag": "v1.12.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 152482,
+    "solve_ms": 91.6,
+    "wall_ms": 219.1
+  },
+  {
+    "tag": "v1.13.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 98183,
+    "solve_ms": 83.1,
+    "wall_ms": 206.3
+  },
+  {
+    "tag": "v1.14.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 52647,
+    "solve_ms": 40.4,
+    "wall_ms": 162.3
+  },
+  {
+    "tag": "v1.14.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 6975,
+    "solve_ms": 60.9,
+    "wall_ms": 186.3
+  },
+  {
+    "tag": "v1.14.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 130187,
+    "solve_ms": 88.3,
+    "wall_ms": 214.3
+  },
+  {
+    "tag": "v1.15.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 105648,
+    "solve_ms": 48.2,
+    "wall_ms": 175.0
+  },
+  {
+    "tag": "v1.15.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 68850,
+    "solve_ms": 96.4,
+    "wall_ms": 217.9
+  },
+  {
+    "tag": "v1.15.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 6928,
+    "solve_ms": 174.4,
+    "wall_ms": 304.0
+  },
+  {
+    "tag": "v1.16.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 45756,
+    "solve_ms": 214.7,
+    "wall_ms": 339.0
+  },
+  {
+    "tag": "v1.17.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 113602,
+    "solve_ms": 92.8,
+    "wall_ms": 213.2
+  },
+  {
+    "tag": "v1.17.0-beta1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 57398,
+    "solve_ms": 176.0,
+    "wall_ms": 297.9
+  },
+  {
+    "tag": "v1.17.0-beta3",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 18467,
+    "solve_ms": 69.3,
+    "wall_ms": 192.9
+  },
+  {
+    "tag": "v1.17.0-beta4",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 139307,
+    "solve_ms": 76.7,
+    "wall_ms": 195.9
+  },
+  {
+    "tag": "v1.17.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 2574,
+    "solve_ms": 36.1,
+    "wall_ms": 163.9
+  },
+  {
+    "tag": "v1.18.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 81067,
+    "solve_ms": 154.2,
+    "wall_ms": 274.8
+  },
+  {
+    "tag": "v1.18.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 32139,
+    "solve_ms": 36.9,
+    "wall_ms": 154.3
+  },
+  {
+    "tag": "v1.19.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 59021,
+    "solve_ms": 118.4,
+    "wall_ms": 242.2
+  },
+  {
+    "tag": "v1.19.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 84680,
+    "solve_ms": 102.8,
+    "wall_ms": 239.1
+  },
+  {
+    "tag": "v1.19.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 98235,
+    "solve_ms": 83.2,
+    "wall_ms": 215.7
+  },
+  {
+    "tag": "v1.20.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 66318,
+    "solve_ms": 130.3,
+    "wall_ms": 254.4
+  },
+  {
+    "tag": "v1.20.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 25906,
+    "solve_ms": 23.9,
+    "wall_ms": 147.6
+  },
+  {
+    "tag": "v1.20.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 32912,
+    "solve_ms": 46.0,
+    "wall_ms": 168.7
+  },
+  {
+    "tag": "v1.20.0-pre1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 28109,
+    "solve_ms": 206.3,
+    "wall_ms": 329.2
+  },
+  {
+    "tag": "v1.20.0-pre2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 140771,
+    "solve_ms": 183.7,
+    "wall_ms": 309.3
+  },
+  {
+    "tag": "v1.20.0-pre2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 30328,
+    "solve_ms": 42.5,
+    "wall_ms": 167.0
+  },
+  {
+    "tag": "v1.21.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 37299,
+    "solve_ms": 134.2,
+    "wall_ms": 269.3
+  },
+  {
+    "tag": "v1.21.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 35919,
+    "solve_ms": 84.1,
+    "wall_ms": 211.7
+  },
+  {
+    "tag": "v1.21.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 15629,
+    "solve_ms": 193.7,
+    "wall_ms": 324.1
+  },
+  {
+    "tag": "v1.21.0-pre1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 102856,
+    "solve_ms": 79.6,
+    "wall_ms": 210.0
+  },
+  {
+    "tag": "v1.21.0-pre2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 126041,
+    "solve_ms": 192.1,
+    "wall_ms": 327.2
+  },
+  {
+    "tag": "v1.21.0-pre2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 168888,
+    "solve_ms": 258.8,
+    "wall_ms": 395.1
+  },
+  {
+    "tag": "v1.21.0-pre3",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 11087,
+    "solve_ms": 51.7,
+    "wall_ms": 183.3
+  },
+  {
+    "tag": "v1.21.0-pre3",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 84340,
+    "solve_ms": 32.5,
+    "wall_ms": 164.6
+  },
+  {
+    "tag": "v1.21.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 21139,
+    "solve_ms": 40.2,
+    "wall_ms": 172.8
+  },
+  {
+    "tag": "v1.21.1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 65515,
+    "solve_ms": 48.5,
+    "wall_ms": 187.0
+  },
+  {
+    "tag": "v1.21.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 33892,
+    "solve_ms": 124.2,
+    "wall_ms": 257.7
+  },
+  {
+    "tag": "v1.21.2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 35443,
+    "solve_ms": 114.2,
+    "wall_ms": 244.0
+  },
+  {
+    "tag": "v1.21.3",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 298022,
+    "solve_ms": 164.7,
+    "wall_ms": 299.0
+  },
+  {
+    "tag": "v1.21.3",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 50111,
+    "solve_ms": 72.6,
+    "wall_ms": 207.2
+  },
+  {
+    "tag": "v1.22.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 819,
+    "solve_ms": 59.3,
+    "wall_ms": 197.2
+  },
+  {
+    "tag": "v1.22.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 132886,
+    "solve_ms": 142.2,
+    "wall_ms": 283.1
+  },
+  {
+    "tag": "v1.22.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 89363,
+    "solve_ms": 230.7,
+    "wall_ms": 366.8
+  },
+  {
+    "tag": "v1.22.0-pre1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 54686,
+    "solve_ms": 32.7,
+    "wall_ms": 167.0
+  },
+  {
+    "tag": "v1.22.0-pre2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 64661,
+    "solve_ms": 92.8,
+    "wall_ms": 228.8
+  },
+  {
+    "tag": "v1.22.0-pre2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 68681,
+    "solve_ms": 81.4,
+    "wall_ms": 224.1
+  },
+  {
+    "tag": "v1.23.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 29230,
+    "solve_ms": 100.4,
+    "wall_ms": 238.8
+  },
+  {
+    "tag": "v1.23.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 19940,
+    "solve_ms": 64.2,
+    "wall_ms": 210.6
+  },
+  {
+    "tag": "v1.23.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 128808,
+    "solve_ms": 74.7,
+    "wall_ms": 214.6
+  },
+  {
+    "tag": "v1.23.0-pre1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 98197,
+    "solve_ms": 257.8,
+    "wall_ms": 394.8
+  },
+  {
+    "tag": "v1.23.0-pre2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 81410,
+    "solve_ms": 63.6,
+    "wall_ms": 208.5
+  },
+  {
+    "tag": "v1.23.0-pre2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 74261,
+    "solve_ms": 124.0,
+    "wall_ms": 271.7
+  },
+  {
+    "tag": "v1.23.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 131544,
+    "solve_ms": 94.3,
+    "wall_ms": 245.9
+  },
+  {
+    "tag": "v1.23.1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 102955,
+    "solve_ms": 107.2,
+    "wall_ms": 256.3
+  },
+  {
+    "tag": "v1.24.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 7806,
+    "solve_ms": 178.8,
+    "wall_ms": 332.5
+  },
+  {
+    "tag": "v1.24.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 17814,
+    "solve_ms": 55.2,
+    "wall_ms": 210.0
+  },
+  {
+    "tag": "v1.24.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 49801,
+    "solve_ms": 230.3,
+    "wall_ms": 370.8
+  },
+  {
+    "tag": "v1.24.0-pre1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 12373,
+    "solve_ms": 54.9,
+    "wall_ms": 201.6
+  },
+  {
+    "tag": "v1.25.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 47016,
+    "solve_ms": 95.6,
+    "wall_ms": 239.4
+  },
+  {
+    "tag": "v1.25.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 60240,
+    "solve_ms": 205.5,
+    "wall_ms": 352.8
+  },
+  {
+    "tag": "v1.26.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 29507,
+    "solve_ms": 263.3,
+    "wall_ms": 411.4
+  },
+  {
+    "tag": "v1.26.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 75328,
+    "solve_ms": 145.5,
+    "wall_ms": 287.6
+  },
+  {
+    "tag": "v1.26.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 28093,
+    "solve_ms": 88.4,
+    "wall_ms": 230.2
+  },
+  {
+    "tag": "v1.26.0-pre1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 73448,
+    "solve_ms": 41.3,
+    "wall_ms": 183.6
+  },
+  {
+    "tag": "v1.26.0-pre2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 16589,
+    "solve_ms": 31.4,
+    "wall_ms": 173.1
+  },
+  {
+    "tag": "v1.26.0-pre2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 71242,
+    "solve_ms": 430.9,
+    "wall_ms": 583.7
+  },
+  {
+    "tag": "v1.26.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 105576,
+    "solve_ms": 149.7,
+    "wall_ms": 290.0
+  },
+  {
+    "tag": "v1.26.1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 5588,
+    "solve_ms": 85.4,
+    "wall_ms": 227.3
+  },
+  {
+    "tag": "v1.26.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 163286,
+    "solve_ms": 118.3,
+    "wall_ms": 256.6
+  },
+  {
+    "tag": "v1.26.2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 48907,
+    "solve_ms": 81.1,
+    "wall_ms": 224.5
+  },
+  {
+    "tag": "v1.27.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 45307,
+    "solve_ms": 164.9,
+    "wall_ms": 309.7
+  },
+  {
+    "tag": "v1.27.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 103936,
+    "solve_ms": 70.1,
+    "wall_ms": 221.3
+  },
+  {
+    "tag": "v1.27.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 17491,
+    "solve_ms": 28.7,
+    "wall_ms": 164.7
+  },
+  {
+    "tag": "v1.27.0-pre1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 38416,
+    "solve_ms": 74.8,
+    "wall_ms": 213.9
+  },
+  {
+    "tag": "v1.27.0-pre2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 40184,
+    "solve_ms": 82.8,
+    "wall_ms": 217.5
+  },
+  {
+    "tag": "v1.27.0-pre2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 134032,
+    "solve_ms": 219.4,
+    "wall_ms": 357.4
+  },
+  {
+    "tag": "v1.27.0-pre3",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 42454,
+    "solve_ms": 167.7,
+    "wall_ms": 306.6
+  },
+  {
+    "tag": "v1.27.0-pre3",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 101948,
+    "solve_ms": 47.9,
+    "wall_ms": 193.6
+  },
+  {
+    "tag": "v1.27.0-pre4",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 107579,
+    "solve_ms": 47.8,
+    "wall_ms": 188.2
+  },
+  {
+    "tag": "v1.27.0-pre4",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 25280,
+    "solve_ms": 203.6,
+    "wall_ms": 344.3
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 101999,
+    "solve_ms": 175.0,
+    "wall_ms": 414.7
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 152673,
+    "solve_ms": 94.7,
+    "wall_ms": 334.8
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 4812,
+    "solve_ms": 12.1,
+    "wall_ms": 257.7
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 138,
+    "solve_ms": 0.3,
+    "wall_ms": 240.1
+  },
+  {
+    "tag": "v1.28.0",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 3,
+    "solve_ms": 659.9,
+    "wall_ms": 1110.2
+  },
+  {
+    "tag": "v1.28.0-pre1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 11808,
+    "solve_ms": 72.7,
+    "wall_ms": 313.6
+  },
+  {
+    "tag": "v1.28.0-pre1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 77165,
+    "solve_ms": 167.3,
+    "wall_ms": 410.2
+  },
+  {
+    "tag": "v1.28.0-pre1",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 3119,
+    "solve_ms": 15.4,
+    "wall_ms": 257.3
+  },
+  {
+    "tag": "v1.28.0-pre1",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 98,
+    "solve_ms": 0.3,
+    "wall_ms": 242.7
+  },
+  {
+    "tag": "v1.28.0-pre1",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 4,
+    "solve_ms": 258.4,
+    "wall_ms": 980.3
+  },
+  {
+    "tag": "v1.28.0-pre2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 133318,
+    "solve_ms": 54.5,
+    "wall_ms": 293.4
+  },
+  {
+    "tag": "v1.28.0-pre2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 120939,
+    "solve_ms": 110.3,
+    "wall_ms": 353.9
+  },
+  {
+    "tag": "v1.28.0-pre2",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 7704,
+    "solve_ms": 3.2,
+    "wall_ms": 240.5
+  },
+  {
+    "tag": "v1.28.0-pre2",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 1133,
+    "solve_ms": 0.5,
+    "wall_ms": 244.2
+  },
+  {
+    "tag": "v1.28.0-pre2",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 11,
+    "solve_ms": 293.0,
+    "wall_ms": 793.8
+  },
+  {
+    "tag": "v1.28.0-pre3",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 11062,
+    "solve_ms": 138.6,
+    "wall_ms": 384.5
+  },
+  {
+    "tag": "v1.28.0-pre3",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 71542,
+    "solve_ms": 163.8,
+    "wall_ms": 405.0
+  },
+  {
+    "tag": "v1.28.0-pre3",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 3914,
+    "solve_ms": 4.7,
+    "wall_ms": 248.1
+  },
+  {
+    "tag": "v1.28.0-pre3",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 284,
+    "solve_ms": 0.4,
+    "wall_ms": 250.0
+  },
+  {
+    "tag": "v1.28.0-pre3",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 0,
+    "solve_ms": 251.9,
+    "wall_ms": 670.4
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 6635,
+    "solve_ms": 202.3,
+    "wall_ms": 441.0
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 66820,
+    "solve_ms": 118.3,
+    "wall_ms": 362.1
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 75,
+    "solve_ms": 7.8,
+    "wall_ms": 250.9
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 1806,
+    "solve_ms": 0.3,
+    "wall_ms": 243.7
+  },
+  {
+    "tag": "v1.28.1",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 1,
+    "solve_ms": 372.5,
+    "wall_ms": 836.6
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "fast",
+    "status": "PASS",
+    "solved_algorithm": "fast",
+    "nonce": 52021,
+    "solve_ms": 68.9,
+    "wall_ms": 310.7
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "slow",
+    "status": "PASS",
+    "solved_algorithm": "slow",
+    "nonce": 272509,
+    "solve_ms": 167.1,
+    "wall_ms": 406.0
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "sha256",
+    "status": "PASS",
+    "solved_algorithm": "sha256",
+    "nonce": 2518,
+    "solve_ms": 3.6,
+    "wall_ms": 241.3
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "hashx",
+    "status": "PASS",
+    "solved_algorithm": "hashx",
+    "nonce": 1740,
+    "solve_ms": 0.5,
+    "wall_ms": 248.2
+  },
+  {
+    "tag": "v1.28.2",
+    "algorithm": "argon2id",
+    "status": "PASS",
+    "solved_algorithm": "argon2id",
+    "nonce": 2,
+    "solve_ms": 130.4,
+    "wall_ms": 564.1
+  }
+]

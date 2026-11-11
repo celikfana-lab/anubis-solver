@@ -64,6 +64,32 @@
 #include "argon2.h"
 #include "hashx.h"
 
+#if defined(ANUBIS_HAVE_VULKAN)
+extern int anubis_vulkan_available(void);
+extern const char *anubis_vulkan_info(void);
+extern int anubis_vulkan_solve(const uint32_t mid[8], uint32_t prefix_len,
+                               int mode, int use_le, int difficulty,
+                               int check_bits, uint64_t max_nonce,
+                               double budget_ms, uint32_t *out_nonce,
+                               char out_hex[65], double *out_ms);
+
+/* Break-even differs between the two shader modes: the fixed-nonce path is
+ * cheaper per candidate, so it pays off at lower difficulty. */
+static uint64_t vulkan_min_work(int bits_mode) {
+    const char *s = getenv("ANUBIS_VULKAN_MIN_WORK");
+    if (s != NULL && *s != '\0') {
+        return strtoull(s, NULL, 0);
+    }
+    return bits_mode ? (1ull << 16) : (1ull << 20);
+}
+#endif
+
+/* defined later; used to re-verify GPU results */
+int anubis_verify_nibbles(const char *challenge, uint64_t nonce,
+                                        int difficulty, char *out_hex);
+int anubis_verify_bits(const char *challenge_hex, uint32_t nonce,
+                                     int difficulty, char *out_hex);
+
 #ifdef __GNUC__
 #define ANUBIS_EXPORT __attribute__((visibility("default")))
 #else
@@ -879,6 +905,39 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
      * the browser implementation (nonce is a JS Number, printed in decimal). */
     (void)max_nonce;
 
+#if defined(ANUBIS_HAVE_VULKAN)
+    if (clen % 64u == 0 && anubis_vulkan_available()) {
+        uint64_t expected = 1;
+        int i;
+        for (i = 0; i < difficulty && i < 40; i++) {
+            expected *= 16;
+        }
+        if (expected >= vulkan_min_work(0)) {
+            uint32_t gnonce = 0;
+            char ghex[65];
+            char vhex[65];
+            double gms = 0.0;
+            uint64_t cap = expected < (0xFFFFFFFFull / 8)
+                               ? expected * 8
+                               : 0xFFFFFFFFull;
+            int grc = anubis_vulkan_solve(ctx.base.h, (uint32_t)clen, 0, 0,
+                                          difficulty, 0, cap, budget_ms,
+                                          &gnonce, ghex, &gms);
+            if (grc == 0 &&
+                anubis_verify_nibbles(challenge, gnonce, difficulty, vhex) ==
+                    ANUBIS_OK &&
+                memcmp(vhex, ghex, 65) == 0) {
+                *out_nonce = gnonce;
+                memcpy(out_hex, ghex, 65);
+                if (out_ms != NULL) {
+                    *out_ms = gms;
+                }
+                return ANUBIS_OK;
+            }
+        }
+    }
+#endif
+
     return run_search(&job, out_nonce, out_hex, out_ms);
 }
 
@@ -961,6 +1020,38 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
     job.bctx.mid = ctx.base.h;
     job.bctx.prefix_len = raw_len;
     job.bctx.use_le = ctx.use_le;
+
+#if defined(ANUBIS_HAVE_VULKAN)
+    if (raw_len % 64u == 0 && anubis_vulkan_available()) {
+        uint64_t expected = 1;
+        int i;
+        for (i = 0; i < difficulty && i < 40; i++) {
+            expected *= 2;
+        }
+        if (expected >= vulkan_min_work(0)) {
+            uint32_t gnonce = 0;
+            char ghex[65];
+            char vhex[65];
+            double gms = 0.0;
+            uint64_t cap = expected < (0xFFFFFFFFull / 8)
+                               ? expected * 8
+                               : 0xFFFFFFFFull;
+            int grc = anubis_vulkan_solve(ctx.base.h, (uint32_t)raw_len, 1,
+                                          ctx.use_le, difficulty, 1, cap,
+                                          budget_ms, &gnonce, ghex, &gms);
+            if (grc == 0 && anubis_verify_bits(challenge_hex, gnonce, difficulty,
+                                               vhex) == ANUBIS_OK &&
+                memcmp(vhex, ghex, 65) == 0) {
+                *out_nonce = gnonce;
+                memcpy(out_hex, ghex, 65);
+                if (out_ms != NULL) {
+                    *out_ms = gms;
+                }
+                return ANUBIS_OK;
+            }
+        }
+    }
+#endif
 
     rc = run_search(&job, &nonce64, out_hex, out_ms);
     if (rc == ANUBIS_OK) {
@@ -1236,4 +1327,27 @@ int anubis_sha256_hex(const char *data, size_t len, char *out_hex) {
 ANUBIS_EXPORT
 const char *anubis_solver_version(void) {
     return "1.0.0";
+}
+
+/* SHA-256 midstate after `len` bytes (len must be a multiple of 64). */
+ANUBIS_EXPORT
+int anubis_sha256_midstate(const char *data, size_t len, uint32_t out[8]) {
+    sha256_ctx c;
+    if (data == NULL || out == NULL || len % 64u != 0) {
+        return ANUBIS_ERR_ARG;
+    }
+    sha256_init(&c);
+    sha256_update(&c, data, len);
+    memcpy(out, c.h, sizeof(uint32_t) * 8);
+    return ANUBIS_OK;
+}
+
+/* Vulkan device name, or NULL when no GPU backend is active. */
+ANUBIS_EXPORT
+const char *anubis_gpu_info(void) {
+#if defined(ANUBIS_HAVE_VULKAN)
+    return anubis_vulkan_info();
+#else
+    return NULL;
+#endif
 }

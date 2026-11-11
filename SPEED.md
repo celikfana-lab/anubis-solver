@@ -16,6 +16,7 @@ times slower.
 | Build | `-O3 -march=native`, AVX2 8-way + SHA-NI assembly kernels |
 | Threads | 1 (pinned with `taskset -c 0`) |
 | Run | `python3 tools/bench_tiers.py --reps 7`, measured 2026-11-11 |
+| GPU | Intel Iris Xe (Vulkan), used where noted |
 | Raw data | [`results/speed-tiers.json`](results/speed-tiers.json) |
 
 The host runs a `powersave` governor on a laptop, so its frequency is not
@@ -118,6 +119,32 @@ when a policy rule does not set one).
 
 Pre-release tags follow their era; see
 [`results/version-matrix-prereleases.json`](results/version-matrix-prereleases.json).
+
+## GPU (Vulkan)
+
+SHA-256 challenges can run on a Vulkan compute device. The GPU is only used
+when the expected work is large enough to cover dispatch overhead; below the
+threshold the CPU path runs. Every GPU result is re-verified on the CPU.
+
+Measured on an Intel Iris Xe (i7-1260P), median of 3 runs:
+
+| tier | CPU | GPU | speedup | used by default? |
+|---|---:|---:|---:|---|
+| `fast` difficulty 4 | 19 ms | ~20 ms | ~1× | no |
+| `fast` difficulty 5 | 108 ms | 29 ms | 3.7× | yes |
+| `fast` difficulty 6 | 2.27 s | 77 ms | 29× | yes |
+| `sha256` 16 bits | 6.7 ms | 3.3 ms | 2× | yes |
+| `sha256` 20 bits | 396 ms | 26 ms | 15× | yes |
+| `sha256` 24 bits | 1.75 s | 78 ms | 22× | yes |
+
+Default thresholds: `fast`/`slow` difficulty ≥ 5 (16⁵ = 1,048,576 expected
+hashes), `sha256` ≥ 16 bits (65,536). Override with
+`ANUBIS_VULKAN_MIN_WORK`, disable with `ANUBIS_NO_VULKAN=1`, or force a device
+with `ANUBIS_VULKAN_DEVICE=NAME` (`ANUBIS_VULKAN_ALLOW_CPU=1` permits Mesa
+lavapipe). The first call in a process pays pipeline creation; the driver's
+shader cache usually makes that a few tens of milliseconds.
+
+`argon2id` and `hashx` have no GPU implementation and always run on the CPU.
 
 ## Notes
 

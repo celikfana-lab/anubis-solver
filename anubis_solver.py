@@ -236,6 +236,9 @@ class _Native:
         lib.anubis_solver_version.restype = ctypes.c_char_p
         lib.anubis_solver_version.argtypes = []
 
+        lib.anubis_gpu_info.restype = ctypes.c_char_p
+        lib.anubis_gpu_info.argtypes = []
+
         lib.anubis_sha256_hex.restype = ctypes.c_int
         lib.anubis_sha256_hex.argtypes = [
             ctypes.c_char_p,
@@ -308,6 +311,10 @@ class _Native:
     @property
     def version(self) -> str:
         return (self.lib.anubis_solver_version() or b"?").decode()
+
+    def gpu_info(self) -> str | None:
+        info = self.lib.anubis_gpu_info()
+        return info.decode() if info else None
 
     def sha256_hex(self, data: bytes) -> str:
         out = ctypes.create_string_buffer(65)
@@ -497,6 +504,11 @@ class AnubisSolver:
     @property
     def version(self) -> str:
         return self._native.version
+
+    @property
+    def gpu(self) -> str | None:
+        """Name of the Vulkan device in use, or None when GPU is unavailable."""
+        return self._native.gpu_info()
 
     def supported(self, algorithm: str) -> bool:
         return algorithm in self.ALGORITHMS

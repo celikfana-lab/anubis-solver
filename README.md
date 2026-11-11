@@ -18,10 +18,13 @@ src/                 C core and assembly kernels
   avx2.s             8-way AVX2 SHA-256 compression (hand-written asm)
   shani.s            SHA-NI single-block compression (hand-written asm)
   hashx.c/.h         C port of tevador/hashx (LGPL-3.0) — see notices
+  vulkan.c           optional Vulkan compute backend (dlopen, SHA-256 only)
+  sha256_comp.comp   GLSL compute shader for the GPU path
 third_party/argon2/  reference Argon2 (CC0-1.0 / Apache-2.0)
 anubis_solver.py     Python library (ctypes) + requests client + CLI
 tests/               unit, local end-to-end, version-matrix and CVE harnesses
 tools/gen_avx2_s.py  emits the unrolled avx2.s (checked in)
+tools/build_shader.sh compiles the shader and embeds the SPIR-V header
 tools/bench_tiers.py benchmarks every light/medium/hard difficulty tier
 results/             raw results from the version, speed and CVE runs
 ```
@@ -35,6 +38,12 @@ make test            # unit tests
 
 The Python module also builds the library on first import if `make` has not
 been run.
+
+Vulkan support is auto-detected from `/usr/include/vulkan/vulkan.h`; the
+library `dlopen`s `libvulkan.so.1` at runtime, so a machine without Vulkan just
+uses the CPU paths. Build with `VULKAN=0` to compile it out. If you change the
+shader, regenerate `src/sha256_comp.spv.h` with `make shader` (needs
+`glslangValidator`).
 
 ```bash
 pip install -r requirements.txt   # requests; curl_cffi and argon2-cffi optional
@@ -173,8 +182,52 @@ hard ~2 s; `sha256` similar; `hashx` 0.2 ms / 15 ms / 294 ms; `argon2id`
 148 ms / 508 ms / 1.85 s. Versions up to v1.27.0 only offer `fast`/`slow`;
 v1.28.0+ adds the three WASM algorithms.
 
+With a Vulkan GPU, `fast`/`slow` hard drops to ~77 ms and `sha256` 24 bits to
+~78 ms on an Iris Xe; see [SPEED.md](SPEED.md#gpu-vulkan).
+
 Threading: the solver defaults to `os.cpu_count()`; pass `--threads` to match the
 machine. On power-limited laptops fewer threads can be faster.
+
+## GPU (Vulkan)
+
+The SHA-256 challenges (`fast`, `slow`, `sha256`) can run on any Vulkan compute
+device. The host code loads `libvulkan.so.1` at runtime, so there is no build or
+run dependency on Vulkan unless a device is present. `argon2id` and `hashx`
+remain CPU-only.
+
+```python
+from anubis_solver import AnubisSolver
+solver = AnubisSolver()
+print(solver.gpu)                  # e.g. "Intel(R) Iris(R) Xe Graphics (ADL GT2)"
+```
+
+The GPU is used only when the expected work is large enough to pay for dispatch
+(`fast`/`slow` difficulty ≥ 5, `sha256` ≥ 16 bits by default); lower difficulties
+stay on the CPU, where they are faster. Every GPU result is recomputed with the
+CPU implementation before it is accepted, so a shader bug cannot produce an
+invalid proof.
+
+Measured on an Intel Iris Xe (i7-1260P), one CPU core vs the iGPU:
+
+| challenge | CPU | GPU | speedup |
+|---|---:|---:|---:|
+| `fast` difficulty 5 | 108 ms | 29 ms | 3.7× |
+| `fast` difficulty 6 | 2.27 s | 77 ms | 29× |
+| `sha256` 20 bits | 396 ms | 26 ms | 15× |
+| `sha256` 24 bits | 1.75 s | 78 ms | 22× |
+
+Environment variables:
+
+| variable | effect |
+|---|---|
+| `ANUBIS_NO_VULKAN=1` | disable the backend and always use the CPU |
+| `ANUBIS_VULKAN_ALLOW_CPU=1` | allow a CPU-type Vulkan device (Mesa lavapipe) |
+| `ANUBIS_VULKAN_DEVICE=NAME` | substring match to choose a device |
+| `ANUBIS_VULKAN_CHUNK=N` | invocations per dispatch (default 4 MiB) |
+| `ANUBIS_VULKAN_MIN_WORK=N` | override the dispatch threshold |
+
+First use in a process pays device/queue/pipeline creation (tens of ms when the
+driver's shader cache is warm, longer on a cold cache).
 
 ## Tested versions
 

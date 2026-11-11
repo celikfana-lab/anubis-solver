@@ -54,12 +54,18 @@
  * Test:   make check
  */
 
+#define _GNU_SOURCE
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#if defined(__linux__)
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 #include "argon2.h"
 #include "hashx.h"
@@ -95,6 +101,247 @@ int anubis_verify_bits(const char *challenge_hex, uint32_t nonce,
 #else
 #define ANUBIS_EXPORT
 #endif
+
+
+/* ------------------------------------------------------------------ */
+/* CPU affinity: prefer the P-cores on hybrid CPUs                     */
+/* ------------------------------------------------------------------ */
+/* Alder Lake and friends expose P-cores via /sys/devices/cpu_core.  The
+ * E-cores are much slower for SHA-256, so the default is to pin worker
+ * threads to the physical P-cores (one thread per core first, then SMT
+ * siblings) and to size the default thread count accordingly.
+ *
+ * ANUBIS_CPU_AFFINITY:
+ *   unset / "pcores"  pin to the P-core set (default)
+ *   "off" / "all" / "0" do not pin
+ *   "0,2,4,6" or "0-3" pin to that explicit CPU set
+ */
+
+#define ANUBIS_MAX_CPUS 1024
+
+static int g_pcpus[ANUBIS_MAX_CPUS];
+static int g_npcpu;          /* all CPUs in the chosen set */
+static int g_npcpu_phys;     /* one CPU per physical core */
+static int g_pin_enabled;
+static pthread_once_t g_affinity_once = PTHREAD_ONCE_INIT;
+static char g_affinity_info[160] = "off";
+
+static int read_small_file(const char *path, char *buf, size_t cap) {
+    FILE *f = fopen(path, "r");
+    size_t n;
+    if (f == NULL) {
+        return -1;
+    }
+    n = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return 0;
+}
+
+static int parse_cpu_mask(const char *s, unsigned char *mask, int max) {
+    int any = 0;
+    const char *p = s;
+    memset(mask, 0, (size_t)max);
+    while (*p != '\0') {
+        char *end = NULL;
+        long a = strtol(p, &end, 10);
+        long b = a;
+        if (end == p) {
+            break;
+        }
+        p = end;
+        if (*p == '-') {
+            p++;
+            b = strtol(p, &end, 10);
+            if (end == p) {
+                break;
+            }
+            p = end;
+        }
+        if (a >= 0 && b >= a && b < max) {
+            for (long i = a; i <= b; i++) {
+                mask[i] = 1;
+            }
+            any = 1;
+        }
+        if (*p == ',') {
+            p++;
+        }
+    }
+    return any;
+}
+
+static int read_core_id(int cpu) {
+    char path[128];
+    char buf[64];
+    snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/topology/core_id",
+             cpu);
+    if (read_small_file(path, buf, sizeof(buf)) != 0) {
+        return -1;
+    }
+    return (int)strtol(buf, NULL, 10);
+}
+
+static int read_max_freq(int cpu) {
+    char path[128];
+    char buf[64];
+    snprintf(path, sizeof(path),
+             "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
+    if (read_small_file(path, buf, sizeof(buf)) != 0) {
+        return -1;
+    }
+    return (int)strtol(buf, NULL, 10);
+}
+
+static void build_ordered_set(const unsigned char *mask, int ncpu) {
+    int core_seen[ANUBIS_MAX_CPUS];
+    unsigned char chosen[ANUBIS_MAX_CPUS];
+    int ncores = 0;
+    int i, pass;
+
+    g_npcpu = 0;
+    g_npcpu_phys = 0;
+    for (i = 0; i < ncpu; i++) {
+        core_seen[i] = -1;
+        chosen[i] = 0;
+    }
+    /* first one CPU per physical core, then the SMT siblings */
+    for (pass = 0; pass < 2; pass++) {
+        for (i = 0; i < ncpu; i++) {
+            int cid, j, seen = 0;
+            if (!mask[i]) {
+                continue;
+            }
+            cid = read_core_id(i);
+            if (cid < 0) {
+                cid = i; /* no topology info: treat as its own core */
+            }
+            for (j = 0; j < ncores; j++) {
+                if (core_seen[j] == cid) {
+                    seen = 1;
+                    break;
+                }
+            }
+            if (pass == 0 && !seen) {
+                core_seen[ncores++] = cid;
+                g_pcpus[g_npcpu++] = i;
+                chosen[i] = 1;
+                g_npcpu_phys++;
+            } else if (pass == 1 && seen && !chosen[i]) {
+                g_pcpus[g_npcpu++] = i;
+            }
+        }
+    }
+}
+
+static void init_affinity_once(void) {
+    const char *env = getenv("ANUBIS_CPU_AFFINITY");
+    unsigned char mask[ANUBIS_MAX_CPUS];
+    int ncpu = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    char buf[512];
+    int i;
+
+    if (ncpu > ANUBIS_MAX_CPUS) {
+        ncpu = ANUBIS_MAX_CPUS;
+    }
+    g_pin_enabled = 0;
+    g_npcpu = 0;
+    g_npcpu_phys = 0;
+
+    if (env != NULL && (strcmp(env, "off") == 0 || strcmp(env, "all") == 0 ||
+                        strcmp(env, "0") == 0 || strcmp(env, "none") == 0)) {
+        snprintf(g_affinity_info, sizeof(g_affinity_info), "off");
+        return;
+    }
+
+    if (env != NULL && *env != '\0' && strcmp(env, "pcores") != 0 &&
+        strcmp(env, "auto") != 0) {
+        /* explicit CPU set */
+        if (!parse_cpu_mask(env, mask, ncpu)) {
+            snprintf(g_affinity_info, sizeof(g_affinity_info), "off (bad mask)");
+            return;
+        }
+        build_ordered_set(mask, ncpu);
+    } else {
+        /* default: P-cores from the hybrid PMU, else by max frequency */
+        memset(mask, 0, sizeof(mask));
+        if (read_small_file("/sys/devices/cpu_core/cpus", buf, sizeof(buf)) == 0 &&
+            parse_cpu_mask(buf, mask, ncpu)) {
+            /* got the P-core set */
+        } else {
+            int best = 0;
+            int freqs[ANUBIS_MAX_CPUS];
+            for (i = 0; i < ncpu; i++) {
+                freqs[i] = read_max_freq(i);
+                if (freqs[i] > best) {
+                    best = freqs[i];
+                }
+            }
+            if (best <= 0) {
+                snprintf(g_affinity_info, sizeof(g_affinity_info), "off");
+                return;
+            }
+            for (i = 0; i < ncpu; i++) {
+                if (freqs[i] > 0 && freqs[i] * 10 >= best * 8) {
+                    mask[i] = 1;
+                }
+            }
+        }
+        build_ordered_set(mask, ncpu);
+    }
+
+    if (g_npcpu == 0) {
+        snprintf(g_affinity_info, sizeof(g_affinity_info), "off (no cores)");
+        return;
+    }
+    g_pin_enabled = 1;
+    {
+        size_t off = 0;
+        off += (size_t)snprintf(g_affinity_info + off,
+                                sizeof(g_affinity_info) - off, "pcores:");
+        for (i = 0; i < g_npcpu_phys && off < sizeof(g_affinity_info); i++) {
+            off += (size_t)snprintf(g_affinity_info + off,
+                                    sizeof(g_affinity_info) - off, "%s%d",
+                                    i ? "," : "", g_pcpus[i]);
+        }
+        if (g_npcpu > g_npcpu_phys) {
+            off += (size_t)snprintf(g_affinity_info + off,
+                                    sizeof(g_affinity_info) - off, " +%d SMT",
+                                    g_npcpu - g_npcpu_phys);
+        }
+        snprintf(g_affinity_info + off, sizeof(g_affinity_info) - off,
+                 " (%d physical)", g_npcpu_phys);
+    }
+}
+
+static void pin_current_thread(int tid) {
+#if defined(__linux__)
+    cpu_set_t set;
+    if (!g_pin_enabled || g_npcpu == 0) {
+        return;
+    }
+    CPU_ZERO(&set);
+    CPU_SET(g_pcpus[tid % g_npcpu], &set);
+    (void)sched_setaffinity(0, sizeof(set), &set);
+#else
+    (void)tid;
+#endif
+}
+
+ANUBIS_EXPORT
+int anubis_default_threads(void) {
+    pthread_once(&g_affinity_once, init_affinity_once);
+    if (g_pin_enabled && g_npcpu_phys > 0) {
+        return g_npcpu_phys;
+    }
+    return (int)sysconf(_SC_NPROCESSORS_ONLN);
+}
+
+ANUBIS_EXPORT
+const char *anubis_cpu_affinity_info(void) {
+    pthread_once(&g_affinity_once, init_affinity_once);
+    return g_affinity_info;
+}
 
 /* ------------------------------------------------------------------ */
 /* Return codes                                                        */
@@ -790,6 +1037,7 @@ static void worker_loop(solve_job *job, int tid) {
 
 static void *worker_entry(void *arg) {
     worker_arg *wa = (worker_arg *)arg;
+    pin_current_thread(wa->tid);
     worker_loop(wa->job, wa->tid);
     return NULL;
 }

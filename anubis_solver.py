@@ -239,6 +239,12 @@ class _Native:
         lib.anubis_gpu_info.restype = ctypes.c_char_p
         lib.anubis_gpu_info.argtypes = []
 
+        lib.anubis_default_threads.restype = ctypes.c_int
+        lib.anubis_default_threads.argtypes = []
+
+        lib.anubis_cpu_affinity_info.restype = ctypes.c_char_p
+        lib.anubis_cpu_affinity_info.argtypes = []
+
         lib.anubis_sha256_hex.restype = ctypes.c_int
         lib.anubis_sha256_hex.argtypes = [
             ctypes.c_char_p,
@@ -315,6 +321,12 @@ class _Native:
     def gpu_info(self) -> str | None:
         info = self.lib.anubis_gpu_info()
         return info.decode() if info else None
+
+    def default_threads(self) -> int:
+        return int(self.lib.anubis_default_threads())
+
+    def affinity_info(self) -> str:
+        return (self.lib.anubis_cpu_affinity_info() or b"").decode()
 
     def sha256_hex(self, data: bytes) -> str:
         out = ctypes.create_string_buffer(65)
@@ -496,8 +508,9 @@ class AnubisSolver:
         budget_ms: float = 0.0,
     ) -> None:
         self._native = _Native(lib_path)
-        self.threads = threads or (os.cpu_count() or 1)
-        self.threads = max(1, min(256, int(self.threads)))
+        if threads is None:
+            threads = self._native.default_threads()
+        self.threads = max(1, min(256, int(threads)))
         self.budget_ms = float(budget_ms)
 
     # -- introspection ----------------------------------------------------
@@ -509,6 +522,11 @@ class AnubisSolver:
     def gpu(self) -> str | None:
         """Name of the Vulkan device in use, or None when GPU is unavailable."""
         return self._native.gpu_info()
+
+    @property
+    def affinity(self) -> str:
+        """CPU affinity in effect, e.g. ``pcores:0,2,4,6 (4 physical)``."""
+        return self._native.affinity_info()
 
     def supported(self, algorithm: str) -> bool:
         return algorithm in self.ALGORITHMS
@@ -668,6 +686,19 @@ class AnubisClient:
         self.allow_remote_cve = allow_remote_cve
         self.cve_bypasses = 0
         self._cve_target_ok: bool | None = None
+
+    def close(self) -> None:
+        """Release the underlying HTTP session."""
+        close = getattr(self.session, "close", None)
+        if callable(close):
+            close()
+
+    def __enter__(self) -> AnubisClient:
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        self.close()
+        return False
 
     # -- helpers ----------------------------------------------------------
     def _abs(self, url: str) -> str:
@@ -866,7 +897,15 @@ def _main(argv: list[str]) -> int:
         action="store_true",
         help="allow the CVE bypass against non-loopback targets",
     )
+    parser.add_argument(
+        "--affinity",
+        default=None,
+        help='CPU affinity: "pcores" (default), "off", or a mask like "0,2,4,6"',
+    )
     args = parser.parse_args(argv)
+
+    if args.affinity is not None:
+        os.environ["ANUBIS_CPU_AFFINITY"] = args.affinity
 
     client = AnubisClient(
         args.url,

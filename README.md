@@ -23,6 +23,7 @@ src/                 C core and assembly kernels
 third_party/argon2/  reference Argon2 (CC0-1.0 / Apache-2.0)
 anubis_solver.py     Python library (ctypes) + requests client + CLI
 tests/               unit, local end-to-end, version-matrix and CVE harnesses
+examples/            small runnable snippets for library users
 tools/gen_avx2_s.py  emits the unrolled avx2.s (checked in)
 tools/build_shader.sh compiles the shader and embeds the SPIR-V header
 tools/bench_tiers.py benchmarks every light/medium/hard difficulty tier
@@ -76,6 +77,23 @@ CLI:
 
 ```bash
 python3 anubis_solver.py http://127.0.0.1:8923/ --threads 8
+```
+
+## Examples
+
+[`examples/`](examples/) has standalone snippets:
+
+| file | shows |
+|---|---|
+| [`basic.py`](examples/basic.py) | fetch a protected page with the high-level client |
+| [`solver.py`](examples/solver.py) | parse a challenge, solve it, verify the digest (offline) |
+| [`impersonate.py`](examples/impersonate.py) | `curl_cffi` TLS/JA3 impersonation |
+| [`gpu.py`](examples/gpu.py) | report GPU/affinity and solve on the GPU |
+
+```bash
+python3 examples/solver.py
+python3 examples/basic.py http://127.0.0.1:8923
+python3 examples/gpu.py --solve
 ```
 
 ## Supported challenges
@@ -185,8 +203,12 @@ v1.28.0+ adds the three WASM algorithms.
 With a Vulkan GPU, `fast`/`slow` hard drops to ~77 ms and `sha256` 24 bits to
 ~78 ms on an Iris Xe; see [SPEED.md](SPEED.md#gpu-vulkan).
 
-Threading: the solver defaults to `os.cpu_count()`; pass `--threads` to match the
-machine. On power-limited laptops fewer threads can be faster.
+Threading and CPU affinity: on hybrid CPUs (Intel P/E cores) workers are pinned
+to the physical P-cores by default and the default thread count is the P-core
+count. `ANUBIS_CPU_AFFINITY=off` disables pinning, and an explicit mask such as
+`ANUBIS_CPU_AFFINITY=0,2,4,6` pins to those CPUs. `solver.affinity` reports the
+result. On power-limited laptops fewer threads can be faster regardless of
+pinning; pass `--threads` to override the default.
 
 ## GPU (Vulkan)
 

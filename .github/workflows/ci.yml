@@ -19,7 +19,7 @@ jobs:
         run: pip install requests argon2-cffi
 
       - name: Compile-check the Python API
-        run: python3 -m py_compile anubis_solver.py tests/*.py tools/*.py
+        run: python3 -m py_compile anubis_solver.py tests/*.py tools/*.py examples/*.py
 
       - name: Unit tests (cross-checked against hashlib and argon2-cffi)
         run: python3 tests/test_core.py

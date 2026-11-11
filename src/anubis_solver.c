@@ -315,6 +315,7 @@ static void init_affinity_once(void) {
 }
 
 static void pin_current_thread(int tid) {
+    pthread_once(&g_affinity_once, init_affinity_once);
 #if defined(__linux__)
     cpu_set_t set;
     if (!g_pin_enabled || g_npcpu == 0) {

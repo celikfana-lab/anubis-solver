@@ -22,7 +22,8 @@ third_party/argon2/  reference Argon2 (CC0-1.0 / Apache-2.0)
 anubis_solver.py     Python library (ctypes) + requests client + CLI
 tests/               unit, local end-to-end, version-matrix and CVE harnesses
 tools/gen_avx2_s.py  emits the unrolled avx2.s (checked in)
-results/             raw results from the version and CVE runs
+tools/bench_tiers.py benchmarks every light/medium/hard difficulty tier
+results/             raw results from the version, speed and CVE runs
 ```
 
 ## Build
@@ -147,7 +148,8 @@ releases; results are in [`results/cve-2026-62314.json`](results/cve-2026-62314.
 
 ## Performance
 
-Difficulty 6 (`git.ffmpeg.org`'s setting, ~16.7M hashes expected), one pinned
+Per-tier and per-version timings live in **[SPEED.md](SPEED.md)**. Summary:
+difficulty 6 (`git.ffmpeg.org`'s setting, ~16.7M hashes expected), one pinned
 core of an i7-1260P:
 
 | path | `fast` | `sha256` (WASM bits20) |
@@ -165,6 +167,11 @@ core of an i7-1260P:
   single-block hashing; used when a batch cannot form and by `verify_*`.
 - Runtime dispatch: AVX2 batch → SHA-NI single → portable C. `ANUBIS_NO_AVX2=1`
   and `ANUBIS_NO_SHANI=1` force the lower paths for A/B comparison.
+
+Expected time by tier (one core): `fast`/`slow` light 0.1 ms, medium ~10 ms,
+hard ~2 s; `sha256` similar; `hashx` 0.2 ms / 15 ms / 294 ms; `argon2id`
+148 ms / 508 ms / 1.85 s. Versions up to v1.27.0 only offer `fast`/`slow`;
+v1.28.0+ adds the three WASM algorithms.
 
 Threading: the solver defaults to `os.cpu_count()`; pass `--threads` to match the
 machine. On power-limited laptops fewer threads can be faster.

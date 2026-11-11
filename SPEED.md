@@ -148,11 +148,12 @@ shader cache usually makes that a few tens of milliseconds.
 
 ## Notes
 
-- **Thread scaling.** This laptop drops to ~1.2 GHz when several cores are busy,
-  so more threads was *slower* in testing (1 thread: 9.1 ms; 8 threads: 79.8 ms
-  at `fast` difficulty 4). On a machine with a stable all-core clock, time
-  scales roughly with thread count; `argon2id` is the exception because of its
-  memory cost.
+- **Thread scaling.** On this 20 W laptop, four pinned P-core threads are
+  *slower* than two: the package hits its power/thermal limit (~89 °C) and
+  clocks collapse (1 thread 0.69 s, 2 threads 0.45 s, 4 threads 2.10 s at
+  `fast` difficulty 6). Two threads is the sweet spot here; on a machine with
+  a stable all-core clock, time scales roughly with thread count. `argon2id`
+  is the exception because of its memory cost.
 - **Light tiers are overhead-bound.** At 256 expected hashes the solve is
   sub-millisecond, so request latency dominates.
 - **Version defaults** are the built-in fallbacks (`-difficulty` flag /

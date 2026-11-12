@@ -248,6 +248,26 @@ driver (`libze_intel_gpu.so.1`) and IGC for SPIR-V compilation.
 every digest against hashlib. Raw data:
 [`results/levelzero-irisxe.json`](results/levelzero-irisxe.json).
 
+## Argon2id on CUDA (opt-in)
+
+Two Tesla T4s, one CUDA block per hash (64 threads cooperate on the BlaMka
+permutation, the 1 KiB block lives in shared memory, the 19 MiB matrix in
+global memory), 128 concurrent hashes per device. Enabled with
+`ANUBIS_GPU_ARGON2=1`; digests are re-verified against the reference Argon2.
+
+Measured on Kaggle (4 vCPU host), 2026-11-12:
+
+| difficulty | CPU (4 vCPU) | 2x T4 | speedup |
+|---|---:|---:|---:|
+| d6 (64 hashes) | 718 ms | 204 ms | 3.5× |
+| d8 (256 hashes) | 1752 ms | 146 ms | **20.7×** |
+
+d8 works out to ~1750 h/s on the two T4s vs ~85 h/s on the 4-vCPU host, and
+is ~4× the 28-thread Xeon (411 h/s) from the earlier benchmark.
+
+Raw data: [`results/argon2id-cuda-t4.json`](results/argon2id-cuda-t4.json).
+`tools/bench_argon2_gpu.py` reproduces it.
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

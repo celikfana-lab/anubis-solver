@@ -1,0 +1,16 @@
+{
+  "host": {
+    "gpu": "2x NVIDIA Tesla T4",
+    "cpu": "4 vCPU Intel Xeon @ 2.00GHz (Kaggle)",
+    "cuda": "13.0",
+    "measured": "2026-11-12"
+  },
+  "config": {"m_cost": 19456, "t_cost": 2, "lanes": 1,
+             "concurrent_hashes_per_device": 128,
+             "memory_per_device_mb": 2550},
+  "throughput_hps": {
+    "d6": {"cpu": 89.1, "gpu": 313.6, "speedup": 3.5},
+    "d8": {"cpu": 85.0, "gpu": 1758.6, "speedup": 20.7}
+  },
+  "notes": "one CUDA block per hash (64 threads, 1 KiB block in shared memory, 19 MiB in global); digests verified against argon2-cffi; opt-in with ANUBIS_GPU_ARGON2=1"
+}

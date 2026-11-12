@@ -48,7 +48,9 @@ portable C compression. `ANUBIS_NO_NEON=1` forces the fallback for A/B tests.
 
 CUDA support is auto-detected: if `nvcc` is on PATH the `fast`/`slow` and
 `sha256` challenges run on NVIDIA GPUs (all visible devices), and CUDA is
-preferred over Vulkan. `make CUDA=0` compiles it out; `ANUBIS_NO_CUDA=1`
+preferred over Vulkan. Argon2id also has an opt-in CUDA path
+(`ANUBIS_GPU_ARGON2=1`): one block per hash, 128 concurrent hashes per
+device; ~1750 h/s on two T4s vs ~85 h/s on a 4-vCPU host. `make CUDA=0` compiles it out; `ANUBIS_NO_CUDA=1`
 disables it at runtime.
 
 Intel GPUs are reached through **oneAPI Level Zero** (oneAPI's low-level C

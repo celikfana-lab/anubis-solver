@@ -286,9 +286,19 @@ __global__ void argon2id_kernel(const uint8_t *challenge, uint32_t clen,
         for (i = 0; i < (int)clen; i++) {
             sbuf[len++] = challenge[i];
         }
+        for (i = 0; i < 4; i++) {
+            sbuf[len++] = 8;            /* LE32(len(salt)) */
+            sbuf[len++] = 0;
+            sbuf[len++] = 0;
+            sbuf[len++] = 0;
+            break;
+        }
         for (i = 0; i < 8; i++) {
             int sh = use_le ? (8 * i) : (8 * (7 - i));
             sbuf[len++] = (uint8_t)((uint64_t)nonce >> sh);
+        }
+        for (i = 0; i < 8; i++) {
+            sbuf[len++] = 0;            /* LE32(len(secret)) + LE32(len(ad)) */
         }
         b2_hash(sbuf, len, 64, (uint8_t *)h0);
 

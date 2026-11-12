@@ -4,146 +4,133 @@ A C proof-of-work engine with a Python face, for solving
 [TecharoHQ/anubis](https://github.com/TecharoHQ/anubis) challenges. It does the
 same flow a browser does — fetch the challenge page, compute the proof-of-work,
 GET `pass-challenge`, keep the auth cookie — with the hot loops in hand-written
-x86-64 assembly.
+assembly and optional GPU backends.
 
 > **Authorized use only.** Running this against a site circumvents the bot
 > mitigation its operator deliberately installed. Use it on systems you own or
 > have explicit permission to test. See [SECURITY.md](SECURITY.md).
 
-## Layout
+## Highlights
 
+- **All five Anubis algorithms**: `fast`, `slow`, `sha256` (WASM), `argon2id`
+  (WASM) and `hashx` (WASM), byte-exact against every Anubis release.
+- **CPU kernels**: hand-written AVX2, SHA-NI, AVX-512 and AArch64 NEON/SHA-2
+  assembly, with runtime dispatch down to a portable C fallback.
+- **GPU backends** (all opt-in except SHA-256): CUDA, oneAPI Level Zero,
+  Vulkan — for SHA-256, Argon2id and HashX. OpenCL host is in place but not
+  wired yet.
+- **Three interfaces**: Python library + CLI, a public C/C++ header, and the
+  shared library on its own.
+- **Every GPU hit is re-verified** with the CPU reference; a mismatch silently
+  falls back, so a broken driver cannot produce an invalid proof.
+
+## Quick start
+
+```bash
+make                       # builds ./libanubis_solver.so
+python3 -c "import anubis_solver; print(anubis_solver.__version__)"
 ```
-src/                 C core and assembly kernels
-  anubis_solver.c    hash backends, nonce search, verification, threading
-  avx2.s             8-way AVX2 SHA-256 compression (hand-written asm)
-  shani.s            SHA-NI single-block compression (hand-written asm)
-  neon.s             AArch64 NEON + ARMv8 SHA-2 single-block compression
-  hashx.c/.h         C port of tevador/hashx (LGPL-3.0) — see notices
-  vulkan.c           optional Vulkan compute backend (dlopen, SHA-256 only)
-  sha256_comp.comp   GLSL compute shader for the GPU path
-third_party/argon2/  reference Argon2 (CC0-1.0 / Apache-2.0)
-anubis_solver.py     Python library (ctypes) + requests client + CLI
-tests/               unit, local end-to-end, version-matrix and CVE harnesses
-examples/            small runnable snippets for library users
-tools/gen_avx2_s.py  emits the unrolled avx2.s (checked in)
-tools/build_shader.sh compiles the shader and embeds the SPIR-V header
-tools/bench_tiers.py benchmarks every light/medium/hard difficulty tier
-results/             raw results from the version, speed and CVE runs
+
+```python
+from anubis_solver import AnubisClient
+
+with AnubisClient("http://127.0.0.1:8923") as client:
+    r = client.get("/")            # loads, solves, retries automatically
+    print(r.status_code)
+```
+
+```bash
+python3 anubis_solver.py http://127.0.0.1:8923 --threads 8
+python3 examples/basic.py http://127.0.0.1:8923
+```
+
+C and C++:
+
+```c
+#include <anubis-solver.h>
+
+uint64_t nonce; char hex[65]; double ms;
+anubis_solve_nibbles("challenge", 4, 0, 0, 0.0, &nonce, hex, &ms);
+```
+
+```bash
+cc  demo.c   -Iinclude -L. -lanubis_solver -Wl,-rpath,"$PWD" -o demo && ./demo
+c++ demo.cpp -Iinclude -L. -lanubis_solver -Wl,-rpath,"$PWD" -o demo && ./demo
 ```
 
 ## Documentation
 
-C and C++ users can `#include <anubis-solver.h>` from
-[`include/`](include/anubis-solver.h) — see
-[`examples/c_demo.c`](examples/c_demo.c) and
-[`examples/cpp_demo.cpp`](examples/cpp_demo.cpp).
-
-New here? Start with [BEGINNER.md](BEGINNER.md) — build, quick start, first
-request in a few minutes. The rest lives in [`docs/`](docs/index.md):
+New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 
 | page | what it covers |
 |---|---|
-| [python.md](docs/python.md) | Python API: solver, challenges, client, sessions |
-| [c-api.md](docs/c-api.md) | C ABI, linking, dlopen, return codes |
-| [cli.md](docs/cli.md) | command line |
-| [gpu.md](docs/gpu.md) | CUDA / Level Zero / Vulkan / OpenCL backends and env vars |
-| [troubleshooting.md](docs/troubleshooting.md) | common build and runtime errors |
-| [development.md](docs/development.md) | layout, build, kernel regeneration |
+| [docs/python.md](docs/python.md) | Python API: solver, challenges, client, sessions |
+| [docs/c-api.md](docs/c-api.md) | C/C++ header, C ABI, dlopen, return codes |
+| [docs/cli.md](docs/cli.md) | command line |
+| [docs/gpu.md](docs/gpu.md) | CUDA / Level Zero / Vulkan / OpenCL backends and env vars |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | common build and runtime errors |
+| [docs/development.md](docs/development.md) | layout, build, kernel regeneration, tests |
+| [SPEED.md](SPEED.md) | measured throughput, per tier and per version |
+
+## Layout
+
+```
+include/anubis-solver.h  public C/C++ API
+anubis_solver.py         Python library (ctypes), requests client, CLI
+src/anubis_solver.c      C core: hashing, search loop, backends dispatch
+src/hashx.c/.h           C port of tevador/hashx (LGPL-3.0) + x86-64/AArch64 JITs
+src/avx2.s, shani.s      x86-64 SHA-256 kernels
+src/avx512.s             AVX-512 16-way SHA-256 kernel
+src/neon.s               AArch64 NEON + ARMv8 SHA-2 kernel
+src/cuda_sha256.cu       CUDA SHA-256
+src/cuda_argon2.cu       CUDA Argon2id (one block per hash)
+src/cuda_hashx.cu        CUDA HashX (program interpreter)
+src/levelzero_sha256.c   Level Zero SHA-256
+src/levelzero_argon2.c   Level Zero Argon2id
+src/levelzero_hashx.c    Level Zero HashX
+src/*.cl, *.comp         OpenCL C / GLSL kernels (embedded as SPIR-V)
+src/vulkan.c             Vulkan SHA-256, Argon2id and HashX
+src/opencl_backend.c     portable OpenCL host (not wired yet)
+third_party/argon2/      reference Argon2id (CC0-1.0 / Apache-2.0)
+tests/                   unit, local end-to-end, version matrix, CVE harness
+examples/                Python, C and C++ samples
+tools/                   kernel generators, build scripts, benchmarks
+results/                 raw benchmark JSON
+```
 
 ## Build
 
 ```bash
-make                 # libanubis_solver.so (needs cc + x86-64 assembler)
+make                 # libanubis_solver.so
 make test            # unit tests
+make clean
+make CUDA=0          # force-skip CUDA
+make VULKAN=0        # force-skip Vulkan
+make L0_INC=/path    # where level_zero/ze_api.h lives
 ```
 
 The Python module also builds the library on first import if `make` has not
-been run.
+been run. Backends are auto-detected:
 
-On AArch64 (Raspberry Pi 5, Apple silicon under Linux, servers) the build
-uses `src/neon.s` — NEON plus the ARMv8 SHA-2 crypto instructions. Runtime
-dispatch checks `HWCAP_SHA2`; CPUs without it (e.g. Pi 4) fall back to the
-portable C compression. `ANUBIS_NO_NEON=1` forces the fallback for A/B tests.
-
-CUDA support is auto-detected: if `nvcc` is on PATH the `fast`/`slow` and
-`sha256` challenges run on NVIDIA GPUs (all visible devices), and CUDA is
-preferred over Vulkan. Argon2id also has opt-in GPU paths
-(`ANUBIS_GPU_ARGON2=1`): CUDA runs one block per hash with up to 128
-concurrent hashes per device (~1750 h/s on two T4s vs ~85 h/s on a 4-vCPU
-host), the Level Zero backend does the same on Intel GPUs (~200 h/s on an Iris Xe
-vs ~43 h/s for one CPU thread), and the Vulkan backend (GLSL with uvec2
-emulation) reaches ~230-330 h/s on the same GPU. `make CUDA=0` compiles it out; `ANUBIS_NO_CUDA=1`
-disables it at runtime.
-
-Intel GPUs are reached through **oneAPI Level Zero** (oneAPI's low-level C
-API): the build picks up `level_zero/ze_api.h` (`L0_INC=/path` if it lives
-elsewhere), the SPIR-V kernel is `src/sha256_pow.cl`, and the loader is
-`dlopen`ed. Runtime needs the Intel Level Zero driver + IGC; `ANUBIS_NO_LEVELZERO=1`
-forces the fallback. Dispatch order is CUDA → Level Zero → Vulkan → CPU.
-
-Vulkan support is auto-detected from `/usr/include/vulkan/vulkan.h`; the
-library `dlopen`s `libvulkan.so.1` at runtime, so a machine without Vulkan just
-uses the CPU paths. Build with `VULKAN=0` to compile it out. With both
-backends built, the order is CUDA → Level Zero → Vulkan → CPU. If you change the
-shader, regenerate `src/sha256_comp.spv.h` with `make shader` (needs
-`glslangValidator`).
+| found | built |
+|---|---|
+| x86-64 | `avx2.s`, `shani.s` (AVX-512 too when the assembler and CPU support it) |
+| AArch64 | `neon.s` (ARMv8 SHA-2, runtime-checked via `HWCAP_SHA2`) |
+| `nvcc` | CUDA backends |
+| `level_zero/ze_api.h` | Level Zero backends |
+| `vulkan/vulkan.h` | Vulkan backends |
+| `glslangValidator` | only to regenerate the Vulkan SPIR-V (`make shader`) |
 
 ```bash
 pip install -r requirements.txt   # requests; curl_cffi and argon2-cffi optional
 ```
 
-## Python library
-
-```python
-from anubis_solver import AnubisClient
-
-client = AnubisClient("http://127.0.0.1:8923", threads=4)
-resp = client.get("/")             # solves the challenge automatically
-print(resp.status_code, resp.text)
-
-for sol in client.solutions:
-    print(sol.algorithm, sol.difficulty, sol.nonce, f"{sol.elapsed_ms:.1f} ms")
-```
-
-Lower-level use:
-
-```python
-from anubis_solver import AnubisSolver, parse_challenge
-
-challenge = parse_challenge(html)          # AnubisChallenge | None
-sol = AnubisSolver(threads=8).solve(challenge)
-print(sol.nonce, sol.response)
-```
-
-CLI:
-
-```bash
-python3 anubis_solver.py http://127.0.0.1:8923/ --threads 8
-```
-
-## Examples
-
-[`examples/`](examples/) has standalone snippets:
-
-| file | shows |
-|---|---|
-| [`basic.py`](examples/basic.py) | fetch a protected page with the high-level client |
-| [`solver.py`](examples/solver.py) | parse a challenge, solve it, verify the digest (offline) |
-| [`impersonate.py`](examples/impersonate.py) | `curl_cffi` TLS/JA3 impersonation |
-| [`gpu.py`](examples/gpu.py) | report GPU/affinity and solve on the GPU |
-
-```bash
-python3 examples/solver.py
-python3 examples/basic.py http://127.0.0.1:8923
-python3 examples/gpu.py --solve
-```
-
 ## Supported challenges
 
-| `rules.algorithm` | Primitive | Difficulty unit | Status |
+| `rules.algorithm` | primitive | difficulty unit | status |
 |---|---|---|---|
 | `fast` | SHA-256(`challenge` + decimal nonce) | leading zero hex nibbles | ✅ |
-| `slow` | same primitive, different client-side implementation | nibbles | ✅ |
+| `slow` | same primitive, different client implementation | nibbles | ✅ |
 | `sha256` (WASM) | SHA-256(raw challenge + uint32 nonce) | leading zero bits | ✅ |
 | `argon2id` (WASM) | Argon2id(password=challenge, salt=u64 nonce) | leading zero bits | ✅ |
 | `hashx` (WASM) | HashX program derived from the challenge | leading zero bits | ✅ |
@@ -154,8 +141,7 @@ Byte-exact details:
   decoded challenge byte is `>= 0x80`, big-endian otherwise. Argon2id encodes it
   as a 64-bit salt with the same byte order.
 - **argon2id parameters**: Argon2id v1.3, `m=19456 KiB`, `t=2`, `p=1`, 32-byte
-  output — the Rust `argon2::Argon2::default()`. Each worker needs ~19 MiB, so
-  the C layer caps Argon2id at 16 threads.
+  output — Rust's `argon2::Argon2::default()`.
 - **hashx**: `HashX::new(challenge)`; if the generator rejects the seed, a
   little-endian u32 counter is appended and the seed retried — the port does the
   same, so client and server agree on the program.
@@ -170,162 +156,176 @@ Unknown algorithms raise `UnsupportedAlgorithm`.
 | v1.17.0 – v1.21.3 | `{"challenge": "<hex>", "rules": {...}}` | challenge is a string, no `id` |
 | v1.22.0 – latest | `{"challenge": {"id", "randomData", ...}, "rules": {...}}` | current shape; `id` is sent to `pass-challenge` |
 
-## curl_cffi (browser fingerprint impersonation)
+## GPU backends
 
-Anubis can weigh JA3/JA4H or expect the User-Agent to match the TLS stack. Use a
-`curl_cffi` profile instead of the plain `requests` session:
+GPU use is opt-in and verified; the CPU is always available. Dispatch order:
+**CUDA → Level Zero → Vulkan → OpenCL → CPU** (whichever are compiled in and
+present).
+
+| algorithm | enable with | backends |
+|---|---|---|
+| SHA-256 (`fast`, `slow`, `sha256`) | automatic (work-threshold gated) | CUDA, Level Zero, Vulkan |
+| Argon2id | `ANUBIS_GPU_ARGON2=1` | CUDA, Level Zero, Vulkan |
+| HashX | `ANUBIS_GPU_HASHX=1` | CUDA |
+| HashX on Intel iGPU | `ANUBIS_L0_HASHX=1` | Level Zero |
+| HashX portable | `ANUBIS_VULKAN_HASHX=1` | Vulkan |
+
+Measured (details in [SPEED.md](SPEED.md)):
+
+| hardware | Argon2id d8 | HashX | SHA-256 `fast` d6 |
+|---|---:|---:|---:|
+| 2× Tesla T4 (CUDA) | ~1750 h/s | ~70–110 MH/s | — |
+| Iris Xe (Level Zero) | ~290 h/s | ~2–3 MH/s | 137 MH/s |
+| Iris Xe (Vulkan) | ~330 h/s | ~3 MH/s | 105 MH/s |
+| one CPU thread (laptop) | ~38 h/s | ~4 MH/s | ~10 MH/s |
+
+The Intel-GPU HashX kernels are correct but slower than the CPU on an Iris Xe,
+hence the separate flags. On a Raspberry Pi 5, V3DV is detected but compute
+kernels do not verify, so everything falls back to the CPU.
+
+Environment controls:
+
+| variable | effect |
+|---|---|
+| `ANUBIS_NO_CUDA`, `ANUBIS_NO_LEVELZERO`, `ANUBIS_NO_VULKAN`, `ANUBIS_NO_OPENCL` | disable a backend |
+| `ANUBIS_CPU_AFFINITY` | `pcores` (default), `off`, or a mask like `0,2,4,6` |
+| `ANUBIS_CUDA_MIN_WORK`, `ANUBIS_L0_MIN_WORK`, `ANUBIS_VULKAN_MIN_WORK` | dispatch thresholds |
+| `ANUBIS_CUDA_CHUNK`, `ANUBIS_L0_CHUNK`, `ANUBIS_VULKAN_CHUNK` | SHA-256 nonces per dispatch |
+| `ANUBIS_CUDA_ARGON2_LANES`, `ANUBIS_L0_ARGON2_LANES`, `ANUBIS_VULKAN_ARGON2_LANES` | concurrent Argon2id hashes |
+| `ANUBIS_CUDA_HASHX_CHUNK`, `ANUBIS_L0_HASHX_CHUNK`, `ANUBIS_VULKAN_HASHX_CHUNK` | HashX nonces per dispatch |
+| `ANUBIS_VULKAN_DEVICE`, `ANUBIS_VULKAN_ALLOW_CPU` | device choice / allow lavapipe |
+
+Argon2id needs ~19 MiB of device memory per concurrent hash (64 lanes ≈ 1.3 GB).
+Every GPU result is recomputed on the CPU before it is accepted.
+
+## Python library
 
 ```python
-client = AnubisClient("https://example.com", impersonate="chrome")
+from anubis_solver import AnubisClient
 
-# or bring your own session
-from curl_cffi import requests as cr
-client = AnubisClient("https://example.com", session=cr.Session(impersonate="chrome120"))
+client = AnubisClient("http://127.0.0.1:8923", threads=4)
+resp = client.get("/")
+print(resp.status_code, len(resp.text))
+
+for sol in client.solutions:
+    print(sol.algorithm, sol.difficulty, sol.nonce, f"{sol.elapsed_ms:.1f} ms")
 ```
+
+Lower level:
+
+```python
+from anubis_solver import AnubisSolver, parse_challenge
+
+challenge = parse_challenge(html)          # AnubisChallenge | None
+solver = AnubisSolver(threads=8)
+sol = solver.solve(challenge)
+print(sol.nonce, sol.response, solver.verify(challenge, sol.nonce))
+print(solver.gpu)                          # detected GPU backend or None
+```
+
+CLI and browser impersonation:
 
 ```bash
-python3 anubis_solver.py https://example.com/ --impersonate chrome
+python3 anubis_solver.py https://example.com --impersonate chrome --threads 8
 ```
 
-`curl_cffi` is optional. When impersonating, the profile's browser User-Agent is
-kept so fingerprint and UA agree.
+`curl_cffi` is optional; when impersonating, the profile's User-Agent is kept so
+TLS fingerprint and UA agree. See [docs/python.md](docs/python.md) and
+[docs/cli.md](docs/cli.md).
 
-## CVE-2026-62314 (opt-in)
+## C / C++ API
 
-Anubis v1.22.0 .. < v1.26.0-pre1 trusts the client-controlled `X-Original-URI`
-header in `lib/policy/checker.go` `PathChecker.Check()`, so a request can match
-the shipped `keep-internet-working` ALLOW rules (`^/\.well-known/.*$`, …) and
-skip the challenge entirely.
+`include/anubis-solver.h` declares everything (`extern "C"`, so C++ works).
+Samples: [`examples/c_demo.c`](examples/c_demo.c),
+[`examples/cpp_demo.cpp`](examples/cpp_demo.cpp); reference in
+[docs/c-api.md](docs/c-api.md).
 
-This is an exploit of a known vulnerability, not part of the documented
-protocol, so the client:
+## Examples
 
-- does **not** use it by default (`use_cve=False`);
-- only tries it after a challenge was issued;
-- only targets loopback/private addresses unless `allow_remote_cve=True`;
-- emits a warning when it fires.
+| file | shows |
+|---|---|
+| [`basic.py`](examples/basic.py) | fetch a protected page with the high-level client |
+| [`solver.py`](examples/solver.py) | parse a challenge, solve, verify (offline) |
+| [`impersonate.py`](examples/impersonate.py) | `curl_cffi` TLS/JA3 impersonation |
+| [`gpu.py`](examples/gpu.py) | report GPU/affinity and solve on the GPU |
+| [`c_demo.c`](examples/c_demo.c), [`cpp_demo.cpp`](examples/cpp_demo.cpp) | the C/C++ API |
 
-```python
-client = AnubisClient("http://127.0.0.1:8923", use_cve=True)
-resp = client.get("/")
-if client.cve_bypasses:
-    print("bypassed, no PoW run")
+```bash
+python3 examples/solver.py
+python3 examples/basic.py http://127.0.0.1:8923
+python3 examples/gpu.py --solve
 ```
 
-`tests/test_cve_2026_62314.py` verifies the bypass against locally built
-releases; results are in [`results/cve-2026-62314.json`](results/cve-2026-62314.json).
+## Performance (CPU)
 
-## Performance
+Per-tier and per-version timings: **[SPEED.md](SPEED.md)**. Difficulty 6
+(`git.ffmpeg.org`'s setting, ~16.7M hashes expected), one pinned core of an
+i7-1260P:
 
-Per-tier and per-version timings live in **[SPEED.md](SPEED.md)**. Summary:
-difficulty 6 (`git.ffmpeg.org`'s setting, ~16.7M hashes expected), one pinned
-core of an i7-1260P:
-
-| path | `fast` | `sha256` (WASM bits20) |
-|---|---|---|
+| path | `fast` | `sha256` (bits 20) |
+|---|---:|---:|
 | portable C | 1.56 MH/s | 1.90 MH/s |
 | `shani.s` only | 5.57 MH/s | 5.65 MH/s |
 | `avx2.s` + C scalar | 7.27 MH/s | — |
 | `avx2.s` + `shani.s` | **7.51 MH/s** | **6.80 MH/s** |
+| `avx512.s` (16-way) | 18.5 MH/s | 25.1 MH/s |
 
-- `avx2.s`: eight candidate messages in one SHA-256 compression — PoW walks the
-  nonce, so a batch shares message length (and padding), and one `__m256i` holds
-  the same word of eight messages. State stays in `ymm0..7` with roles rotated
-  by macro arguments; the message schedule lives in a 2 KiB stack frame.
-- `shani.s`: Intel SHA extensions (`sha256rnds2`, `sha256msg1/2`) for
-  single-block hashing; used when a batch cannot form and by `verify_*`.
-- Runtime dispatch on x86-64: AVX-512 16-way → AVX2 8-way → SHA-NI single →
-  portable C; on AArch64: ARMv8 SHA-2 (NEON) single block → portable C. `ANUBIS_NO_AVX2=1`,
-  `ANUBIS_NO_SHANI=1` and `ANUBIS_NO_NEON=1` force the lower paths for A/B
-  comparison.
+- `avx2.s`: eight candidate messages per SHA-256 compression (the nonce walk
+  shares message length/padding); `avx512.s` does sixteen, with the schedule
+  kept in registers and `vpternlogd` for XOR3.
+- `shani.s`: Intel SHA extensions for single-block hashing; used for `verify_*`
+  and when a batch cannot form.
+- Dispatch on x86-64: AVX-512 16-way → AVX2 8-way → SHA-NI → portable C; on
+  AArch64: ARMv8 SHA-2 → C. `ANUBIS_NO_AVX2`, `ANUBIS_NO_SHANI`,
+  `ANUBIS_NO_AVX512`, `ANUBIS_NO_NEON` force lower paths for A/B tests.
 
 Expected time by tier (one core): `fast`/`slow` light 0.1 ms, medium ~10 ms,
 hard ~2 s; `sha256` similar; `hashx` 0.2 ms / 15 ms / 294 ms; `argon2id`
 148 ms / 508 ms / 1.85 s. Versions up to v1.27.0 only offer `fast`/`slow`;
 v1.28.0+ adds the three WASM algorithms.
 
-With a Vulkan GPU, `fast`/`slow` hard drops to ~77 ms and `sha256` 24 bits to
-~78 ms on an Iris Xe; see [SPEED.md](SPEED.md#gpu-vulkan).
+On a Raspberry Pi 5 (Cortex-A76) the NEON/SHA-2 path reaches ~10.1 MH/s
+(`fast`) and ~12.8 MH/s (`sha256`) per core, scaling to 40.4 / 43.2 MH/s on
+four cores. The AArch64 HashX JIT does ~1.6 MH/s per core (6.35 on four).
 
-On a Raspberry Pi 5 (Cortex-A76, 2.4 GHz) the NEON/SHA-2 path reaches
-~10.1 MH/s (`fast`) and ~12.8 MH/s (`sha256`) per core, scaling to
-40.4 / 43.2 MH/s on four cores — about 5× faster than the portable C path.
-The AArch64 HashX JIT does ~1.6 MH/s per core (6.35 MH/s on four), ~5.3×
-the interpreter.
+Threading and affinity: on hybrid CPUs workers are pinned to physical P-cores
+by default and the default thread count is the P-core count.
+`ANUBIS_CPU_AFFINITY=off` disables pinning; an explicit mask pins to those CPUs.
 
-Threading and CPU affinity: on hybrid CPUs (Intel P/E cores) workers are pinned
-to the physical P-cores by default and the default thread count is the P-core
-count. `ANUBIS_CPU_AFFINITY=off` disables pinning, and an explicit mask such as
-`ANUBIS_CPU_AFFINITY=0,2,4,6` pins to those CPUs. `solver.affinity` reports the
-result. On power-limited laptops fewer threads can be faster regardless of
-pinning; pass `--threads` to override the default.
+## curl_cffi (browser fingerprint impersonation)
 
-## GPU (Vulkan)
-
-The SHA-256 challenges (`fast`, `slow`, `sha256`) can run on any Vulkan compute
-device. The host code loads `libvulkan.so.1` at runtime, so there is no build or
-run dependency on Vulkan unless a device is present. `argon2id` and `hashx`
-remain CPU-only.
+Anubis can weigh JA3/JA4H or expect the User-Agent to match the TLS stack:
 
 ```python
-from anubis_solver import AnubisSolver
-solver = AnubisSolver()
-print(solver.gpu)                  # e.g. "Intel(R) Iris(R) Xe Graphics (ADL GT2)"
+client = AnubisClient("https://example.com", impersonate="chrome")
 ```
 
-The GPU is used only when the expected work is large enough to pay for dispatch
-(`fast`/`slow` difficulty ≥ 5, `sha256` ≥ 16 bits by default); lower difficulties
-stay on the CPU, where they are faster. Every GPU result is recomputed with the
-CPU implementation before it is accepted, so a shader bug cannot produce an
-invalid proof.
+or bring your own `curl_cffi` session. `curl_cffi` is optional.
 
-Measured on an Intel Iris Xe (i7-1260P), one CPU core vs the iGPU:
+## CVE-2026-62314 (opt-in)
 
-| challenge | CPU | GPU | speedup |
-|---|---:|---:|---:|
-| `fast` difficulty 5 | 108 ms | 29 ms | 3.7× |
-| `fast` difficulty 6 | 2.27 s | 77 ms | 29× |
-| `sha256` 20 bits | 396 ms | 26 ms | 15× |
-| `sha256` 24 bits | 1.75 s | 78 ms | 22× |
+Anubis v1.22.0 .. < v1.26.0-pre1 trusts the client-controlled `X-Original-URI`
+header in `PathChecker.Check()`, so a request can match the shipped
+`keep-internet-working` ALLOW rules and skip the challenge.
 
-Environment variables:
+This is an exploit of a known vulnerability, so the client:
 
-| variable | effect |
-|---|---|
-| `ANUBIS_NO_VULKAN=1` | disable the backend and always use the CPU |
-| `ANUBIS_VULKAN_ALLOW_CPU=1` | allow a CPU-type Vulkan device (Mesa lavapipe) |
-| `ANUBIS_VULKAN_DEVICE=NAME` | substring match to choose a device |
-| `ANUBIS_VULKAN_CHUNK=N` | invocations per dispatch (default 4 MiB) |
-| `ANUBIS_VULKAN_MIN_WORK=N` | override the dispatch threshold |
+- does **not** use it by default (`use_cve=False`);
+- only tries it after a challenge was issued;
+- only targets loopback/private addresses unless `allow_remote_cve=True`;
+- emits a warning when it fires.
 
-First use in a process pays device/queue/pipeline creation (tens of ms when the
-driver's shader cache is warm, longer on a cold cache).
+`tests/test_cve_2026_62314.py` verifies it against locally built releases;
+results in [`results/cve-2026-62314.json`](results/cve-2026-62314.json).
 
 ## Tested versions
 
-Every stable Anubis release and every pre-release tag was built from source and
-challenged through the algorithms it supports:
-
-```
-version   fast  slow  sha256  hashx  argon2id
-v1.12.1   ok
-...
-v1.27.0   ok    ok
-v1.28.0   ok    ok    ok      ok     ok
-v1.28.2   ok    ok    ok      ok     ok
-```
-
-**110/110 cases across all 56 tags** (31 stable + 25 pre-release; the
-`v1.17.0.signed` tag is a signing artifact and is skipped). Raw results:
+Every stable release and pre-release tag was built from source and challenged
+through the algorithms it supports: **110/110 cases across all 56 tags**
+(31 stable + 25 pre-release; `v1.17.0.signed` is a signing artifact and is
+skipped). Raw results:
 [`results/version-matrix.json`](results/version-matrix.json),
 [`results/version-matrix-prereleases.json`](results/version-matrix-prereleases.json).
-
-HashX also has a CUDA backend (`ANUBIS_GPU_HASHX=1`): the generated program is
-interpreted on the GPU, one thread per nonce, ~70-110 MH/s on two T4s versus
-~8.8 MH/s for one CPU thread. Hits are re-verified by the CPU. A Level Zero
-HashX kernel also exists (`ANUBIS_L0_HASHX=1`), and a Vulkan one
-(`ANUBIS_VULKAN_HASHX=1`), but both are slower than the CPU on an Iris Xe
-(~2-3 vs ~4 MH/s), so they are off by default.
 
 ## Tests
 

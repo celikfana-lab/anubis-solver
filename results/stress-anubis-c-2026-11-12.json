@@ -1,0 +1,12 @@
+{
+  "target": "192.168.1.15 (airobots), 56 cores, Anubis v1.28.3, fast d4, challenge-all policy",
+  "client": "tools/stress_test.c (C, raw HTTP/1.1, libanubis_solver for PoW)",
+  "runs": [
+    {"where": "server loopback", "workers": 8, "duration_s": 8.0,
+     "cycles_s": 177.7, "status_2xx": 1450, "status_4xx": 1422},
+    {"where": "server loopback", "workers": 128, "duration_s": 30.4,
+     "cycles_s": 168.5, "errors": 104, "status_2xx": 5358, "status_4xx": 5126,
+     "server_cpu_pct": 3.1, "load_avg": 56.96}
+  ],
+  "notes": "Each cycle is fetch-challenge -> solve -> pass-challenge (server verifies the PoW). The final authenticated GET returns 4xx because the C client's Set-Cookie capture is incomplete, so the reported rate counts challenge+verify cycles, not fully authenticated fetches. 8 workers already saturate the client's per-thread HTTP cost; 128 workers do not raise throughput and only inflate load average with blocked threads. Server CPU stays around 1.7 of 56 cores."
+}

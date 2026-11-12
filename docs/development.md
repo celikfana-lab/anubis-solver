@@ -74,10 +74,23 @@ python3 tools/stress_test.py --url http://192.168.1.15:8923 \
     --duration 60 --concurrency 64 --i-own-this-host
 ```
 
+A C version with no Python in the loop is also included:
+
+```bash
+cc -O2 -o stress_test tools/stress_test.c -Iinclude -L. -lanubis_solver \
+   -Wl,-rpath,'$ORIGIN' -pthread
+./stress_test --host 192.168.1.15 --port 8923 --duration 30 \
+   --concurrency 128 --i-own-this-host
+```
+
 Measured on a 56-core server running Anubis v1.28.3 (challenge-all policy,
-`fast` d4): 70 req/s from a laptop over LAN (1.3% server CPU) and 116 req/s
-from the server itself at 256 workers (5.6% CPU, load 4.7). The Python client
-saturates before the server does; it is a benchmark, not a practical DoS.
+`fast` d4): 70 req/s from a laptop over LAN (1.3% server CPU) with the Python
+client, 116 req/s locally at 256 Python workers (5.6% CPU), and 168-178
+challenge+verify cycles/s with the C client (3.1% server CPU, ~1.7 cores).
+Throughput plateaus because each cycle costs three HTTP round trips; the
+server never gets close to saturation. The C client's authenticated fetch
+returns 4xx (incomplete `Set-Cookie` capture), so its rate counts the
+challenge/verify cycles, not fully authenticated pages.
 Raw data: [`results/stress-anubis-2026-11-12.json`](../results/stress-anubis-2026-11-12.json).
 
 ## Benchmarks

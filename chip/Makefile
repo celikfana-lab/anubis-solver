@@ -6,15 +6,19 @@ YOSYS    ?= yosys
 
 all: sim
 
-sim: tb_sha256 tb_pow tb_argon2_fill tb_lpddr6 tb_blake2b
+sim: tb_sha256 tb_pow tb_argon2_fill tb_lpddr6 tb_blake2b tb_blake2b_stream
 	$(VVP) tb_sha256
 	$(VVP) tb_pow
 	$(VVP) tb_argon2_fill
 	$(VVP) tb_lpddr6
 	$(VVP) tb_blake2b
+	$(VVP) tb_blake2b_stream
 
 blake2b: tb_blake2b
 	$(VVP) tb_blake2b
+
+stream: tb_blake2b_stream
+	$(VVP) tb_blake2b_stream
 
 argon: tb_argon2_fill
 	$(VVP) tb_argon2_fill
@@ -34,6 +38,10 @@ tb_lpddr6: tb_lpddr6.v lpddr6_if.v lpddr6_model.v
 tb_blake2b: tb_blake2b.v blake2b_core.v
 	$(IVERILOG) -g2012 -o $@ $^
 
+tb_blake2b_stream: tb_blake2b_stream.v blake2b_stream.v blake2b_core.v
+	python3 gen_blake2b_vectors.py
+	$(IVERILOG) -g2012 -o $@ tb_blake2b_stream.v blake2b_stream.v blake2b_core.v
+
 tb_argon2_fill: tb_argon2_fill.v argon2_fill.v
 	python3 gen_argon_vectors.py
 	$(IVERILOG) -g2012 -o $@ tb_argon2_fill.v argon2_fill.v
@@ -42,4 +50,4 @@ synth:
 	$(YOSYS) -p "read_verilog -sv sha256_core.v anubis_pow.v; synth -top sha256_core; stat"
 
 clean:
-	rm -f tb_sha256 tb_pow tb_argon2_fill tb_blake2b tb_lpddr6 *.vcd prev.hex ref.hex dst.hex expected.hex
+	rm -f tb_sha256 tb_pow tb_argon2_fill tb_blake2b tb_blake2b_stream tb_lpddr6 *.vcd prev.hex ref.hex dst.hex expected.hex b2_vectors.hex

@@ -1,3 +1,15 @@
+# simulation binaries
 tb_sha256
 tb_pow
+tb_argon2_fill
+tb_blake2b
+tb_blake2b_stream
+tb_lpddr6
+# waveforms
 *.vcd
+# generated vectors (rebuilt by the Makefile)
+prev.hex
+ref.hex
+dst.hex
+expected.hex
+b2_vectors.hex

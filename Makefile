@@ -67,6 +67,9 @@ $(BUILD):
 $(BUILD)/%.o: src/%.c | $(BUILD)
 	$(CC) $(CFLAGS) $(NATIVE) $(INC) -pthread -c $< -o $@
 
+$(BUILD)/%.o: src/%.cu | $(BUILD)
+	$(NVCC) -O3 -Xcompiler -fPIC -c $< -o $@
+
 $(BUILD)/%.o: src/%.s | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -74,7 +77,7 @@ $(BUILD)/argon2/%.o: third_party/argon2/%.c | $(BUILD)
 	$(CC) $(CFLAGS) $(NATIVE) $(INC) -pthread -c $< -o $@
 
 $(LIB): $(OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJ)
+	$(LINK) $(LDFLAGS) -o $@ $(OBJ)
 
 test: $(LIB)
 	python3 tests/test_core.py

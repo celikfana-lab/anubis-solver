@@ -62,6 +62,24 @@ OpenCL backend; regenerate it after editing a `.cl` file.
 Level Zero rejects SPIR-V newer than 1.2, hence
 `llvm-spirv --spirv-max-version=1.2` in the build scripts.
 
+## Load testing your own Anubis
+
+`tools/stress_test.py` drives the normal client flow (challenge, solve,
+`pass-challenge`, fetch) and reports requests/s, solves/s, latency and status
+codes. It refuses non-private targets, requires `--i-own-this-host`, and caps
+duration (300 s) and concurrency (256).
+
+```bash
+python3 tools/stress_test.py --url http://192.168.1.15:8923 \
+    --duration 60 --concurrency 64 --i-own-this-host
+```
+
+Measured on a 56-core server running Anubis v1.28.3 (challenge-all policy,
+`fast` d4): 70 req/s from a laptop over LAN (1.3% server CPU) and 116 req/s
+from the server itself at 256 workers (5.6% CPU, load 4.7). The Python client
+saturates before the server does; it is a benchmark, not a practical DoS.
+Raw data: [`results/stress-anubis-2026-11-12.json`](../results/stress-anubis-2026-11-12.json).
+
 ## Benchmarks
 
 ```bash

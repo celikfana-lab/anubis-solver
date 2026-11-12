@@ -1,0 +1,20 @@
+{
+  "target": {
+    "host": "192.168.1.15 (airobots), 56 cores, idle before the test",
+    "service": "Anubis v1.28.3, -policy CHALLENGE for any user-agent, algorithm fast, difficulty 4",
+    "backend": "python3 -m http.server on 127.0.0.1:9000"
+  },
+  "client": "anubis-solver 1.1.0, tools/stress_test.py",
+  "runs": [
+    {"where": "laptop -> server (LAN)", "workers": 64, "duration_s": 61.3,
+     "req_s": 70.3, "solves_s": 70.3, "errors": 0, "p50_ms": 655.7, "p95_ms": 2462.0,
+     "server_cpu_pct": 1.3},
+    {"where": "server loopback", "workers": 8, "duration_s": 5.1,
+     "req_s": 113.8, "solves_s": 113.8, "errors": 0, "p50_ms": 64.8, "p95_ms": 123.6,
+     "server_cpu_pct": null},
+    {"where": "server loopback", "workers": 256, "duration_s": 47.2,
+     "req_s": 116.4, "solves_s": 116.4, "errors": 0, "p50_ms": 1282.2, "p95_ms": 3554.8,
+     "server_cpu_pct": 5.6, "server_cores_used": 3.1, "load_avg_after": 4.69}
+  ],
+  "notes": "Every request is a fresh cookie -> challenge -> solve -> pass-challenge -> fetch cycle, so each counted request is a real proof of work the server designed. Throughput plateaus around 115 req/s because the Python client (GIL) saturates first; the Anubis server used only ~3 of 56 cores at that point. This is not an effective DoS vector against a modern server; it is a load/benchmark harness."
+}

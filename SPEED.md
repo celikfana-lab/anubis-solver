@@ -178,6 +178,12 @@ measured 2026-11-12:
 | 2 | 20.3 MH/s | 25.8 MH/s | 3.25 MH/s | 46.1 h/s |
 | 4 | 40.4 MH/s | 43.2 MH/s | **6.35 MH/s** | 41.2 h/s |
 
+**GPU on the Pi 5:** Mesa's V3DV driver (V3D 7.1.10.2) is detected and the
+Vulkan backend loads, but neither the SHA-256 nor the Argon2id compute kernel
+produces a verifiable digest there yet (the solver falls back to CPU, which is
+why the Vulkan and CPU rows match). So Argon2id on the Pi 5 is CPU-only for
+now: ~29 h/s on one core, ~46 h/s on two.
+
 The NEON/SHA-2 kernel is ~5× faster than the portable C fallback
 (`fast` d6: 1.09 s vs 5.22 s). `ANUBIS_NO_NEON=1` reproduces the fallback.
 

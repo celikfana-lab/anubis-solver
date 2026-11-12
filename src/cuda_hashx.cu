@@ -254,6 +254,7 @@ static int hx_init(void) {
     return 1;
 }
 
+extern "C" {
 int anubis_cuda_hashx_available(void) {
     return hx_init();
 }
@@ -448,3 +449,4 @@ int anubis_cuda_hashx_digest(const void *state, size_t state_size,
     pthread_mutex_unlock(&g_hx.mu);
     return 0;
 }
+} /* extern "C" */

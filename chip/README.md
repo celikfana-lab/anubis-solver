@@ -55,6 +55,47 @@ so every search hashed an extra all-zero block. It is now a 2-bit count
 - Per nonce: patch the nonce word, compress, optional second block, test the
   digest's leading bits; on a miss increment and retry.
 
+## LPDDR6 memory
+
+Argon2id is memory-bound (19 MiB per hash), so the chip needs a DRAM path.
+LPDDR6 (JEDEC **JESD209-6**, published July 2025) is modelled here:
+
+| property | LPDDR6 |
+|---|---|
+| data rate | 10,667 – 14,400 MT/s per pin |
+| channel | 24 bit, split into two 12-bit sub-channels |
+| burst | BL24: 288-bit burst = 256 data bits + 32 metadata bits |
+| access granularity | 32-byte packet, 64-byte access = two packets |
+| bandwidth | up to ~38.4 GB/s per die (2 channels) |
+
+Sources: [JEDEC JESD209-6 announcement](https://www.notebookcheck.net/JEDEC-releases-LPDDR6-standard-data-rates-reach-14-400-MT-s.1055771.0.html),
+[performance analysis (24-bit channels, BL24 = 288 bits, 32/64-byte accesses)](https://ieeexplore.ieee.org/document/11380413),
+[channel architecture](https://www.eeworldonline.com/what-is-jesd209-6-and-why-is-it-important-for-edge-ai/).
+
+What is in the tree:
+
+| file | role |
+|---|---|
+| `lpddr6_model.v` | behavioural DRAM model: 32-byte packets, configurable latency, byte/access counters |
+| `lpddr6_if.v` | adaptor between a 1 KiB Argon2 block and `NPKT` (default 32) 32-byte packet accesses |
+| `tb_lpddr6.v` | writes and reads back a 1 KiB block through the adaptor and checks it |
+
+```
+$ make tb_lpddr6 && vvp tb_lpddr6
+write: 64 cycles, 1024 bytes
+read: 864 cycles, 2048 bytes
+tb_lpddr6: 1 KiB block round-trip OK through 32 x 32-byte packets
+```
+
+The adaptor issues one outstanding request at a time, so it is latency-bound in
+simulation (~27 cycles/packet with a 24-cycle model latency). Real bandwidth
+comes from pipelining across banks: at 14.4 GT/s a single 24-bit channel moves
+`24 × 14.4 Gb/s = 43.2 GB/s`, two channels ~86 GB/s. Argon2id moves roughly
+80 MB per hash (2 passes × 19 MiB, read+write), so the theoretical ceiling is
+~1000 hashes/s at 86 GB/s and ~500 at one channel — before latency, refresh and
+bank conflicts. Next step for the chip is a multi-bank, multi-outstanding
+request scheduler on top of `lpddr6_if`.
+
 ## Simulate
 
 ```bash

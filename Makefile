@@ -31,7 +31,7 @@ CORE_SRC := src/anubis_solver.c src/hashx.c
 VULKAN ?= auto
 ifneq ($(VULKAN),0)
 ifneq ($(wildcard /usr/include/vulkan/vulkan.h),)
-CORE_SRC += src/vulkan.c
+CORE_SRC += src/vulkan.c src/opencl_backend.c
 CFLAGS  += -DANUBIS_HAVE_VULKAN
 LDFLAGS += -ldl
 endif

@@ -18,6 +18,7 @@ page. Exit code is `0` on success and `1` on a failed request.
 | `--cve` | try the CVE-2026-62314 fast path (loopback targets only) |
 | `--allow-remote-cve` | allow that fast path for non-loopback targets |
 | `--affinity SPEC` | `pcores` (default), `off`, or a mask like `0,2,4,6` |
+| `--no-verify-gpu` | skip the CPU re-check of GPU hits (benchmarking only) |
 
 ## Examples
 

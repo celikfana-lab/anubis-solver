@@ -1,0 +1,18 @@
+{
+  "host": {
+    "gpu": "2x Tesla T4 (Kaggle)",
+    "cpu": "one host thread (Xeon @ 2.0 GHz)",
+    "measured": "2026-11-12"
+  },
+  "one_cpu_verify_hash_ms": {"argon2id": 13.69, "hashx": 0.08},
+  "argon2id_ms": {
+    "d6":  {"verify": 128.2, "no_verify": 114.7, "saved": 13.5, "pct": 10.5},
+    "d8":  {"verify": 128.7, "no_verify": 115.5, "saved": 13.2, "pct": 10.3},
+    "d10": {"verify": 128.9, "no_verify": 115.9, "saved": 12.9, "pct": 10.0}
+  },
+  "hashx_ms": {
+    "d24": {"verify": 71.3, "no_verify": 71.8, "saved": -0.5, "pct": -0.8},
+    "d26": {"verify": 716.2, "no_verify": 724.4, "saved": -8.2, "pct": -1.1}
+  },
+  "notes": "The saving equals one reference hash per accepted hit (13.5 ms Argon2id, 0.08 ms HashX), so it only matters when a hit is found in a single GPU batch; digests stay correct with verification disabled (checked against argon2-cffi)."
+}

@@ -78,6 +78,8 @@ const char *anubis_cpu_affinity_info(void);
 int anubis_batch_width(void);
 int anubis_sha256_hex(const char *data, size_t len, char *out_hex);
 int anubis_sha256_midstate(const char *data, size_t len, uint32_t out[8]);
+void anubis_set_gpu_verify(int enable);       /* default 1 */
+int anubis_gpu_verify(void);
 ```
 
 Which family to call: `nibbles` for `fast`/`slow`, `bits` for

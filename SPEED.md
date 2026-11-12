@@ -362,6 +362,23 @@ correct (same nonces as the CPU) but slower than one CPU thread on the Iris Xe:
 Gated behind `ANUBIS_VULKAN_HASHX=1`. Raw data:
 [`results/hashx-vulkan-irisxe.json`](results/hashx-vulkan-irisxe.json).
 
+## Cost of GPU hit verification
+
+Every accepted GPU hit is re-computed once on the CPU. On 2× T4 that is
+13.7 ms for Argon2id and 0.08 ms for HashX, so `--no-verify-gpu`
+(`ANUBIS_GPU_NO_VERIFY=1`) removes exactly one hash per hit:
+
+| workload | verify | no-verify | saved |
+|---|---:|---:|---:|
+| Argon2id d6 | 128.2 ms | 114.7 ms | 10.5% |
+| Argon2id d8 | 128.7 ms | 115.5 ms | 10.3% |
+| HashX d24 | 71.3 ms | 71.8 ms | ~0% |
+
+The saving shrinks as difficulty grows beyond one GPU batch. Digests remain
+correct with verification off (checked against argon2-cffi); it is a
+benchmarking switch, not a production default. Raw data:
+[`results/gpu-verify-t4.json`](results/gpu-verify-t4.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

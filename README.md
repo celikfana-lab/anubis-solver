@@ -192,6 +192,7 @@ Environment controls:
 | `ANUBIS_CUDA_ARGON2_LANES`, `ANUBIS_L0_ARGON2_LANES`, `ANUBIS_VULKAN_ARGON2_LANES` | concurrent Argon2id hashes |
 | `ANUBIS_CUDA_HASHX_CHUNK`, `ANUBIS_L0_HASHX_CHUNK`, `ANUBIS_VULKAN_HASHX_CHUNK` | HashX nonces per dispatch |
 | `ANUBIS_VULKAN_DEVICE`, `ANUBIS_VULKAN_ALLOW_CPU` | device choice / allow lavapipe |
+| `ANUBIS_GPU_NO_VERIFY=1` | skip the CPU re-check of GPU hits (benchmarking only) |
 
 Argon2id needs ~19 MiB of device memory per concurrent hash (64 lanes ≈ 1.3 GB).
 Every GPU result is recomputed on the CPU before it is accepted.

@@ -16,6 +16,10 @@
 #include <time.h>
 
 #define HX_MAX_INSTR 512
+
+extern "C" int hashx_export(const void *state, size_t state_size,
+                            uint64_t keys_out[4], uint32_t *prog_out,
+                            size_t *instr_count_out);
 #define HX_CHUNK (1u << 22)
 
 typedef struct {

@@ -31,6 +31,20 @@ tools/bench_tiers.py benchmarks every light/medium/hard difficulty tier
 results/             raw results from the version, speed and CVE runs
 ```
 
+## Documentation
+
+New here? Start with [BEGINNER.md](BEGINNER.md) — build, quick start, first
+request in a few minutes. The rest lives in [`docs/`](docs/index.md):
+
+| page | what it covers |
+|---|---|
+| [python.md](docs/python.md) | Python API: solver, challenges, client, sessions |
+| [c-api.md](docs/c-api.md) | C ABI, linking, dlopen, return codes |
+| [cli.md](docs/cli.md) | command line |
+| [gpu.md](docs/gpu.md) | CUDA / Level Zero / Vulkan / OpenCL backends and env vars |
+| [troubleshooting.md](docs/troubleshooting.md) | common build and runtime errors |
+| [development.md](docs/development.md) | layout, build, kernel regeneration |
+
 ## Build
 
 ```bash

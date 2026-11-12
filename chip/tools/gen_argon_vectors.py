@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generate prev/ref/dst/expected hex files for tb_argon2_fill.v."""
+"""Generate prev/ref/dst/expected hex files for tb_argon2_fill.v.
+
+Each file holds TWO blocks: entries 0..127 are block A, 128..255 are block B.
+The testbench runs them back to back with no idle cycle in between and checks
+both, so a block-to-block hand-off bug fails here instead of three layers up
+in tb_argon2_engine.
+"""
 from pathlib import Path
 
 M = (1 << 64) - 1
@@ -34,16 +40,32 @@ def fill_block(prev, ref, dst, with_xor):
         round16(r, idx)
     return [r[i] ^ prev[i] ^ ref[i] ^ ((dst[i] if with_xor else 0)) for i in range(128)]
 
+def lcg_words(seed, n=128):
+    """Deterministic pseudo-random block, so block B shares nothing with A."""
+    x, out = seed, []
+    for _ in range(n):
+        x = (x * 6364136223846793005 + 1442695040888963407) & M
+        out.append(x)
+    return out
+
+
 def main() -> int:
-    prev = [(0x9E3779B97F4A7C15 * (i + 1)) & M for i in range(128)]
-    ref = [(0x100000001B3 * (i + 7)) & M for i in range(128)]
-    dst = [(0xDEADBEEFCAFEBABE ^ i) & M for i in range(128)]
-    out = fill_block(prev, ref, dst, with_xor=1)
+    prevA = [(0x9E3779B97F4A7C15 * (i + 1)) & M for i in range(128)]
+    refA = [(0x100000001B3 * (i + 7)) & M for i in range(128)]
+    dstA = [(0xDEADBEEFCAFEBABE ^ i) & M for i in range(128)]
+    prevB = lcg_words(0x243F6A8885A308D3)
+    refB = lcg_words(0x13198A2E03707344)
+    dstB = lcg_words(0xA4093822299F31D0)
+    cols = {"prev.hex": [], "ref.hex": [], "dst.hex": [], "expected.hex": []}
+    for prev, ref, dst in ((prevA, refA, dstA), (prevB, refB, dstB)):
+        out = fill_block(prev, ref, dst, with_xor=1)
+        for name, words in (("prev.hex", prev), ("ref.hex", ref),
+                            ("dst.hex", dst), ("expected.hex", out)):
+            cols[name].extend(words)
     here = Path(__file__).resolve().parent.parent / "vectors"
-    for name, words in (("prev.hex", prev), ("ref.hex", ref), ("dst.hex", dst),
-                        ("expected.hex", out)):
+    for name, words in cols.items():
         (here / name).write_text("\n".join(f"{w:016x}" for w in words) + "\n")
-        print("wrote", name)
+        print("wrote", name, len(words), "words")
     return 0
 
 if __name__ == "__main__":

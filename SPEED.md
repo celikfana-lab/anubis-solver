@@ -403,19 +403,43 @@ measured, the clock is assumed. No static timing analysis has been run, so
 |---|---:|---:|---:|
 | `fast` / `slow` / `sha256` (2-block message) | 128 | 1.56 M | 7.8 M |
 | `hashx` (512-instruction program) | 533 | 375 k | 1.88 M |
-| `argon2id` (m=19456, t=2) | 10,126,531 | 19.8 | 98.8 |
+| `argon2id` (m=19456, t=2) | 5,165,657 | 38.7 | 193.6 |
 
 The SHA-256 and HashX cores are small enough to replicate: 100 HashX engines
 at 1 GHz would be ~188 M hashes/s, which is 1.7× the measured 2× T4 pair
-without any memory pressure. Argon2id is the opposite — 10 million cycles and
+without any memory pressure. Argon2id is the opposite — 5.2 million cycles and
 139 MB of traffic per hash, so one engine is nearly irrelevant.
+
+### Making a block cheaper: the one-cycle write-back
+
+A block used to cost 260 cycles: 128 for the permutation, then 128 more to
+walk the 128 output words out one per cycle. All 128 words are final at the
+same instant, so they are now written in a single cycle.
+
+| | before | after |
+|---|---:|---:|
+| cycles per block | 260.2 | **132.8** |
+| cycles per hash (m=19456, t=2) | 10,126,531 | **5,165,657** |
+| hashes/s per engine @ 1 GHz | 98.8 | **193.6** |
+| yosys generic cells | 261,685 | **186,594** |
+
+The area fell too, which is the part that surprised me: indexing
+`out[64*f +: 64]` with the register `f` made yosys build a 128-way 8,192-bit
+mux, while a constant index leaves an XOR tree per word. 1.96× the work in
+72% of the cells. Measured with `make vlreal` at the real m=19456, which also
+solved a challenge on the way — nonce 25, 5 leading zero bits. Raw data:
+[`results/chip-fill-writeback-2026-11-12.json`](results/chip-fill-writeback-2026-11-12.json).
+
+None of this moves the memory ceiling, so on one HBM3 stack the win is that the
+link saturates at ~30 engines instead of 59: half the die for the same
+5,870 hashes/s.
 
 ### Scaling Argon2id: engines vs HBM3
 
 The question for Argon2id is never the datapath, it is whether memory keeps
 the engines fed. `chip/rtl/argon2/argon2_mpipe.v` carries N engines with two
 hashes each against `chip/rtl/mem/hbm3_model.v` (819 B/cycle, 350-cycle
-latency, byte-credit admission). `fill_block` is a 260-cycle counter there, so
+latency, byte-credit admission). `fill_block` is a 133-cycle counter there, so
 this measures arbitration, occupancy and latency hiding.
 
 At 1 GHz against one HBM3 stack, 118 hashes in flight at 59 engines:
@@ -462,11 +486,11 @@ silicon genuinely wins, because the core has no memory to wait on.
 
 ### Caveats
 
-- **The memory is the machine.** 59 engines are ~15 M generic yosys cells
+- **The memory is the machine.** 59 engines are ~11 M generic yosys cells
   (2–4 mm² at 12 nm); the HBM stack and its PHY that feed them cost far more
   than the logic does. That is Argon2id working as designed.
 - **Area, not throughput, is where a core is big.** `argon2_fill` synthesises
-  to 261,685 generic cells against `sha256_core`'s 8,477 and `hashx_exec`'s
+  to 186,594 generic cells against `sha256_core`'s 8,477 and `hashx_exec`'s
   58,654 — roughly 10× a CUDA core, because it holds a 128 × 64-bit block and
   its 4-read/4-write port network. Those are generic cells, not standard
   cells; a real synthesis run would replace the mux network with a banked

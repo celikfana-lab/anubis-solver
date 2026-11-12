@@ -2,7 +2,8 @@
 //
 // Computes Z = P(R) ^ prev ^ refb ^ (dst if xor_en), where R = prev ^ refb and
 // P is the Argon2 permutation: 8 column rounds over 16-word groups, then 8
-// row rounds over the 16-word diagonals. 128 x 64-bit block, one G per cycle.
+// row rounds over the 16-word diagonals. 128 x 64-bit block, one G per cycle,
+// then all 128 output words written in a single cycle: 129 cycles per block.
 //
 // Blocks are passed as 8192-bit vectors: word i is bits [64*i +: 64].
 `timescale 1ns/1ps
@@ -104,8 +105,6 @@ module argon2_fill (
     wire [63:0] c2 = blamka(c1, d2);
     wire [63:0] b2 = rotr64(b1 ^ c2, 63);
 
-    wire [8:0] f = gcnt - 9'd128;
-
     always @(posedge clk) begin
         if (!rst_n) begin
             busy <= 1'b0;
@@ -126,14 +125,17 @@ module argon2_fill (
                 r[i3_w] <= d2;
                 gcnt <= gcnt + 9'd1;
             end else begin
-                out[64*f +: 64] <= r[f] ^ prev[64*f +: 64] ^ refb[64*f +: 64] ^
-                                    (xor_en ? dst[64*f +: 64] : 64'd0);
-                if (f == 7'd127) begin
-                    busy <= 1'b0;
-                    done <= 1'b1;
-                end else begin
-                    gcnt <= gcnt + 9'd1;
-                end
+                // All 128 words land in a single cycle. Walking them out one
+                // per cycle cost a second 128 cycles on top of the 128 the
+                // permutation takes, which was ~half of the engine's block
+                // time; a block is now 128 + 1 cycles instead of 128 + 128.
+                // `r` is final here: the last permutation step (gcnt == 127)
+                // retired on the edge that brought gcnt to 128.
+                for (i = 0; i < 128; i = i + 1)
+                    out[64*i +: 64] <= r[i] ^ prev[64*i +: 64] ^ refb[64*i +: 64] ^
+                                       (xor_en ? dst[64*i +: 64] : 64'd0);
+                busy <= 1'b0;
+                done <= 1'b1;
             end
         end else begin
             done <= 1'b0;

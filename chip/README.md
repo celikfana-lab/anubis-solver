@@ -105,7 +105,7 @@ compiles the RTL to C++ and is ~1000x faster here (2.5M cycles/s):
 
 ```bash
 make vl64     # Verilator build at M_COST=64, then a 19-nonce search
-make vlreal   # real parameters: one hash is 10.1M cycles, ~3.9 s
+make vlreal   # real parameters: one hash is 5.17M cycles, ~2.2 s
 ```
 
 Measured on a 56-core Xeon:
@@ -113,7 +113,7 @@ Measured on a 56-core Xeon:
 | | Icarus | Verilator |
 |---|---|---|
 | 19 nonces at M_COST=64 | 174 s | 0.17 s |
-| one hash at M_COST=19456 | ~36 min | 3.9 s |
+| one hash at M_COST=19456 | ~18 min | 2.2 s |
 
 `sim/sim_top.v` + `sim/sim_main.cpp` are the Verilator harness: a clocked FSM drives
 `argon2_engine` (no delays, nothing to synthesise differently) and the C++ main
@@ -304,7 +304,7 @@ Two modules answer "what if" without building silicon:
 
 | file | role |
 |---|---|
-| `rtl/argon2/argon2_mpipe.v` | NENG engines, each carrying KCTX hashes, sharing one link. `fill_block` is a 260-cycle counter, so what it measures is whether the memory system keeps the engines busy |
+| `rtl/argon2/argon2_mpipe.v` | NENG engines, each carrying KCTX hashes, sharing one link. `fill_block` is a 133-cycle counter, so what it measures is whether the memory system keeps the engines busy |
 | `rtl/mem/hbm3_model.v` | the link: 819 B/cycle, configurable latency, in-order service, byte accounting |
 
 ```bash

@@ -1,0 +1,55 @@
+{
+  "what": "argon2_fill one-cycle write-back: block cost, area, and the full-size engine",
+  "date": "2026-11-12",
+  "machine": "56-core Xeon (airobots@192.168.1.15) for Verilator; local x86-64 for yosys and Icarus",
+  "change": {
+    "file": "chip/rtl/argon2/argon2_fill.v",
+    "before": "out[64*f +: 64] written one word per cycle, f = gcnt - 128, 128 cycles for the write-back",
+    "after": "a for loop writes all 128 words in the single cycle where gcnt == 128",
+    "why_it_was_half_the_block": "the permutation is 128 G operations, one per cycle; the write-back serialised the other 128 words, so a block cost 128 + 128 plus a handshake cycle"
+  },
+  "engine_cycles_per_hash": {
+    "m": 19456,
+    "t": 2,
+    "blocks": 38912,
+    "before": 10126531,
+    "after": 5165657,
+    "speedup": 1.960,
+    "cycles_per_block_before": 260.24,
+    "cycles_per_block_after": 132.76
+  },
+  "measured_full_size": {
+    "how": "make vlreal (Verilator 5.020, M_COST=19456, DIFF=5) in an isolated server tree",
+    "cycles": 5165657,
+    "wall_ms": 2150.5,
+    "tries": 1,
+    "hit": 1,
+    "hit_nonce": 25,
+    "leading_zero_bits": 5,
+    "tag": "06687f4faa341898abb2c9af5dca00c07b0f3ec311d215b2f7cf2ba33ec5170a"
+  },
+  "yosys_generic_cells": {
+    "before": 261685,
+    "after": 186594,
+    "delta_pct": -28.7,
+    "wires_before": 287366,
+    "wires_after": 212267,
+    "why": "the serialised form indexed out[64*f +: 64] with the register f, so yosys built a 128-way 8192-bit mux plus its feedback; with a constant index each word is only an XOR tree"
+  },
+  "regression_checks": {
+    "tb_argon2_fill": "PASS - two independent blocks run back to back with start asserted on the cycle done is seen (zero idle cycles), both match gen_argon_vectors.py",
+    "tb_argon2_engine": "PASS - whole Argon2id hashes match argon2-cffi, 3 cases",
+    "full suite": "PASS - 14 of 14 testbenches under make -j16 sim (Icarus Verilog 12.0)"
+  },
+  "projected_single_stack": {
+    "clock_hz": 1000000000,
+    "hashes_per_s_one_engine": 193.6,
+    "engines_to_saturate_819_Bps_at_100pct_eff": 30,
+    "ceiling_hashes_per_s_100pct": 5870,
+    "ceiling_hashes_per_s_75pct": 4404
+  },
+  "notes": [
+    "the link ceiling is unchanged, so the win is half the die for the same throughput, or twice the throughput once more bandwidth is added",
+    "an earlier attempt at this same change failed tb_argon2_engine with a wrong digest; the failure was not reproduced once the boundary was made explicit (gcnt < 128 for the permutation, gcnt == 128 for the write-back) and the testbench gained a second, independent block"
+  ]
+}

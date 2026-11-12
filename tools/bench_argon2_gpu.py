@@ -49,7 +49,7 @@ def main() -> int:
             print("gpu digest:", buf.raw.hex())
 
     mode = "gpu" if os.environ.get("ANUBIS_GPU_ARGON2") else "cpu"
-    for d in (4, 6):
+    for d in (6, 8):
         t0 = time.perf_counter()
         n, r, _ = solver._native.solve_argon2id(CH, d, 1, 0)
         dt = time.perf_counter() - t0

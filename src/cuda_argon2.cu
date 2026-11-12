@@ -20,7 +20,7 @@
 
 #define A2_M 19456u
 #define A2_T 2u
-#define A2_LANES 64u          /* parallel hashes per launch per device */
+#define A2_LANES 128u          /* parallel hashes per launch per device */
 
 typedef struct {
     uint32_t count;

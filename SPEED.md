@@ -146,6 +146,26 @@ shader cache usually makes that a few tens of milliseconds.
 
 `argon2id` and `hashx` have no GPU implementation and always run on the CPU.
 
+
+## Dual-Xeon server benchmark
+
+2× Intel Xeon E5-2680 v4 (Broadwell-EP), 28 cores / 56 threads, 64 GB RAM,
+no SHA-NI and no GPU — AVX2 only. Measured 2026-11-12:
+
+| threads | `fast` | `sha256` | `argon2id` |
+|---:|---:|---:|---:|
+| 1 | 11.6 MH/s | 14.4 MH/s | 75 h/s |
+| 4 | 43.1 MH/s | 53.0 MH/s | 229 h/s |
+| 14 | 133.9 MH/s | 176.8 MH/s | 403 h/s |
+| 28 | 214.7 MH/s | 204.9 MH/s | **411 h/s** |
+| 56 | **349.6 MH/s** | **407.8 MH/s** | 266 h/s |
+
+Argon2id is memory-bound and peaks at one thread per physical core (28);
+hyperthreading makes it slower. SHA-256 keeps scaling to 56 threads.
+Single Argon2id hash on one core: 13.3 ms.
+
+Raw data: [`results/server-2026-11-12.json`](results/server-2026-11-12.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

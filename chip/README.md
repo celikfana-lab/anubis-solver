@@ -4,11 +4,14 @@ A synthesizeable SHA-256 compression core plus a proof-of-work nonce scanner,
 written for the Anubis `sha256` (WebAssembly) challenge family.
 
 ```
-sha256_core.v   iterative SHA-256 block compressor, one round per cycle
-anubis_pow.v    nonce scanner on top of the core (WIP, see Status)
-tb_sha256.v     known-answer tests (4 vectors, incl. a chained 2-block case)
-tb_pow.v        end-to-end PoW test (currently failing, see Status)
-Makefile        make sim / make pow / make synth
+sha256_core.v        iterative SHA-256 block compressor, one round per cycle
+anubis_pow.v         nonce scanner on top of the core
+argon2_fill.v        Argon2id fill_block (BlaMka) unit — WIP
+gen_argon_vectors.py generates prev/ref/dst/expected vectors for the Argon2 tb
+tb_sha256.v          known-answer tests (4 vectors, incl. a chained 2-block case)
+tb_pow.v             end-to-end PoW test (nonce 83, difficulty 8 bits)
+tb_argon2_fill.v     fill_block test against the reference vector (WIP)
+Makefile             make sim / make pow / make argon / make synth
 ```
 
 ## Status
@@ -19,8 +22,10 @@ Both modules are verified in simulation:
 |---|---|
 | `sha256_core.v` | **verified** — empty string, `"abc"`, the 56-byte two-block vector and a chained `digest → midstate` case all match the reference |
 | `anubis_pow.v` | **verified** — 64 bytes of `a`, 4-byte big-endian nonce, difficulty 8 bits: finds nonce 83 with digest `008fa7f1…`, matching the reference |
+| `argon2_fill.v` | **WIP** — 128×64-bit BlaMka block permutation. The datapath is complete (8 column rounds + 8 row rounds, XOR-in/XOR-out) but word 0 does not yet match the Python reference, so `make argon` fails; `make sim` only runs the verified SHA-256 tests |
 
-`make sim` runs both testbenches.
+`make sim` runs the two verified SHA-256 testbenches; `make argon` runs the
+WIP Argon2id fill test.
 
 The bug that made it report nonce 275: `nblocks` was treated as a flag
 ("there is a second block") while the testbench meant it as the block count,

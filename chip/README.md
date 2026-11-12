@@ -6,7 +6,8 @@ written for the Anubis `sha256` (WebAssembly) challenge family.
 ```
 sha256_core.v        iterative SHA-256 block compressor, one round per cycle
 anubis_pow.v         nonce scanner on top of the core
-argon2_fill.v        Argon2id fill_block (BlaMka) unit — WIP
+argon2_fill.v        Argon2id fill_block (BlaMka) unit — verified
+blake2b_core.v       BLAKE2b-512 compression core — WIP (wrong digest)
 gen_argon_vectors.py generates prev/ref/dst/expected vectors for the Argon2 tb
 tb_sha256.v          known-answer tests (4 vectors, incl. a chained 2-block case)
 tb_pow.v             end-to-end PoW test (nonce 83, difficulty 8 bits)
@@ -23,8 +24,10 @@ Both modules are verified in simulation:
 | `sha256_core.v` | **verified** — empty string, `"abc"`, the 56-byte two-block vector and a chained `digest → midstate` case all match the reference |
 | `anubis_pow.v` | **verified** — 64 bytes of `a`, 4-byte big-endian nonce, difficulty 8 bits: finds nonce 83 with digest `008fa7f1…`, matching the reference |
 | `argon2_fill.v` | **verified** — 128×64-bit BlaMka block permutation (8 column rounds + 8 row rounds, XOR-in/XOR-out) matches the Python reference on a 128-word block with `xor_en` asserted |
+| `blake2b_core.v` | **WIP** — 2 cycles/round BLAKE2b-512 compression core. The 24-cycle FSM runs and produces a digest, but it does not match the reference vectors yet (`make blake2b` fails) |
 
-`make sim` runs all three testbenches.
+`make sim` runs the three verified testbenches; `make blake2b` runs the WIP
+BLAKE2b core test.
 
 The bug that made it report nonce 275: `nblocks` was treated as a flag
 ("there is a second block") while the testbench meant it as the block count,

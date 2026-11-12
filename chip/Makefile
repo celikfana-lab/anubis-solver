@@ -11,6 +11,10 @@ sim: tb_sha256 tb_pow tb_argon2_fill
 	$(VVP) tb_pow
 	$(VVP) tb_argon2_fill
 
+# BLAKE2b core is WIP (wrong digest, see README), run it explicitly.
+blake2b: tb_blake2b
+	$(VVP) tb_blake2b
+
 argon: tb_argon2_fill
 	$(VVP) tb_argon2_fill
 
@@ -23,6 +27,9 @@ tb_sha256: tb_sha256.v sha256_core.v
 tb_pow: tb_pow.v anubis_pow.v sha256_core.v
 	$(IVERILOG) -g2012 -o $@ $^
 
+tb_blake2b: tb_blake2b.v blake2b_core.v
+	$(IVERILOG) -g2012 -o $@ $^
+
 tb_argon2_fill: tb_argon2_fill.v argon2_fill.v
 	python3 gen_argon_vectors.py
 	$(IVERILOG) -g2012 -o $@ tb_argon2_fill.v argon2_fill.v
@@ -31,4 +38,4 @@ synth:
 	$(YOSYS) -p "read_verilog -sv sha256_core.v anubis_pow.v; synth -top sha256_core; stat"
 
 clean:
-	rm -f tb_sha256 tb_pow tb_argon2_fill *.vcd prev.hex ref.hex dst.hex expected.hex
+	rm -f tb_sha256 tb_pow tb_argon2_fill tb_blake2b *.vcd prev.hex ref.hex dst.hex expected.hex

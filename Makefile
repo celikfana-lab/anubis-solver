@@ -13,7 +13,9 @@ ifneq ($(CUDA),0)
 ifneq ($(shell command -v $(NVCC) 2>/dev/null),)
 CUDA_SRC := src/cuda_sha256.cu
 CFLAGS   += -DANUBIS_HAVE_CUDA
-LDFLAGS  += -lcudart
+# nvcc is the linker here; it rejects bare -pthread, so pass it to the host
+# compiler explicitly.
+LDFLAGS  := $(filter-out -pthread,$(LDFLAGS)) -Xcompiler -pthread -lcudart
 LINK      = $(NVCC)
 endif
 endif

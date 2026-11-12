@@ -1,0 +1,402 @@
+#version 450
+/* argon2id.comp — cooperative Argon2id for the Vulkan backend.
+ * 32 work-items per work-group; 1 KiB block in shared memory; the 19 MiB
+ * matrix in an SSBO. H0/B0/B1 are computed by the host, the final tag here.
+ */
+layout(local_size_x = 32) in;
+
+layout(std430, binding = 0) buffer Params {
+    uint p_m; uint p_t; uint p_base; uint p_count; uint p_difficulty;
+    uint p_pad[3];
+};
+layout(std430, binding = 1) buffer Mem { uint mem[]; };
+layout(std430, binding = 2) buffer InitBlk { uint initblk[]; };
+layout(std430, binding = 3) buffer Results {
+    uint rcount; uint rpad[3]; uint rnonces[8]; uint rhashes[8][8];
+};
+
+const uvec2 IV0 = uvec2(0xf3bcc908u, 0x6a09e667u);
+const uvec2 IV1 = uvec2(0x84caa73bu, 0xbb67ae85u);
+const uvec2 IV2 = uvec2(0xfe94f82bu, 0x3c6ef372u);
+const uvec2 IV3 = uvec2(0x5f1d36f1u, 0xa54ff53au);
+const uvec2 IV4 = uvec2(0xade682d1u, 0x510e527fu);
+const uvec2 IV5 = uvec2(0x2b3e6c1fu, 0x9b05688cu);
+const uvec2 IV6 = uvec2(0xfb41bd6bu, 0x1f83d9abu);
+const uvec2 IV7 = uvec2(0x137e2179u, 0x5be0cd19u);
+
+uvec2 add64(uvec2 a, uvec2 b) { uint lo = a.x + b.x; uint c = (lo < a.x) ? 1u : 0u;
+                               return uvec2(lo, a.y + b.y + c); }
+uvec2 xor64(uvec2 a, uvec2 b) { return uvec2(a.x ^ b.x, a.y ^ b.y); }
+uvec2 rotr64(uvec2 x, uint n) {
+    if (n == 0u) return x;
+    if (n == 32u) return uvec2(x.y, x.x);
+    if (n < 32u) return uvec2((x.x >> n) | (x.y << (32u - n)),
+                              (x.y >> n) | (x.x << (32u - n)));
+    uint s = 64u - n;
+    return uvec2((x.x << s) | (x.y >> (32u - s)),
+                 (x.y << s) | (x.x >> (32u - s)));
+}
+uvec2 blamka(uvec2 a, uvec2 b) {
+    uint msb, lsb;
+    umulExtended(a.x, b.x, msb, lsb);
+    return add64(add64(a, b), uvec2(lsb << 1u, (lsb >> 31u) | (msb << 1u)));
+}
+uint g_base = 0u;
+uint g_m = 0u;
+
+uvec2 rd(uint blk, uint i) {
+    uint o = (g_base + blk) * 256u + i * 2u;
+    return uvec2(mem[o], mem[o + 1u]);
+}
+void wr(uint blk, uint i, uvec2 v) {
+    uint o = (g_base + blk) * 256u + i * 2u;
+    mem[o] = v.x;
+    mem[o + 1u] = v.y;
+}
+
+#define BG(a,b,c,d,x,y) { \
+    a = add64(add64(a, b), x); d = rotr64(xor64(d, a), 32u); \
+    c = add64(c, d);           b = rotr64(xor64(b, c), 24u); \
+    a = add64(add64(a, b), y); d = rotr64(xor64(d, a), 16u); \
+    c = add64(c, d);           b = rotr64(xor64(b, c), 63u); }
+
+void b2b_compress(inout uvec2 h[8], in uvec2 mm[16], uvec2 tt, bool last) {
+    uvec2 v0,v1,v2,v3,v4,v5,v6,v7,v8,v9,v10,v11,v12,v13,v14,v15;
+    v0 = h[0];
+    v1 = h[1];
+    v2 = h[2];
+    v3 = h[3];
+    v4 = h[4];
+    v5 = h[5];
+    v6 = h[6];
+    v7 = h[7];
+    v8 = IV0;
+    v9 = IV1;
+    v10 = IV2;
+    v11 = IV3;
+    v12 = IV4;
+    v13 = IV5;
+    v14 = IV6;
+    v15 = IV7;
+    v12 = xor64(IV4, tt); v13 = IV5;
+    v14 = last ? xor64(IV6, uvec2(0xFFFFFFFFu, 0xFFFFFFFFu)) : IV6; v15 = IV7;
+    BG(v0, v4, v8, v12, mm[0], mm[1]);
+    BG(v1, v5, v9, v13, mm[2], mm[3]);
+    BG(v2, v6, v10, v14, mm[4], mm[5]);
+    BG(v3, v7, v11, v15, mm[6], mm[7]);
+    BG(v0, v5, v10, v15, mm[8], mm[9]);
+    BG(v1, v6, v11, v12, mm[10], mm[11]);
+    BG(v2, v7, v8, v13, mm[12], mm[13]);
+    BG(v3, v4, v9, v14, mm[14], mm[15]);
+    BG(v0, v4, v8, v12, mm[14], mm[10]);
+    BG(v1, v5, v9, v13, mm[4], mm[8]);
+    BG(v2, v6, v10, v14, mm[9], mm[15]);
+    BG(v3, v7, v11, v15, mm[13], mm[6]);
+    BG(v0, v5, v10, v15, mm[1], mm[12]);
+    BG(v1, v6, v11, v12, mm[0], mm[2]);
+    BG(v2, v7, v8, v13, mm[11], mm[7]);
+    BG(v3, v4, v9, v14, mm[5], mm[3]);
+    BG(v0, v4, v8, v12, mm[11], mm[8]);
+    BG(v1, v5, v9, v13, mm[12], mm[0]);
+    BG(v2, v6, v10, v14, mm[5], mm[2]);
+    BG(v3, v7, v11, v15, mm[15], mm[13]);
+    BG(v0, v5, v10, v15, mm[10], mm[14]);
+    BG(v1, v6, v11, v12, mm[3], mm[6]);
+    BG(v2, v7, v8, v13, mm[7], mm[1]);
+    BG(v3, v4, v9, v14, mm[9], mm[4]);
+    BG(v0, v4, v8, v12, mm[7], mm[9]);
+    BG(v1, v5, v9, v13, mm[3], mm[1]);
+    BG(v2, v6, v10, v14, mm[13], mm[12]);
+    BG(v3, v7, v11, v15, mm[11], mm[14]);
+    BG(v0, v5, v10, v15, mm[2], mm[6]);
+    BG(v1, v6, v11, v12, mm[5], mm[10]);
+    BG(v2, v7, v8, v13, mm[4], mm[0]);
+    BG(v3, v4, v9, v14, mm[15], mm[8]);
+    BG(v0, v4, v8, v12, mm[9], mm[0]);
+    BG(v1, v5, v9, v13, mm[5], mm[7]);
+    BG(v2, v6, v10, v14, mm[2], mm[4]);
+    BG(v3, v7, v11, v15, mm[10], mm[15]);
+    BG(v0, v5, v10, v15, mm[14], mm[1]);
+    BG(v1, v6, v11, v12, mm[11], mm[12]);
+    BG(v2, v7, v8, v13, mm[6], mm[8]);
+    BG(v3, v4, v9, v14, mm[3], mm[13]);
+    BG(v0, v4, v8, v12, mm[2], mm[12]);
+    BG(v1, v5, v9, v13, mm[6], mm[10]);
+    BG(v2, v6, v10, v14, mm[0], mm[11]);
+    BG(v3, v7, v11, v15, mm[8], mm[3]);
+    BG(v0, v5, v10, v15, mm[4], mm[13]);
+    BG(v1, v6, v11, v12, mm[7], mm[5]);
+    BG(v2, v7, v8, v13, mm[15], mm[14]);
+    BG(v3, v4, v9, v14, mm[1], mm[9]);
+    BG(v0, v4, v8, v12, mm[12], mm[5]);
+    BG(v1, v5, v9, v13, mm[1], mm[15]);
+    BG(v2, v6, v10, v14, mm[14], mm[13]);
+    BG(v3, v7, v11, v15, mm[4], mm[10]);
+    BG(v0, v5, v10, v15, mm[0], mm[7]);
+    BG(v1, v6, v11, v12, mm[6], mm[3]);
+    BG(v2, v7, v8, v13, mm[9], mm[2]);
+    BG(v3, v4, v9, v14, mm[8], mm[11]);
+    BG(v0, v4, v8, v12, mm[13], mm[11]);
+    BG(v1, v5, v9, v13, mm[7], mm[14]);
+    BG(v2, v6, v10, v14, mm[12], mm[1]);
+    BG(v3, v7, v11, v15, mm[3], mm[9]);
+    BG(v0, v5, v10, v15, mm[5], mm[0]);
+    BG(v1, v6, v11, v12, mm[15], mm[4]);
+    BG(v2, v7, v8, v13, mm[8], mm[6]);
+    BG(v3, v4, v9, v14, mm[2], mm[10]);
+    BG(v0, v4, v8, v12, mm[6], mm[15]);
+    BG(v1, v5, v9, v13, mm[14], mm[9]);
+    BG(v2, v6, v10, v14, mm[11], mm[3]);
+    BG(v3, v7, v11, v15, mm[0], mm[8]);
+    BG(v0, v5, v10, v15, mm[12], mm[2]);
+    BG(v1, v6, v11, v12, mm[13], mm[7]);
+    BG(v2, v7, v8, v13, mm[1], mm[4]);
+    BG(v3, v4, v9, v14, mm[10], mm[5]);
+    BG(v0, v4, v8, v12, mm[10], mm[2]);
+    BG(v1, v5, v9, v13, mm[8], mm[4]);
+    BG(v2, v6, v10, v14, mm[7], mm[6]);
+    BG(v3, v7, v11, v15, mm[1], mm[5]);
+    BG(v0, v5, v10, v15, mm[15], mm[11]);
+    BG(v1, v6, v11, v12, mm[9], mm[14]);
+    BG(v2, v7, v8, v13, mm[3], mm[12]);
+    BG(v3, v4, v9, v14, mm[13], mm[0]);
+    BG(v0, v4, v8, v12, mm[0], mm[1]);
+    BG(v1, v5, v9, v13, mm[2], mm[3]);
+    BG(v2, v6, v10, v14, mm[4], mm[5]);
+    BG(v3, v7, v11, v15, mm[6], mm[7]);
+    BG(v0, v5, v10, v15, mm[8], mm[9]);
+    BG(v1, v6, v11, v12, mm[10], mm[11]);
+    BG(v2, v7, v8, v13, mm[12], mm[13]);
+    BG(v3, v4, v9, v14, mm[14], mm[15]);
+    BG(v0, v4, v8, v12, mm[14], mm[10]);
+    BG(v1, v5, v9, v13, mm[4], mm[8]);
+    BG(v2, v6, v10, v14, mm[9], mm[15]);
+    BG(v3, v7, v11, v15, mm[13], mm[6]);
+    BG(v0, v5, v10, v15, mm[1], mm[12]);
+    BG(v1, v6, v11, v12, mm[0], mm[2]);
+    BG(v2, v7, v8, v13, mm[11], mm[7]);
+    BG(v3, v4, v9, v14, mm[5], mm[3]);
+    h[0] = xor64(h[0], xor64(v0, v8));
+    h[1] = xor64(h[1], xor64(v1, v9));
+    h[2] = xor64(h[2], xor64(v2, v10));
+    h[3] = xor64(h[3], xor64(v3, v11));
+    h[4] = xor64(h[4], xor64(v4, v12));
+    h[5] = xor64(h[5], xor64(v5, v13));
+    h[6] = xor64(h[6], xor64(v6, v14));
+    h[7] = xor64(h[7], xor64(v7, v15));
+}
+
+
+uint tag_byte(uint g) {
+    if (g >= 1028u) return 0u;
+    if (g < 4u) return (32u >> (8u * g)) & 0xFFu;
+    uint i = g - 4u;
+    uint w = i >> 3;
+    uint k = i & 7u;
+    uint lo = mem[(g_base + g_m - 1u) * 256u + w * 2u];
+    uint hi = mem[(g_base + g_m - 1u) * 256u + w * 2u + 1u];
+    return ((k < 4u) ? (lo >> (8u * k)) : (hi >> (8u * (k - 4u)))) & 0xFFu;
+}
+
+void b2_hash_tag(inout uvec2 h[8]) {
+    h[0] = xor64(IV0, uvec2(0x01010020u, 0u));
+    h[1] = IV1; h[2] = IV2; h[3] = IV3; h[4] = IV4;
+    h[5] = IV5; h[6] = IV6; h[7] = IV7;
+    for (uint b = 0u; b < 9u; b++) {
+        uvec2 mm[16];
+        uint base = b * 128u;
+        for (uint k = 0u; k < 16u; k++) {
+            uint lo = 0u;
+            uint hi = 0u;
+            for (uint j = 0u; j < 4u; j++) {
+                lo |= tag_byte(base + k * 8u + j) << (8u * j);
+                hi |= tag_byte(base + k * 8u + j + 4u) << (8u * j);
+            }
+            mm[k] = uvec2(lo, hi);
+        }
+        bool last = (b == 8u);
+        uint len = last ? 1028u : (base + 128u);
+        b2b_compress(h, mm, uvec2(len, 0u), last);
+    }
+}
+
+
+#define AG(a,b,c,d) { \
+    a = blamka(a, b); d = rotr64(xor64(d, a), 32u); \
+    c = blamka(c, d); b = rotr64(xor64(b, c), 24u); \
+    a = blamka(a, b); d = rotr64(xor64(d, a), 16u); \
+    c = blamka(c, d); b = rotr64(xor64(b, c), 63u); }
+
+void round16(inout uvec2 t[16]) {
+    AG(t[0], t[4], t[8], t[12]);
+    AG(t[1], t[5], t[9], t[13]);
+    AG(t[2], t[6], t[10], t[14]);
+    AG(t[3], t[7], t[11], t[15]);
+    AG(t[0], t[5], t[10], t[15]);
+    AG(t[1], t[6], t[11], t[12]);
+    AG(t[2], t[7], t[8], t[13]);
+    AG(t[3], t[4], t[9], t[14]);
+}
+
+shared uvec2 sR[128];
+
+const uint perm[32] = uint[32](
+    0u,4u,8u,12u, 1u,5u,9u,13u, 2u,6u,10u,14u, 3u,7u,11u,15u,
+    0u,5u,10u,15u, 1u,6u,11u,12u, 2u,7u,8u,13u, 3u,4u,9u,14u);
+const uint offv[16] = uint[16](
+    0u,1u,16u,17u,32u,33u,48u,49u,64u,65u,80u,81u,96u,97u,112u,113u);
+
+void fill_block(uint dst, uint prev, uint ref, uint with_xor) {
+    uint tid = gl_LocalInvocationID.x;
+    uint g = tid >> 2u;
+    uint gi = tid & 3u;
+    for (uint i = tid; i < 128u; i += 32u) {
+        sR[i] = xor64(rd(prev, i), rd(ref, i));
+    }
+    barrier(); memoryBarrierShared();
+    for (uint ph = 0u; ph < 2u; ph++) {
+        uint k = (gi + 4u * ph) * 4u;
+        uint b0 = g * 16u;
+        uvec2 a = sR[b0 + perm[k + 0u]];
+        uvec2 b = sR[b0 + perm[k + 1u]];
+        uvec2 c = sR[b0 + perm[k + 2u]];
+        uvec2 d = sR[b0 + perm[k + 3u]];
+        AG(a, b, c, d);
+        sR[b0 + perm[k + 0u]] = a;
+        sR[b0 + perm[k + 1u]] = b;
+        sR[b0 + perm[k + 2u]] = c;
+        sR[b0 + perm[k + 3u]] = d;
+        barrier(); memoryBarrierShared();
+    }
+    for (uint ph = 0u; ph < 2u; ph++) {
+        uint k = (gi + 4u * ph) * 4u;
+        uint b0 = 2u * g;
+        uvec2 a = sR[b0 + offv[perm[k + 0u]]];
+        uvec2 b = sR[b0 + offv[perm[k + 1u]]];
+        uvec2 c = sR[b0 + offv[perm[k + 2u]]];
+        uvec2 d = sR[b0 + offv[perm[k + 3u]]];
+        AG(a, b, c, d);
+        sR[b0 + offv[perm[k + 0u]]] = a;
+        sR[b0 + offv[perm[k + 1u]]] = b;
+        sR[b0 + offv[perm[k + 2u]]] = c;
+        sR[b0 + offv[perm[k + 3u]]] = d;
+        barrier(); memoryBarrierShared();
+    }
+    for (uint i = tid; i < 128u; i += 32u) {
+        uvec2 v = xor64(xor64(sR[i], rd(prev, i)), rd(ref, i));
+        if (with_xor != 0u) v = xor64(v, rd(dst, i));
+        wr(dst, i, v);
+    }
+    barrier(); memoryBarrier();
+}
+
+void next_addresses() {
+    uint o = (g_base + g_m + 1u) * 256u + 12u;
+    uint lo = mem[o] + 1u;
+    if (lo == 0u) mem[o + 1u] += 1u;
+    mem[o] = lo;
+    fill_block(g_m + 2u, g_m, g_m + 1u, 0u);
+    fill_block(g_m + 2u, g_m, g_m + 2u, 0u);
+}
+
+uint index_alpha(uint pass, uint slice, uint index, uint pseudo, uint seg, uint mb) {
+    uint ref_area;
+    if (pass == 0u) {
+        ref_area = (slice == 0u) ? (index - 1u) : (slice * seg + index - 1u);
+    } else {
+        ref_area = mb - seg + index - 1u;
+    }
+    uint hi, lo;
+    umulExtended(pseudo, pseudo, hi, lo);
+    uint rp = hi;
+    umulExtended(ref_area, rp, hi, lo);
+    rp = ref_area - 1u - hi;
+    uint start = (pass == 0u) ? 0u : ((slice == 3u) ? 0u : (slice + 1u) * seg);
+    return (start + rp) % mb;
+}
+
+
+void main() {
+    uint idx = gl_WorkGroupID.x;
+    if (idx >= p_count) return;
+    g_m = p_m;
+    g_base = idx * (g_m + 3u);
+    uint tid = gl_LocalInvocationID.x;
+
+    for (uint i = tid; i < 512u; i += 32u) {
+        mem[g_base * 256u + i] = initblk[idx * 512u + i];
+    }
+    for (uint i = tid; i < 256u; i += 32u) {
+        mem[(g_base + g_m) * 256u + i] = 0u;
+    }
+    barrier(); memoryBarrier();
+
+    uint seg = g_m / 4u;
+    for (uint pass = 0u; pass < p_t; pass++) {
+        for (uint slice = 0u; slice < 4u; slice++) {
+            bool di = (pass == 0u && slice < 2u);
+            uint start = (pass == 0u && slice == 0u) ? 2u : 0u;
+            if (di) {
+                if (tid == 0u) {
+                    for (uint i = 0u; i < 256u; i++) {
+                        mem[(g_base + g_m + 1u) * 256u + i] = 0u;
+                    }
+                    wr(g_m + 1u, 0u, uvec2(pass, 0u));
+                    wr(g_m + 1u, 1u, uvec2(0u, 0u));
+                    wr(g_m + 1u, 2u, uvec2(slice, 0u));
+                    wr(g_m + 1u, 3u, uvec2(g_m, 0u));
+                    wr(g_m + 1u, 4u, uvec2(p_t, 0u));
+                    wr(g_m + 1u, 5u, uvec2(2u, 0u));
+                }
+                barrier(); memoryBarrier();
+                if (start == 2u) next_addresses();
+            }
+            for (uint i = start; i < seg; i++) {
+                uint curr = slice * seg + i;
+                uint prev = (curr == 0u) ? (g_m - 1u) : (curr - 1u);
+                uint pseudo;
+                if (di) {
+                    if ((i & 127u) == 0u) next_addresses();
+                    pseudo = mem[(g_base + g_m + 2u) * 256u + (i & 127u) * 2u];
+                } else {
+                    pseudo = mem[(g_base + prev) * 256u];
+                }
+                uint ref = index_alpha(pass, slice, i, pseudo, seg, g_m);
+                fill_block(curr, prev, ref, (pass == 0u) ? 0u : 1u);
+            }
+        }
+    }
+    barrier(); memoryBarrier();
+
+    if (tid == 0u) {
+        uvec2 h[8];
+        b2_hash_tag(h);
+        uint bytes[32];
+        for (uint i = 0u; i < 8u; i++) {
+            uint w = ((i & 1u) == 0u) ? h[i >> 1u].x : h[i >> 1u].y;
+            bytes[4u * i + 0u] = w & 0xffu;
+            bytes[4u * i + 1u] = (w >> 8u) & 0xffu;
+            bytes[4u * i + 2u] = (w >> 16u) & 0xffu;
+            bytes[4u * i + 3u] = (w >> 24u) & 0xffu;
+        }
+        bool ok = true;
+        for (uint b = 0u; b < p_difficulty; b++) {
+            if (((bytes[b >> 3u] >> (7u - (b & 7u))) & 1u) != 0u) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) {
+            uint slot = atomicAdd(rcount, 1u);
+            if (slot < 8u) {
+                rnonces[slot] = p_base + idx;
+                for (uint i = 0u; i < 8u; i++) {
+                    rhashes[slot][i] = (bytes[4u * i] << 24u) |
+                                       (bytes[4u * i + 1u] << 16u) |
+                                       (bytes[4u * i + 2u] << 8u) |
+                                       bytes[4u * i + 3u];
+                }
+            }
+        }
+    }
+}

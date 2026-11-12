@@ -59,8 +59,6 @@ def worker() -> int:
 
 def run_mode(env_extra: dict[str, str]) -> dict:
     env = dict(os.environ)
-    for key in ("ANUBIS_NO_CUDA", "ANUBIS_NO_VULKAN"):
-        env.pop(key, None)
     env.update(env_extra)
     proc = subprocess.run([sys.executable, __file__, "--worker"], env=env,
                           capture_output=True, text=True)
@@ -76,19 +74,29 @@ def run_mode(env_extra: dict[str, str]) -> dict:
 def main() -> int:
     if "--worker" in sys.argv:
         return worker()
-    gpu = run_mode({})
-    cpu = run_mode({"ANUBIS_NO_CUDA": "1", "ANUBIS_NO_VULKAN": "1"})
-    print(f"GPU backend : {gpu['gpu']}")
-    print(f"CPU threads : {gpu['cpu_threads']}")
+    modes = [
+        ("cuda/l0/vulkan (auto)", {}),
+        ("level zero", {"ANUBIS_NO_CUDA": "1", "ANUBIS_NO_VULKAN": "1"}),
+        ("vulkan", {"ANUBIS_NO_CUDA": "1", "ANUBIS_NO_LEVELZERO": "1"}),
+        ("cpu", {"ANUBIS_NO_CUDA": "1", "ANUBIS_NO_VULKAN": "1",
+                 "ANUBIS_NO_LEVELZERO": "1"}),
+    ]
+    results = []
+    for name, env in modes:
+        res = run_mode(env)
+        results.append((name, res))
+        print(f"{name:<22} -> {res['gpu']}")
     print()
-    print(f"{'workload':<12}{'GPU':>12}{'CPU':>12}{'speedup':>10}")
-    for key in ("fast d6", "fast d7", "sha256 b24", "sha256 b26"):
-        g = gpu["work"].get(key)
-        c = cpu["work"].get(key)
-        if not g or not c:
-            continue
-        print(f"{key:<12}{g['mhs']:>9.1f} M/s{c['mhs']:>9.1f} M/s"
-              f"{g['mhs']/c['mhs']:>9.1f}x")
+    keys = ("fast d6", "fast d7", "sha256 b24", "sha256 b26")
+    header = f"{'workload':<12}" + "".join(f"{n.split(' ')[0][:8]:>10}" for n, _ in results)
+    print(header)
+    for key in keys:
+        row = f"{key:<12}"
+        for _, res in results:
+            v = res["work"].get(key)
+            row += f"{v['mhs']:>10.1f}" if v else f"{'-':>10}"
+        print(row)
+    print("(numbers are MH/s; GPU names above)")
     return 0
 
 

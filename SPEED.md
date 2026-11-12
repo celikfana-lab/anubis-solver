@@ -228,6 +228,26 @@ the earliest hit wins; the CPU re-verifies the digest before accepting it.
 `tools/bench_gpu.py` reproduces the table and verifies every digest against
 hashlib. Raw data: [`results/cuda-t4.json`](results/cuda-t4.json).
 
+## Intel GPU: oneAPI Level Zero vs Vulkan
+
+Iris Xe (ADL GT2), one thread driving the GPU, median of 5, 2026-11-12.
+Level Zero is preferred over Vulkan when both are available.
+
+| workload | Level Zero | Vulkan | speedup |
+|---|---:|---:|---:|
+| `fast` d6 | 137.4 MH/s | 104.8 MH/s | 1.31× |
+| `sha256` b24 | 155.8 MH/s | 92.5 MH/s | 1.68× |
+| CPU (1 core, d6) | — | — | 5.9 MH/s |
+
+Building the backend needs the Level Zero headers (`level_zero/ze_api.h`,
+package `libze-dev`); the loader is `dlopen`ed, so the library still loads on
+machines without an Intel GPU. At runtime it needs the Intel Level Zero
+driver (`libze_intel_gpu.so.1`) and IGC for SPIR-V compilation.
+
+`tools/bench_gpu.py` compares auto / Level Zero / Vulkan / CPU and verifies
+every digest against hashlib. Raw data:
+[`results/levelzero-irisxe.json`](results/levelzero-irisxe.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

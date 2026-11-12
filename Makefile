@@ -36,6 +36,18 @@ CFLAGS  += -DANUBIS_HAVE_VULKAN
 LDFLAGS += -ldl
 endif
 endif
+# Optional oneAPI Level Zero backend (Intel GPUs). Needs the Level Zero
+# headers; the loader is dlopen()ed at runtime, so there is no hard link.
+L0 ?= auto
+L0_INC ?= /usr/include
+ifneq ($(L0),0)
+ifneq ($(wildcard $(L0_INC)/level_zero/ze_api.h),)
+CORE_SRC += src/levelzero_sha256.c
+CFLAGS   += -DANUBIS_HAVE_LEVELZERO -I$(L0_INC)
+LDFLAGS  += -ldl
+endif
+endif
+
 # Assembly kernels: x86-64 (AVX2 + SHA-NI) or AArch64 (NEON + SHA-2).
 # The portable C fallbacks are always compiled.
 ifeq ($(shell uname -m),x86_64)

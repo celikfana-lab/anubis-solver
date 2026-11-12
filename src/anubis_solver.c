@@ -102,6 +102,24 @@ static uint64_t vulkan_min_work(int bits_mode) {
 }
 #endif
 
+#if defined(ANUBIS_HAVE_LEVELZERO)
+extern int anubis_l0_available(void);
+extern const char *anubis_l0_info(void);
+extern int anubis_l0_solve(const uint32_t mid[8], uint32_t prefix_len,
+                           int mode, int use_le, int difficulty,
+                           int check_bits, uint64_t max_nonce,
+                           double budget_ms, uint32_t *out_nonce,
+                           char out_hex[65], double *out_ms);
+
+static uint64_t l0_min_work(int bits_mode) {
+    const char *s = getenv("ANUBIS_L0_MIN_WORK");
+    if (s != NULL && *s != '\0') {
+        return strtoull(s, NULL, 0);
+    }
+    return bits_mode ? (1ull << 16) : (1ull << 20);
+}
+#endif
+
 #if defined(ANUBIS_HAVE_CUDA)
 extern int anubis_cuda_available(void);
 extern const char *anubis_cuda_info(void);
@@ -1288,6 +1306,39 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
     }
 #endif
 
+#if defined(ANUBIS_HAVE_LEVELZERO)
+    if (clen % 64u == 0 && anubis_l0_available()) {
+        uint64_t expected = 1;
+        int i;
+        for (i = 0; i < difficulty && i < 40; i++) {
+            expected *= 16;
+        }
+        if (expected >= l0_min_work(0)) {
+            uint32_t gnonce = 0;
+            char ghex[65];
+            char vhex[65];
+            double gms = 0.0;
+            uint64_t cap = expected < (0xFFFFFFFFull / 8)
+                               ? expected * 8
+                               : 0xFFFFFFFFull;
+            int grc = anubis_l0_solve(ctx.base.h, (uint32_t)clen, 0, 0,
+                                      difficulty, 0, cap, budget_ms, &gnonce,
+                                      ghex, &gms);
+            if (grc == 0 &&
+                anubis_verify_nibbles(challenge, gnonce, difficulty, vhex) ==
+                    ANUBIS_OK &&
+                memcmp(vhex, ghex, 65) == 0) {
+                *out_nonce = gnonce;
+                memcpy(out_hex, ghex, 65);
+                if (out_ms != NULL) {
+                    *out_ms = gms;
+                }
+                return ANUBIS_OK;
+            }
+        }
+    }
+#endif
+
 #if defined(ANUBIS_HAVE_VULKAN)
     if (clen % 64u == 0 && anubis_vulkan_available()) {
         uint64_t expected = 1;
@@ -1428,6 +1479,39 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
             int grc = anubis_cuda_solve(ctx.base.h, (uint32_t)raw_len, 1,
                                         ctx.use_le, difficulty, 1, cap,
                                         budget_ms, &gnonce, ghex, &gms);
+            if (grc == 0 &&
+                anubis_verify_bits(challenge_hex, gnonce, difficulty, vhex) ==
+                    ANUBIS_OK &&
+                memcmp(vhex, ghex, 65) == 0) {
+                *out_nonce = gnonce;
+                memcpy(out_hex, ghex, 65);
+                if (out_ms != NULL) {
+                    *out_ms = gms;
+                }
+                return ANUBIS_OK;
+            }
+        }
+    }
+#endif
+
+#if defined(ANUBIS_HAVE_LEVELZERO)
+    if (raw_len % 64u == 0 && anubis_l0_available()) {
+        uint64_t expected = 1;
+        int i;
+        for (i = 0; i < difficulty && i < 40; i++) {
+            expected *= 2;
+        }
+        if (expected >= l0_min_work(1)) {
+            uint32_t gnonce = 0;
+            char ghex[65];
+            char vhex[65];
+            double gms = 0.0;
+            uint64_t cap = expected < (0xFFFFFFFFull / 8)
+                               ? expected * 8
+                               : 0xFFFFFFFFull;
+            int grc = anubis_l0_solve(ctx.base.h, (uint32_t)raw_len, 1,
+                                      ctx.use_le, difficulty, 1, cap,
+                                      budget_ms, &gnonce, ghex, &gms);
             if (grc == 0 &&
                 anubis_verify_bits(challenge_hex, gnonce, difficulty, vhex) ==
                     ANUBIS_OK &&
@@ -1784,6 +1868,14 @@ const char *anubis_gpu_info(void) {
 #if defined(ANUBIS_HAVE_CUDA)
     if (anubis_cuda_available()) {
         const char *info = anubis_cuda_info();
+        if (info != NULL) {
+            return info;
+        }
+    }
+#endif
+#if defined(ANUBIS_HAVE_LEVELZERO)
+    if (anubis_l0_available()) {
+        const char *info = anubis_l0_info();
         if (info != NULL) {
             return info;
         }

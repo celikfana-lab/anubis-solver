@@ -1,0 +1,15 @@
+{
+  "host": {
+    "gpu": "Intel Iris Xe Graphics (ADL GT2, 80 EU)",
+    "api": "oneAPI Level Zero (loader 1.24, Intel compute-runtime 26.40, IGC 2.42)",
+    "measured": "2026-11-12",
+    "note": "median of 5, one CPU thread for the CPU column"
+  },
+  "throughput_MHps": {
+    "fast_d6":    {"levelzero": 137.4, "vulkan": 104.8, "cpu": 5.9},
+    "fast_d7":    {"levelzero": 82.5,  "vulkan": 88.3,  "cpu": 7.8},
+    "sha256_b24": {"levelzero": 155.8, "vulkan": 92.5,  "cpu": 5.5},
+    "sha256_b26": {"levelzero": 113.8, "vulkan": 122.1, "cpu": 5.1}
+  },
+  "correctness": "digests verified against hashlib; tests/test_core.py passed"
+}

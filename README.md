@@ -51,10 +51,16 @@ CUDA support is auto-detected: if `nvcc` is on PATH the `fast`/`slow` and
 preferred over Vulkan. `make CUDA=0` compiles it out; `ANUBIS_NO_CUDA=1`
 disables it at runtime.
 
+Intel GPUs are reached through **oneAPI Level Zero** (oneAPI's low-level C
+API): the build picks up `level_zero/ze_api.h` (`L0_INC=/path` if it lives
+elsewhere), the SPIR-V kernel is `src/sha256_pow.cl`, and the loader is
+`dlopen`ed. Runtime needs the Intel Level Zero driver + IGC; `ANUBIS_NO_LEVELZERO=1`
+forces the fallback. Dispatch order is CUDA → Level Zero → Vulkan → CPU.
+
 Vulkan support is auto-detected from `/usr/include/vulkan/vulkan.h`; the
 library `dlopen`s `libvulkan.so.1` at runtime, so a machine without Vulkan just
 uses the CPU paths. Build with `VULKAN=0` to compile it out. With both
-backends built, the order is CUDA → Vulkan → CPU. If you change the
+backends built, the order is CUDA → Level Zero → Vulkan → CPU. If you change the
 shader, regenerate `src/sha256_comp.spv.h` with `make shader` (needs
 `glslangValidator`).
 

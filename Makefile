@@ -4,6 +4,21 @@ NATIVE  ?= -march=native
 LDFLAGS ?= -shared -pthread
 INC     := -Isrc -Ithird_party/argon2
 
+# Optional CUDA backend (NVIDIA). Built when nvcc is available; the library
+# then links libcudart and prefers CUDA over Vulkan at runtime.
+CUDA ?= auto
+NVCC ?= nvcc
+CUDA_SRC :=
+ifneq ($(CUDA),0)
+ifneq ($(shell command -v $(NVCC) 2>/dev/null),)
+CUDA_SRC := src/cuda_sha256.cu
+CFLAGS   += -DANUBIS_HAVE_CUDA
+LDFLAGS  += -lcudart
+LINK      = $(NVCC)
+endif
+endif
+LINK     ?= $(CC)
+
 LIB      := libanubis_solver.so
 BUILD    := build
 CORE_SRC := src/anubis_solver.c src/hashx.c
@@ -39,6 +54,7 @@ endif
 
 OBJ := $(patsubst src/%.c,$(BUILD)/%.o,$(CORE_SRC)) \
        $(patsubst src/%.s,$(BUILD)/%.o,$(ASM_SRC)) \
+       $(patsubst src/%.cu,$(BUILD)/%.o,$(CUDA_SRC)) \
        $(patsubst third_party/argon2/%.c,$(BUILD)/argon2/%.o,$(ARGON2_SRC))
 
 .PHONY: all test clean shader

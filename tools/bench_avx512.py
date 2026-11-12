@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Compare the CPU kernels only: keep the Vulkan backend out of the way.
 os.environ.setdefault("ANUBIS_NO_VULKAN", "1")
+os.environ.setdefault("ANUBIS_NO_CUDA", "1")
 
 from anubis_solver import AnubisSolver  # noqa: E402
 

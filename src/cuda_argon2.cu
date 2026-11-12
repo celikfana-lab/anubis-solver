@@ -500,6 +500,7 @@ static int a2_init(void) {
     return 1;
 }
 
+extern "C" {
 int anubis_cuda_argon2_available(void) {
     return a2_init();
 }
@@ -674,3 +675,4 @@ int anubis_cuda_argon2_digest(const uint8_t *challenge, size_t clen,
     pthread_mutex_unlock(&g_a2.mu);
     return 0;
 }
+} /* extern "C" */

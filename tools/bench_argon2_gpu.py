@@ -27,15 +27,19 @@ def main() -> int:
     print("gpu:", solver.gpu)
 
     lib = solver._native.lib
-    lib.anubis_cuda_argon2_digest.restype = ctypes.c_int
-    lib.anubis_cuda_argon2_digest.argtypes = [
-        ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_uint32,
-        ctypes.c_char_p,
-    ]
-    buf = ctypes.create_string_buffer(32)
     nonce = 12345
-    rc = lib.anubis_cuda_argon2_digest(RAW, len(RAW), 1 if USE_LE else 0,
-                                       nonce, buf)
+    buf = ctypes.create_string_buffer(32)
+    rc = -1
+    for fn_name in ("anubis_cuda_argon2_digest", "anubis_l0_argon2_digest"):
+        fn = getattr(lib, fn_name, None)
+        if fn is None:
+            continue
+        fn.restype = ctypes.c_int
+        fn.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_int,
+                       ctypes.c_uint32, ctypes.c_char_p]
+        rc = fn(RAW, len(RAW), 1 if USE_LE else 0, nonce, buf)
+        print("digest backend:", fn_name)
+        break
     print("gpu digest rc:", rc)
     if rc == 0:
         try:

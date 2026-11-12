@@ -111,6 +111,13 @@ extern int anubis_l0_solve(const uint32_t mid[8], uint32_t prefix_len,
                            double budget_ms, uint32_t *out_nonce,
                            char out_hex[65], double *out_ms);
 
+extern int anubis_l0_argon2_available(void);
+extern int anubis_l0_argon2_solve(const uint8_t *challenge, size_t clen,
+                                  int use_le, int difficulty,
+                                  uint64_t max_nonce, double budget_ms,
+                                  uint32_t *out_nonce, char out_hex[65],
+                                  double *out_ms);
+
 static uint64_t l0_min_work(int bits_mode) {
     const char *s = getenv("ANUBIS_L0_MIN_WORK");
     if (s != NULL && *s != '\0') {
@@ -136,17 +143,19 @@ extern int anubis_cuda_argon2_solve(const uint8_t *challenge, size_t clen,
                                     uint32_t *out_nonce, char out_hex[65],
                                     double *out_ms);
 
-static int gpu_argon2_enabled(void) {
-    const char *e = getenv("ANUBIS_GPU_ARGON2");
-    return e != NULL && e[0] != '\0' && e[0] != '0';
-}
-
 static uint64_t cuda_min_work(int bits_mode) {
     const char *s = getenv("ANUBIS_CUDA_MIN_WORK");
     if (s != NULL && *s != '\0') {
         return strtoull(s, NULL, 0);
     }
     return bits_mode ? (1ull << 16) : (1ull << 20);
+}
+#endif
+
+#if defined(ANUBIS_HAVE_CUDA) || defined(ANUBIS_HAVE_LEVELZERO)
+static int gpu_argon2_enabled(void) {
+    const char *e = getenv("ANUBIS_GPU_ARGON2");
+    return e != NULL && e[0] != '\0' && e[0] != '0';
 }
 #endif
 
@@ -1720,6 +1729,12 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
             return ANUBIS_OK;
         }
     }
+#endif
+
+#if defined(ANUBIS_HAVE_LEVELZERO)
+    /* The Level Zero Argon2id kernel (src/argon2id_l0.cl) is still
+     * experimental: its cooperative fill does not yet reproduce the
+     * reference digest, so the GPU attempt is disabled here on purpose. */
 #endif
 
     rc = run_search(&job, &nonce64, out_hex, out_ms);

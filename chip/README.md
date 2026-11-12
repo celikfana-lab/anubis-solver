@@ -256,6 +256,47 @@ HIT nonce=228 (0x00000000000000e4) leading_zero_bits=9 >= 8 after 229 tries
 TAG 005cedf17531748e9789a1845ed97134c914ed68c45bcf8825dafbc683be4f80
 ```
 
+## Scaling up: 24 engines, 48 hashes in flight, HBM3
+
+Two modules answer "what if" without building silicon:
+
+| file | role |
+|---|---|
+| `rtl/argon2/argon2_mpipe.v` | NENG engines, each carrying KCTX hashes, sharing one link. `fill_block` is a 260-cycle counter, so what it measures is whether the memory system keeps the engines busy |
+| `rtl/mem/hbm3_model.v` | the link: 819 B/cycle, configurable latency, in-order service, byte accounting |
+
+```bash
+make mpipe        # 24 engines x 2 contexts vs HBM3, ~1 minute of Icarus
+```
+
+```
+engines 24, contexts/engine 2 (48 in flight), HBM3 819 B/cycle, 350 cyc latency
+  steady state: 4800 blocks in 52000 cycles (10.83 cycles/block, 260.00 per engine)
+  link: 5375 requests, 16512000 bytes, 285.7 B/cycle (286 GB/s) of 819
+  throughput: 92307692 blocks/s -> 2372 hashes/s at 1 GHz
+```
+
+**260.00 cycles per engine per block** is exactly the compute cost of a block,
+so the 48 contexts hide all 350 cycles of HBM latency - the design is
+compute-bound, not memory-bound. The link runs at 35%, so the next engines are
+free until ~68 engines saturate 819 GB/s.
+
+`tools/perf_model.py` predicts 2370 hashes/s for the same configuration, and
+says why the knobs behave as they do:
+
+| knob | 24 engines @ 1 GHz |
+|---|---|
+| 1 hash per engine (24 in flight) | 1762 h/s, latency-bound |
+| **2 per engine (48 in flight)** | **2370 h/s, compute-bound** |
+| 21 per engine (504 in flight) | 2370 h/s, for 9.4 GiB instead of 0.89 |
+| LPDDR6 (86 GB/s) instead of HBM3 | 617 h/s, bandwidth-bound |
+| 48 engines on HBM3 | 4740 h/s (572 GB/s) |
+
+For scale: the 2x Tesla T4 measured elsewhere in this repo do 1759 Argon2id
+hashes/s, so this configuration is ~1.35x faster than the pair - and still
+~3x behind an estimate for an RTX 4090, because at 24 engines it is a DRAM
+bandwidth contest.
+
 ## Notes / next steps
 
 - Argon2id is complete end to end: `blake2b_core` → `blake2b_stream` → `h0` /
@@ -264,8 +305,9 @@ TAG 005cedf17531748e9789a1845ed97134c914ed68c45bcf8825dafbc683be4f80
   and finds one that satisfies the Anubis difficulty.
 - What the chip does not have yet is the *memory interface*: `argon2_engine`
   keeps its 1 KiB blocks in a flop array, which is fine for 64 blocks and
-  hopeless for 19456. Swapping that for `lpddr6_if` (already verified) plus a
-  multi-bank scheduler is the remaining engineering.
+  hopeless for 19456. `argon2_mpipe` + `hbm3_model` model the scaled system
+  (24 engines, 48 hashes in flight, HBM3) but stand in a counter for
+  `fill_block`; wiring the real engine to that port is the remaining work.
 - The nonce loop lives in the testbench; a real product would put the leading
   zero counter and the nonce register on the die.
 - For `fast`/`slow` (decimal nonce) the padding position depends on the nonce

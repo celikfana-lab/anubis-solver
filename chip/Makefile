@@ -40,7 +40,7 @@ TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
        tb_hashx
 
 .PHONY: all sim $(TBS) pow argon blake2b stream hprime h0 addr index engine \
-        hashx solve solve-hashx vectors vl64 vlreal synth clean
+        hashx solve solve-hashx mpipe vectors vl64 vlreal synth clean
 .DEFAULT_GOAL := all
 
 all: sim
@@ -133,6 +133,17 @@ hashx:   ; $(MAKE) --no-print-directory $(B)/tb_hashx && $(V) $(B)/tb_hashx
 vectors: $(B)/gen_hashx_vectors
 	@for g in tools/gen_*.py; do echo "== $$g"; $(PY) $$g; done
 	@$(B)/gen_hashx_vectors vectors/hx_vectors.hex
+
+# ---- architecture studies --------------------------------------------------
+# The memory-architecture model: NENG engines x KCTX hashes in flight against
+# an HBM3 link. The fill_block work is a cycle counter here, so this measures
+# whether the memory system keeps the engines busy - the thing that decides
+# hashes/s once the ARGON block itself is fixed.
+$(B)/tb_mpipe: tb/tb_mpipe.v rtl/argon2/argon2_mpipe.v rtl/mem/hbm3_model.v | $(B)
+	$(IVERILOG) -g2012 -o $@ tb/tb_mpipe.v rtl/argon2/argon2_mpipe.v rtl/mem/hbm3_model.v
+
+mpipe: $(B)/tb_mpipe
+	$(V) $(B)/tb_mpipe
 
 # ---- Verilator ------------------------------------------------------------
 # Compiling the RTL to C++ is ~1000x faster than Icarus here: 0.17 s instead of

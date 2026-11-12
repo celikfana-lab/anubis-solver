@@ -13,6 +13,11 @@ Three limits are modelled:
             depends on the block just computed), hidden only by interleaving
             several hashes on that engine
 
+This model is checked against cycle-accurate RTL: tb/tb_mpipe.v instantiates
+24 engines x 2 contexts behind rtl/mem/hbm3_model.v and measures 260.00 cycles
+per engine per block, i.e. 2372 hashes/s at 1 GHz - the same number this model
+predicts (2370), and zero memory stalls.
+
 Run:  python3 tools/perf_model.py
 """
 CYCLES_PER_HASH = 10_126_531

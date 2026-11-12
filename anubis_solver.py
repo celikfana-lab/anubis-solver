@@ -334,6 +334,21 @@ class _Native:
     def batch_width(self) -> int:
         return int(self.lib.anubis_batch_width())
 
+    def set_gpu_verify(self, enable: bool) -> None:
+        fn = getattr(self.lib, "anubis_set_gpu_verify", None)
+        if fn is not None:
+            fn.argtypes = [ctypes.c_int]
+            fn.restype = None
+            fn(1 if enable else 0)
+
+    def gpu_verify(self) -> bool:
+        fn = getattr(self.lib, "anubis_gpu_verify", None)
+        if fn is None:
+            return True
+        fn.argtypes = []
+        fn.restype = ctypes.c_int
+        return bool(fn())
+
     def sha256_hex(self, data: bytes) -> str:
         out = ctypes.create_string_buffer(65)
         rc = self.lib.anubis_sha256_hex(data, len(data), out)
@@ -512,12 +527,14 @@ class AnubisSolver:
         lib_path: str | os.PathLike | None = None,
         threads: int | None = None,
         budget_ms: float = 0.0,
+        verify_gpu: bool = True,
     ) -> None:
         self._native = _Native(lib_path)
         if threads is None:
             threads = self._native.default_threads()
         self.threads = max(1, min(256, int(threads)))
         self.budget_ms = float(budget_ms)
+        self._native.set_gpu_verify(verify_gpu)
 
     # -- introspection ----------------------------------------------------
     @property
@@ -671,6 +688,7 @@ class AnubisClient:
         cve_paths: tuple[str, ...] = CVE_62314_PROBE_PATHS,
         impersonate: str | None = None,
         allow_remote_cve: bool = False,
+        verify_gpu: bool = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         if session is not None and impersonate is not None:
@@ -690,7 +708,9 @@ class AnubisClient:
         self.session.headers.setdefault("X-Real-IP", "127.0.0.1")
         self.timeout = timeout
         self.max_attempts = max_attempts
-        self.solver = solver or AnubisSolver(lib_path=lib_path, threads=threads)
+        self.solver = solver or AnubisSolver(
+            lib_path=lib_path, threads=threads, verify_gpu=verify_gpu
+        )
         self.solutions: list[Solution] = []
         self.use_cve = use_cve
         self.cve_paths = cve_paths
@@ -909,6 +929,11 @@ def _main(argv: list[str]) -> int:
         help="allow the CVE bypass against non-loopback targets",
     )
     parser.add_argument(
+        "--no-verify-gpu",
+        action="store_true",
+        help="skip the CPU re-check of GPU hits (benchmarking only)",
+    )
+    parser.add_argument(
         "--affinity",
         default=None,
         help='CPU affinity: "pcores" (default), "off", or a mask like "0,2,4,6"',
@@ -926,6 +951,7 @@ def _main(argv: list[str]) -> int:
         use_cve=args.cve,
         allow_remote_cve=args.allow_remote_cve,
         impersonate=args.impersonate,
+        verify_gpu=not args.no_verify_gpu,
     )
     resp = client.get("/")
     if client.cve_bypasses:

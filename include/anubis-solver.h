@@ -51,6 +51,11 @@ ANUBIS_API const char *anubis_cpu_affinity_info(void);
 /* SHA-256 batch width: 16 (AVX-512), 8 (AVX2), 0 (scalar). */
 ANUBIS_API int anubis_batch_width(void);
 
+/* GPU hit verification (default on). Disabling it trusts the GPU result as-is
+ * and skips one reference hash per hit; useful for benchmarking only. */
+ANUBIS_API void anubis_set_gpu_verify(int enable);
+ANUBIS_API int anubis_gpu_verify(void);
+
 /* ------------------------------------------------------------------ *
  * SHA-256 helpers
  * ------------------------------------------------------------------ */

@@ -479,6 +479,58 @@ const char *anubis_cpu_affinity_info(void) {
 #define ANUBIS_ERR_UNSOLVED 2/* search space / time budget exhausted       */
 #define ANUBIS_ERR_INTERNAL 3/* thread or allocation failure               */
 
+/* GPU hit verification: one reference hash per accepted hit (not per
+ * candidate). Disable with anubis_set_gpu_verify(0), ANUBIS_GPU_NO_VERIFY=1
+ * or --no-verify-gpu; only useful for benchmarking. */
+static int g_gpu_verify = -1;
+
+ANUBIS_EXPORT
+void anubis_set_gpu_verify(int enable) {
+    g_gpu_verify = enable ? 1 : 0;
+}
+
+ANUBIS_EXPORT
+int anubis_gpu_verify(void) {
+    if (g_gpu_verify >= 0) {
+        return g_gpu_verify;
+    }
+    {
+        const char *e = getenv("ANUBIS_GPU_NO_VERIFY");
+        return !(e != NULL && e[0] != '\0' && e[0] != '0');
+    }
+}
+
+#if defined(ANUBIS_HAVE_CUDA) || defined(ANUBIS_HAVE_LEVELZERO) || defined(ANUBIS_HAVE_VULKAN)
+static int gpu_hit_ok_nibbles(const char *ch, uint64_t nonce, int diff,
+                              const char *hex) {
+    char v[65];
+    if (!anubis_gpu_verify()) return 1;
+    return anubis_verify_nibbles(ch, nonce, diff, v) == ANUBIS_OK &&
+           memcmp(v, hex, 65) == 0;
+}
+static int gpu_hit_ok_bits(const char *ch, uint32_t nonce, int diff,
+                           const char *hex) {
+    char v[65];
+    if (!anubis_gpu_verify()) return 1;
+    return anubis_verify_bits(ch, nonce, diff, v) == ANUBIS_OK &&
+           memcmp(v, hex, 65) == 0;
+}
+static int gpu_hit_ok_argon2id(const char *ch, uint32_t nonce, int diff,
+                               const char *hex) {
+    char v[65];
+    if (!anubis_gpu_verify()) return 1;
+    return anubis_verify_argon2id(ch, nonce, diff, v) == ANUBIS_OK &&
+           memcmp(v, hex, 65) == 0;
+}
+static int gpu_hit_ok_hashx(const char *ch, uint32_t nonce, int diff,
+                            const char *hex) {
+    char v[65];
+    if (!anubis_gpu_verify()) return 1;
+    return anubis_verify_hashx(ch, nonce, diff, v) == ANUBIS_OK &&
+           memcmp(v, hex, 65) == 0;
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /* SHA-256                                                             */
 /* ------------------------------------------------------------------ */
@@ -1347,7 +1399,6 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
         if (expected >= cuda_min_work(0)) {
             uint32_t gnonce = 0;
             char ghex[65];
-            char vhex[65];
             double gms = 0.0;
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
@@ -1356,9 +1407,7 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
                                         difficulty, 0, cap, budget_ms,
                                         &gnonce, ghex, &gms);
             if (grc == 0 &&
-                anubis_verify_nibbles(challenge, gnonce, difficulty, vhex) ==
-                    ANUBIS_OK &&
-                memcmp(vhex, ghex, 65) == 0) {
+                gpu_hit_ok_nibbles(challenge, gnonce, difficulty, ghex)) {
                 *out_nonce = gnonce;
                 memcpy(out_hex, ghex, 65);
                 if (out_ms != NULL) {
@@ -1380,7 +1429,6 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
         if (expected >= l0_min_work(0)) {
             uint32_t gnonce = 0;
             char ghex[65];
-            char vhex[65];
             double gms = 0.0;
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
@@ -1389,9 +1437,7 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
                                       difficulty, 0, cap, budget_ms, &gnonce,
                                       ghex, &gms);
             if (grc == 0 &&
-                anubis_verify_nibbles(challenge, gnonce, difficulty, vhex) ==
-                    ANUBIS_OK &&
-                memcmp(vhex, ghex, 65) == 0) {
+                gpu_hit_ok_nibbles(challenge, gnonce, difficulty, ghex)) {
                 *out_nonce = gnonce;
                 memcpy(out_hex, ghex, 65);
                 if (out_ms != NULL) {
@@ -1413,7 +1459,6 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
         if (expected >= vulkan_min_work(0)) {
             uint32_t gnonce = 0;
             char ghex[65];
-            char vhex[65];
             double gms = 0.0;
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
@@ -1422,9 +1467,7 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
                                           difficulty, 0, cap, budget_ms,
                                           &gnonce, ghex, &gms);
             if (grc == 0 &&
-                anubis_verify_nibbles(challenge, gnonce, difficulty, vhex) ==
-                    ANUBIS_OK &&
-                memcmp(vhex, ghex, 65) == 0) {
+                gpu_hit_ok_nibbles(challenge, gnonce, difficulty, ghex)) {
                 *out_nonce = gnonce;
                 memcpy(out_hex, ghex, 65);
                 if (out_ms != NULL) {
@@ -1535,7 +1578,6 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
         if (expected >= cuda_min_work(1)) {
             uint32_t gnonce = 0;
             char ghex[65];
-            char vhex[65];
             double gms = 0.0;
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
@@ -1544,9 +1586,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
                                         ctx.use_le, difficulty, 1, cap,
                                         budget_ms, &gnonce, ghex, &gms);
             if (grc == 0 &&
-                anubis_verify_bits(challenge_hex, gnonce, difficulty, vhex) ==
-                    ANUBIS_OK &&
-                memcmp(vhex, ghex, 65) == 0) {
+                gpu_hit_ok_bits(challenge_hex, gnonce, difficulty, ghex)) {
                 *out_nonce = gnonce;
                 memcpy(out_hex, ghex, 65);
                 if (out_ms != NULL) {
@@ -1568,7 +1608,6 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
         if (expected >= l0_min_work(1)) {
             uint32_t gnonce = 0;
             char ghex[65];
-            char vhex[65];
             double gms = 0.0;
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
@@ -1577,9 +1616,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
                                       ctx.use_le, difficulty, 1, cap,
                                       budget_ms, &gnonce, ghex, &gms);
             if (grc == 0 &&
-                anubis_verify_bits(challenge_hex, gnonce, difficulty, vhex) ==
-                    ANUBIS_OK &&
-                memcmp(vhex, ghex, 65) == 0) {
+                gpu_hit_ok_bits(challenge_hex, gnonce, difficulty, ghex)) {
                 *out_nonce = gnonce;
                 memcpy(out_hex, ghex, 65);
                 if (out_ms != NULL) {
@@ -1601,7 +1638,6 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
         if (expected >= vulkan_min_work(0)) {
             uint32_t gnonce = 0;
             char ghex[65];
-            char vhex[65];
             double gms = 0.0;
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
@@ -1609,9 +1645,8 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
             int grc = anubis_vulkan_solve(ctx.base.h, (uint32_t)raw_len, 1,
                                           ctx.use_le, difficulty, 1, cap,
                                           budget_ms, &gnonce, ghex, &gms);
-            if (grc == 0 && anubis_verify_bits(challenge_hex, gnonce, difficulty,
-                                               vhex) == ANUBIS_OK &&
-                memcmp(vhex, ghex, 65) == 0) {
+            if (grc == 0 &&
+                gpu_hit_ok_bits(challenge_hex, gnonce, difficulty, ghex)) {
                 *out_nonce = gnonce;
                 memcpy(out_hex, ghex, 65);
                 if (out_ms != NULL) {
@@ -1750,7 +1785,6 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
         uint64_t cap;
         uint32_t gnonce = 0;
         char ghex[65];
-        char vhex[65];
         double gms = 0.0;
         int i;
         for (i = 0; i < difficulty && i < 32; i++) {
@@ -1759,9 +1793,7 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
         cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
         if (anubis_cuda_argon2_solve(raw, raw_len, ctx.use_le, difficulty, cap,
                                      budget_ms, &gnonce, ghex, &gms) == 0 &&
-            anubis_verify_argon2id(challenge_hex, gnonce, difficulty, vhex) ==
-                ANUBIS_OK &&
-            memcmp(vhex, ghex, 65) == 0) {
+            gpu_hit_ok_argon2id(challenge_hex, gnonce, difficulty, ghex)) {
             *out_nonce = gnonce;
             memcpy(out_hex, ghex, 65);
             if (out_ms != NULL) {
@@ -1778,7 +1810,6 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
         uint64_t cap;
         uint32_t gnonce = 0;
         char ghex[65];
-        char vhex[65];
         double gms = 0.0;
         int i;
         for (i = 0; i < difficulty && i < 32; i++) {
@@ -1787,9 +1818,7 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
         cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
         if (anubis_l0_argon2_solve(raw, raw_len, ctx.use_le, difficulty, cap,
                                    budget_ms, &gnonce, ghex, &gms) == 0 &&
-            anubis_verify_argon2id(challenge_hex, gnonce, difficulty, vhex) ==
-                ANUBIS_OK &&
-            memcmp(vhex, ghex, 65) == 0) {
+            gpu_hit_ok_argon2id(challenge_hex, gnonce, difficulty, ghex)) {
             *out_nonce = gnonce;
             memcpy(out_hex, ghex, 65);
             if (out_ms != NULL) {
@@ -1806,7 +1835,6 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
         uint64_t cap;
         uint32_t gnonce = 0;
         char ghex[65];
-        char vhex[65];
         double gms = 0.0;
         int i;
         for (i = 0; i < difficulty && i < 32; i++) {
@@ -1815,9 +1843,7 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
         cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
         if (anubis_vulkan_argon2_solve(raw, raw_len, ctx.use_le, difficulty, cap,
                                        budget_ms, &gnonce, ghex, &gms) == 0 &&
-            anubis_verify_argon2id(challenge_hex, gnonce, difficulty, vhex) ==
-                ANUBIS_OK &&
-            memcmp(vhex, ghex, 65) == 0) {
+            gpu_hit_ok_argon2id(challenge_hex, gnonce, difficulty, ghex)) {
             *out_nonce = gnonce;
             memcpy(out_hex, ghex, 65);
             if (out_ms != NULL) {
@@ -1923,7 +1949,6 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
         uint64_t cap;
         uint32_t gnonce = 0;
         char ghex[65];
-        char vhex[65];
         double gms = 0.0;
         int i;
         for (i = 0; i < difficulty && i < 32; i++) {
@@ -1932,9 +1957,7 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
         cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
         if (anubis_cuda_hashx_solve(state, state_size, difficulty, cap,
                                     budget_ms, &gnonce, ghex, &gms) == 0 &&
-            anubis_verify_hashx(challenge_hex, gnonce, difficulty, vhex) ==
-                ANUBIS_OK &&
-            memcmp(vhex, ghex, 65) == 0) {
+            gpu_hit_ok_hashx(challenge_hex, gnonce, difficulty, ghex)) {
             hashx_free(state);
             *out_nonce = gnonce;
             memcpy(out_hex, ghex, 65);
@@ -1952,7 +1975,6 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
         uint64_t cap;
         uint32_t gnonce = 0;
         char ghex[65];
-        char vhex[65];
         double gms = 0.0;
         int i;
         for (i = 0; i < difficulty && i < 32; i++) {
@@ -1961,9 +1983,7 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
         cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
         if (anubis_l0_hashx_solve(state, state_size, difficulty, cap, budget_ms,
                                   &gnonce, ghex, &gms) == 0 &&
-            anubis_verify_hashx(challenge_hex, gnonce, difficulty, vhex) ==
-                ANUBIS_OK &&
-            memcmp(vhex, ghex, 65) == 0) {
+            gpu_hit_ok_hashx(challenge_hex, gnonce, difficulty, ghex)) {
             hashx_free(state);
             *out_nonce = gnonce;
             memcpy(out_hex, ghex, 65);
@@ -1981,7 +2001,6 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
         uint64_t cap;
         uint32_t gnonce = 0;
         char ghex[65];
-        char vhex[65];
         double gms = 0.0;
         int i;
         for (i = 0; i < difficulty && i < 32; i++) {
@@ -1990,9 +2009,7 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
         cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
         if (anubis_vulkan_hashx_solve(state, state_size, difficulty, cap,
                                       budget_ms, &gnonce, ghex, &gms) == 0 &&
-            anubis_verify_hashx(challenge_hex, gnonce, difficulty, vhex) ==
-                ANUBIS_OK &&
-            memcmp(vhex, ghex, 65) == 0) {
+            gpu_hit_ok_hashx(challenge_hex, gnonce, difficulty, ghex)) {
             hashx_free(state);
             *out_nonce = gnonce;
             memcpy(out_hex, ghex, 65);

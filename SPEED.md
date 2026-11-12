@@ -207,6 +207,27 @@ so the dispatch order AVX-512 → AVX2 → SHA-NI → C matches the measurements
 AVX2 vs AVX-512 and verifies every digest against hashlib.
 Raw data: [`results/avx512-kaggle.json`](results/avx512-kaggle.json).
 
+## CUDA (NVIDIA GPUs)
+
+Built automatically when `nvcc` is on PATH (`make CUDA=0` disables it), and
+preferred over Vulkan at runtime. `fast`/`slow` and `sha256` run on the GPU;
+`argon2id`/`hashx` stay on the CPU.
+
+Measured on Kaggle with 2× Tesla T4, one CPU thread for the CPU column
+(2026-11-12):
+
+| workload | CUDA (2× T4) | CPU (1 core) | speedup |
+|---|---:|---:|---:|
+| `fast` d6 | 922.4 MH/s | 17.6 MH/s | 52× |
+| `fast` d7 | 2286.3 MH/s | 16.4 MH/s | 140× |
+| `sha256` b24 | 1719.8 MH/s | 22.7 MH/s | 76× |
+| `sha256` b26 | 2985.1 MH/s | 22.8 MH/s | 131× |
+
+Both GPUs are used: each round launches a chunk on every visible device and
+the earliest hit wins; the CPU re-verifies the digest before accepting it.
+`tools/bench_gpu.py` reproduces the table and verifies every digest against
+hashlib. Raw data: [`results/cuda-t4.json`](results/cuda-t4.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

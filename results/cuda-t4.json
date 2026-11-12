@@ -1,0 +1,15 @@
+{
+  "host": {
+    "gpu": "2x NVIDIA Tesla T4",
+    "cpu": "Intel Xeon @ 2.00GHz (Kaggle)",
+    "cuda": "13.0",
+    "measured": "2026-11-12"
+  },
+  "throughput": {
+    "fast_d6":  {"gpu_mhs": 922.4,  "cpu_mhs": 17.6, "speedup": 52.3},
+    "fast_d7":  {"gpu_mhs": 2286.3, "cpu_mhs": 16.4, "speedup": 139.7},
+    "sha256_b24": {"gpu_mhs": 1719.8, "cpu_mhs": 22.7, "speedup": 75.7},
+    "sha256_b26": {"gpu_mhs": 2985.1, "cpu_mhs": 22.8, "speedup": 130.9}
+  },
+  "notes": "CUDA preferred over Vulkan; results re-verified on the CPU; tests/test_core.py passed"
+}

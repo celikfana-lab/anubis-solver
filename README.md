@@ -46,9 +46,15 @@ uses `src/neon.s` — NEON plus the ARMv8 SHA-2 crypto instructions. Runtime
 dispatch checks `HWCAP_SHA2`; CPUs without it (e.g. Pi 4) fall back to the
 portable C compression. `ANUBIS_NO_NEON=1` forces the fallback for A/B tests.
 
+CUDA support is auto-detected: if `nvcc` is on PATH the `fast`/`slow` and
+`sha256` challenges run on NVIDIA GPUs (all visible devices), and CUDA is
+preferred over Vulkan. `make CUDA=0` compiles it out; `ANUBIS_NO_CUDA=1`
+disables it at runtime.
+
 Vulkan support is auto-detected from `/usr/include/vulkan/vulkan.h`; the
 library `dlopen`s `libvulkan.so.1` at runtime, so a machine without Vulkan just
-uses the CPU paths. Build with `VULKAN=0` to compile it out. If you change the
+uses the CPU paths. Build with `VULKAN=0` to compile it out. With both
+backends built, the order is CUDA → Vulkan → CPU. If you change the
 shader, regenerate `src/sha256_comp.spv.h` with `make shader` (needs
 `glslangValidator`).
 

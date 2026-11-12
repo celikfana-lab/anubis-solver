@@ -97,9 +97,10 @@ module argon2_mpipe #(
             end
             for (e = 0; e < NENG; e = e + 1) rr[e] <= 1'b0;
         end else begin
-            // advance past whoever just won, so service stays fair
+            // advance past whoever just won. Advancing while idle as well
+            // de-synchronised the ring from the demand pattern and cost up to
+            // 38% at some engine counts, so the pointer only moves on a grant.
             if (req_go) cur <= (gsel + 1 == NCTX) ? {IDW{1'b0}} : gsel + 1;
-            else        cur <= (cur + 1 == NCTX) ? {IDW{1'b0}} : cur + 1;
 
             for (e = 0; e < NENG; e = e + 1)
                 if (|cgrant[KCTX*e +: KCTX]) rr[e] <= ~rr[e];
@@ -110,15 +111,19 @@ module argon2_mpipe #(
             for (c = 0; c < NCTX; c = c + 1) begin
                 case (st[c])
                     S_IDLE: if (start) begin
-                        st[c] <= S_REQ0;
-                        nxt[c] <= 32'd0;
+                        // Start each context at a different block so the window
+                        // spans both passes: pass 0 moves 3072 B per block and
+                        // pass 1 moves 4096 B, and starting everybody at block 0
+                        // measured only the cheap half.
+                        st[c]  <= S_REQ0;
+                        nxt[c] <= c * (BPH / NCTX);
                         blk[c] <= 32'd0;
                     end
                     S_REQ0: if (req_go && (gsel == c)) st[c] <= S_WAIT0;
                     S_WAIT0: if (got[c]) begin
                         got[c] <= 1'b0;
-                        blk[c] <= 32'd0;
-                        nxt[c] <= 32'd1;
+                        blk[c] <= nxt[c];
+                        nxt[c] <= (nxt[c] + 32'd1 == BPH) ? 32'd0 : nxt[c] + 32'd1;
                         st[c]  <= S_REQ;
                     end
                     S_REQ: if (req_go && (gsel == c)) begin

@@ -5,6 +5,8 @@ module tb_mpipe;
     parameter integer NENG  = 24;
     parameter integer KCTX  = 2;
     parameter integer CLOCK = 1_000_000_000;   // Hz
+    parameter integer IDW   = 6;               // context id width
+    parameter integer EFF   = 100;             // HBM3 link efficiency, %
     parameter integer WARMUP = 480;            // blocks before measuring
     parameter integer TARGET = 4800;           // blocks measured in steady state
 
@@ -14,20 +16,20 @@ module tb_mpipe;
     wire [31:0] blocks_done;
     wire        req_valid;
     wire [15:0] req_bytes;
-    wire [5:0]  req_id;
+    wire [IDW-1:0] req_id;
     wire        req_ready;
     wire        resp_valid;
-    wire [5:0]  resp_id;
+    wire [IDW-1:0] resp_id;
     wire [63:0] bytes_served, req_served;
 
-    argon2_mpipe #(.NENG(NENG), .KCTX(KCTX)) dut (
+    argon2_mpipe #(.NENG(NENG), .KCTX(KCTX), .IDW(IDW)) dut (
         .clk(clk), .rst_n(rst_n), .start(start),
         .blocks_done(blocks_done),
         .mem_req_valid(req_valid), .mem_req_bytes(req_bytes), .mem_req_id(req_id),
         .mem_req_ready(req_ready),
         .mem_resp_valid(resp_valid), .mem_resp_id(resp_id));
 
-    hbm3_model #(.BW(819), .LAT(350)) mem (
+    hbm3_model #(.BW(819), .LAT(350), .EFF(EFF), .IDW(IDW)) mem (
         .clk(clk), .rst_n(rst_n),
         .req_valid(req_valid), .req_bytes(req_bytes), .req_id(req_id),
         .req_ready(req_ready),
@@ -62,8 +64,8 @@ module tb_mpipe;
         hashes_per_s = blocks_per_s / 38912.0;
         bpc          = bytes_served * 1.0 / cycles;
         demand_bps   = bpc * CLOCK / 1e9;
-        $display("engines %0d, contexts/engine %0d (%0d in flight), HBM3 819 B/cycle, 350 cyc latency",
-                 NENG, KCTX, NCTX);
+        $display("engines %0d, contexts/engine %0d (%0d in flight), HBM3 819 B/cycle at %0d%% efficiency, 350 cyc latency",
+                 NENG, KCTX, NCTX, EFF);
         $display("  steady state: %0d blocks in %0d cycles (%.2f cycles/block, %.2f per engine)",
                  dblk, dcyc, dcyc * 1.0 / dblk, dcyc * 1.0 / dblk * NENG);
         $display("  link: %0d requests, %0d bytes, %.1f B/cycle (%.0f GB/s) of 819",

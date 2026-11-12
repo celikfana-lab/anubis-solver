@@ -12,6 +12,8 @@
 module hbm3_model #(
     parameter integer BW  = 819,     // HBM3: 819 GB/s at 1 GHz = 819 B/cycle
     parameter integer LAT = 350,     // ~350 ns at 1 GHz
+    parameter integer EFF = 100,     // link efficiency in %, random 1 KiB
+                                     // blocks cost a row activate each
     parameter integer IDW = 6
 ) (
     input  wire          clk,
@@ -25,8 +27,11 @@ module hbm3_model #(
     output reg  [63:0]   bytes_served,
     output reg  [63:0]   req_served
 );
-    reg        link_busy;
-    reg [15:0] link_left;          // cycles left on the current request
+    // Byte-credit admission instead of a per-request busy period: charging
+    // ceil(bytes / BW) cycles rounded a 3584-byte block up from 4.38 to 5 and
+    // capped the link at 87% of its bandwidth.
+    reg [31:0] credit;             // bytes of transfer the link can still take
+    wire [31:0] credit_after = credit + BW;
 
     // latency pipeline: one request can start per cycle, so one slot per cycle
     reg              pv [0:LAT-1];
@@ -34,24 +39,21 @@ module hbm3_model #(
 
     integer i;
 
-    assign req_ready = !link_busy;
+    assign req_ready = (credit >= {16'd0, req_bytes});
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            link_busy <= 1'b0; link_left <= 16'd0;
+            credit <= 32'd0;
             resp_valid <= 1'b0; resp_id <= {IDW{1'b0}};
             bytes_served <= 64'd0; req_served <= 64'd0;
             for (i = 0; i < LAT; i = i + 1) begin pv[i] <= 1'b0; pi[i] <= {IDW{1'b0}}; end
         end else begin
             resp_valid <= 1'b0;
 
-            // service the link
-            if (link_busy) begin
-                if (link_left <= 16'd1) link_busy <= 1'b0;
-                else link_left <= link_left - 16'd1;
-            end else if (req_valid) begin
-                link_busy <= 1'b1;
-                link_left <= (req_bytes + BW - 1) / BW;
+            // credit rises by the derated bandwidth every cycle
+            credit <= (credit > (8*BW)) ? (8*BW) : credit + (BW * EFF / 100);
+            if (req_valid && req_ready) begin
+                credit <= credit_after - {16'd0, req_bytes};
                 bytes_served <= bytes_served + {48'd0, req_bytes};
                 req_served <= req_served + 64'd1;
             end
@@ -61,7 +63,7 @@ module hbm3_model #(
                 pv[i] <= pv[i-1];
                 pi[i] <= pi[i-1];
             end
-            pv[0] <= (req_valid && !link_busy);
+            pv[0] <= (req_valid && req_ready);
             pi[0] <= req_id;
 
             if (pv[LAT-1]) begin

@@ -1,0 +1,41 @@
+{
+  "what": "Anubis argon2id challenges solved by the chip/ Verilog reference implementation",
+  "date": "2026-11-12",
+  "hit_rule": "Argon2id(password=hex_decode(challenge), salt=nonce, m=19456 KiB, t=2, p=1, tag=32); a hit needs `difficulty` leading zero bits of the tag",
+  "challenge_hex": "6a1f8c2e4d0b9a7f3c5e2d1b0a9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d",
+  "salt_encoding": "big-endian (last challenge byte 0x7d)",
+  "runs": [
+    {
+      "simulator": "Icarus Verilog 12.0",
+      "m_cost": 64,
+      "difficulty": 4,
+      "nonce": 18,
+      "leading_zero_bits": 7,
+      "tag": "019d8fecf65e34c89847ccaf23209c36668261d396680ad3b8e3c96246106ed0",
+      "wall_seconds": 174,
+      "note": "scaled memory so the full nonce search fits in Icarus"
+    },
+    {
+      "simulator": "Verilator 5.020 (56 cores, 56 processes)",
+      "m_cost": 19456,
+      "difficulty": 12,
+      "nonce": 146,
+      "leading_zero_bits": 13,
+      "tag": "00043db91e06e6db9040a28951ddfe392f0bd901a276ed2b5dda53e524208499",
+      "wall_seconds": 388,
+      "tries": 7168,
+      "note": "real Anubis parameters; 10.1M simulated cycles per hash, 3.9 s each"
+    },
+    {
+      "simulator": "Verilator 5.020",
+      "m_cost": 19456,
+      "difficulty": 5,
+      "nonce": 25,
+      "leading_zero_bits": 5,
+      "tag": "06687f4faa341898abb2c9af5dca00c07b0f3ec311d215b2f7cf2ba33ec5170a",
+      "wall_seconds": 3.9,
+      "note": "single hash cross-check against argon2-cffi"
+    }
+  ],
+  "verification": "every tag above is byte-identical to argon2-cffi argon2.low_level.hash_secret_raw(password=hex_decode(challenge), salt=nonce, time_cost=2, memory_cost=m_cost, parallelism=1, hash_len=32, type=ID, version=0x13); recheck with chip/verify_solve.py"
+}

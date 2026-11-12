@@ -50,16 +50,23 @@ cd chip
 make solve DIFF=4 MAXN=32      # M_COST=64: searches nonces on the chip
 ```
 
-Result on a 32-byte challenge with `DIFF=4`, starting at nonce 0:
+Two solves are recorded in `../results/chip-solve-2026-11-12.json`:
+
+| memory | difficulty | nonce | leading zeros | tag | how |
+|---|---|---|---|---|---|
+| 64 blocks | 4 | 18 | 7 | `019d8fec…` | `make solve`, 19 tries, Icarus |
+| **19456 blocks** | **12** | **146** | **13** | `00043db9…` | 56 processes, Verilator, 388 s |
+
+The second one is the real Anubis parameter set. Each of those tags is
+byte-identical to `argon2-cffi`, so the chip solved the challenge rather than
+just hashing something.
 
 ```
 HIT nonce=18 (0x0000000000000012) leading_zero_bits=7 >= 4 after 19 tries
 TAG 019d8fecf65e34c89847ccaf23209c36668261d396680ad3b8e3c96246106ed0
 ```
 
-`argon2-cffi` reproduces that tag byte for byte, so the chip solved the
-challenge rather than just hashing something. `verify_solve.py` rechecks any
-solve:
+`verify_solve.py` rechecks any solve:
 
 ```bash
 ./verify_solve.py <challenge_hex> <nonce> <tag_hex> [m_cost] [difficulty]

@@ -1,0 +1,14 @@
+{
+  "host": {
+    "gpu": "Intel Iris Xe Graphics (ADL GT2)",
+    "api": "Vulkan 1.1 compute (Mesa ANV)",
+    "cpu": "1 thread of the laptop CPU",
+    "measured": "2026-11-12"
+  },
+  "config": {"m_cost": 19456, "t_cost": 2, "concurrent_hashes": 64},
+  "throughput_hps": {
+    "d6": {"cpu": 42.7, "gpu": 229.4, "speedup": 5.4},
+    "d8": {"cpu": 38.0, "gpu": 326.4, "speedup": 8.6}
+  },
+  "notes": "digest verified against argon2-cffi; H0/B0/B1 computed on the host, fills and final BLAKE2b tag on the GPU; slight edge over the Level Zero path on this GPU"
+}

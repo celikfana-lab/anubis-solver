@@ -51,8 +51,9 @@ CUDA support is auto-detected: if `nvcc` is on PATH the `fast`/`slow` and
 preferred over Vulkan. Argon2id also has opt-in GPU paths
 (`ANUBIS_GPU_ARGON2=1`): CUDA runs one block per hash with up to 128
 concurrent hashes per device (~1750 h/s on two T4s vs ~85 h/s on a 4-vCPU
-host), and the Level Zero backend does the same on Intel GPUs (~200 h/s on
-an Iris Xe vs ~43 h/s for one CPU thread). `make CUDA=0` compiles it out; `ANUBIS_NO_CUDA=1`
+host), the Level Zero backend does the same on Intel GPUs (~200 h/s on an Iris Xe
+vs ~43 h/s for one CPU thread), and the Vulkan backend (GLSL with uvec2
+emulation) reaches ~230-330 h/s on the same GPU. `make CUDA=0` compiles it out; `ANUBIS_NO_CUDA=1`
 disables it at runtime.
 
 Intel GPUs are reached through **oneAPI Level Zero** (oneAPI's low-level C

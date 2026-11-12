@@ -287,6 +287,25 @@ shared memory), so 64 is the default.
 
 Raw data: [`results/argon2id-levelzero-irisxe.json`](results/argon2id-levelzero-irisxe.json).
 
+## Argon2id on Vulkan (opt-in)
+
+Same cooperative design as the Level Zero/CUDA kernels, written in GLSL with
+`uvec2` emulation of the 64-bit BlaMka arithmetic (GLSL has no 64-bit ints).
+H0 and the first two blocks are computed on the host; the 19 MiB matrix lives
+in an SSBO. 64 concurrent hashes, `ANUBIS_GPU_ARGON2=1`.
+
+Iris Xe (ADL GT2), 2026-11-12, CPU column is one laptop thread:
+
+| difficulty | CPU (1 thread) | Iris Xe (Vulkan) | speedup |
+|---|---:|---:|---:|
+| d6 (64 hashes) | 1498 ms | 279 ms | 5.4× |
+| d8 (256 hashes) | 3934 ms | 784 ms | 8.6× |
+
+On this GPU the Vulkan path is slightly ahead of Level Zero (229/326 h/s vs
+207/288 h/s), because the BLAKE2b prefix work is offloaded to the host.
+
+Raw data: [`results/argon2id-vulkan-irisxe.json`](results/argon2id-vulkan-irisxe.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

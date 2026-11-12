@@ -85,6 +85,13 @@
 #if defined(ANUBIS_HAVE_VULKAN)
 extern int anubis_vulkan_available(void);
 extern const char *anubis_vulkan_info(void);
+extern int anubis_vulkan_argon2_available(void);
+extern int anubis_vulkan_argon2_solve(const uint8_t *challenge, size_t clen,
+                                      int use_le, int difficulty,
+                                      uint64_t max_nonce, double budget_ms,
+                                      uint32_t *out_nonce, char out_hex[65],
+                                      double *out_ms);
+
 extern int anubis_vulkan_solve(const uint32_t mid[8], uint32_t prefix_len,
                                int mode, int use_le, int difficulty,
                                int check_bits, uint64_t max_nonce,
@@ -152,7 +159,7 @@ static uint64_t cuda_min_work(int bits_mode) {
 }
 #endif
 
-#if defined(ANUBIS_HAVE_CUDA) || defined(ANUBIS_HAVE_LEVELZERO)
+#if defined(ANUBIS_HAVE_CUDA) || defined(ANUBIS_HAVE_LEVELZERO) || defined(ANUBIS_HAVE_VULKAN)
 static int gpu_argon2_enabled(void) {
     const char *e = getenv("ANUBIS_GPU_ARGON2");
     return e != NULL && e[0] != '\0' && e[0] != '0';
@@ -1746,6 +1753,34 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
         cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
         if (anubis_l0_argon2_solve(raw, raw_len, ctx.use_le, difficulty, cap,
                                    budget_ms, &gnonce, ghex, &gms) == 0 &&
+            anubis_verify_argon2id(challenge_hex, gnonce, difficulty, vhex) ==
+                ANUBIS_OK &&
+            memcmp(vhex, ghex, 65) == 0) {
+            *out_nonce = gnonce;
+            memcpy(out_hex, ghex, 65);
+            if (out_ms != NULL) {
+                *out_ms = gms;
+            }
+            return ANUBIS_OK;
+        }
+    }
+#endif
+
+#if defined(ANUBIS_HAVE_VULKAN)
+    if (gpu_argon2_enabled() && anubis_vulkan_argon2_available()) {
+        uint64_t expected = 1;
+        uint64_t cap;
+        uint32_t gnonce = 0;
+        char ghex[65];
+        char vhex[65];
+        double gms = 0.0;
+        int i;
+        for (i = 0; i < difficulty && i < 32; i++) {
+            expected *= 2;
+        }
+        cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
+        if (anubis_vulkan_argon2_solve(raw, raw_len, ctx.use_le, difficulty, cap,
+                                       budget_ms, &gnonce, ghex, &gms) == 0 &&
             anubis_verify_argon2id(challenge_hex, gnonce, difficulty, vhex) ==
                 ANUBIS_OK &&
             memcmp(vhex, ghex, 65) == 0) {

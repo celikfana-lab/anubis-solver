@@ -30,7 +30,8 @@ def main() -> int:
     nonce = 12345
     buf = ctypes.create_string_buffer(32)
     rc = -1
-    for fn_name in ("anubis_cuda_argon2_digest", "anubis_l0_argon2_digest"):
+    for fn_name in ("anubis_cuda_argon2_digest", "anubis_l0_argon2_digest",
+                    "anubis_vulkan_argon2_digest"):
         fn = getattr(lib, fn_name, None)
         if fn is None:
             continue

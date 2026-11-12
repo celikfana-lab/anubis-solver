@@ -72,6 +72,9 @@ OBJ := $(patsubst src/%.c,$(BUILD)/%.o,$(CORE_SRC)) \
        $(patsubst src/%.cu,$(BUILD)/%.o,$(CUDA_SRC)) \
        $(patsubst third_party/argon2/%.c,$(BUILD)/argon2/%.o,$(ARGON2_SRC))
 
+DEP := $(OBJ:.o=.d)
+-include $(DEP)
+
 .PHONY: all test clean shader
 
 all: $(LIB)
@@ -80,7 +83,7 @@ $(BUILD):
 	mkdir -p $(BUILD)/argon2/blake2
 
 $(BUILD)/%.o: src/%.c | $(BUILD)
-	$(CC) $(CFLAGS) $(NATIVE) $(INC) -pthread -c $< -o $@
+	$(CC) $(CFLAGS) $(NATIVE) $(INC) -pthread -MMD -MP -c $< -o $@
 
 $(BUILD)/%.o: src/%.cu | $(BUILD)
 	$(NVCC) -O3 -Xcompiler -fPIC -c $< -o $@
@@ -89,7 +92,7 @@ $(BUILD)/%.o: src/%.s | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/argon2/%.o: third_party/argon2/%.c | $(BUILD)
-	$(CC) $(CFLAGS) $(NATIVE) $(INC) -pthread -c $< -o $@
+	$(CC) $(CFLAGS) $(NATIVE) $(INC) -pthread -MMD -MP -c $< -o $@
 
 $(LIB): $(OBJ)
 	$(LINK) $(LDFLAGS) -o $@ $(OBJ)

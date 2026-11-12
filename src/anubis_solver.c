@@ -1732,9 +1732,31 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
 #endif
 
 #if defined(ANUBIS_HAVE_LEVELZERO)
-    /* The Level Zero Argon2id kernel (src/argon2id_l0.cl) is still
-     * experimental: its cooperative fill does not yet reproduce the
-     * reference digest, so the GPU attempt is disabled here on purpose. */
+    if (gpu_argon2_enabled() && anubis_l0_argon2_available()) {
+        uint64_t expected = 1;
+        uint64_t cap;
+        uint32_t gnonce = 0;
+        char ghex[65];
+        char vhex[65];
+        double gms = 0.0;
+        int i;
+        for (i = 0; i < difficulty && i < 32; i++) {
+            expected *= 2;
+        }
+        cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
+        if (anubis_l0_argon2_solve(raw, raw_len, ctx.use_le, difficulty, cap,
+                                   budget_ms, &gnonce, ghex, &gms) == 0 &&
+            anubis_verify_argon2id(challenge_hex, gnonce, difficulty, vhex) ==
+                ANUBIS_OK &&
+            memcmp(vhex, ghex, 65) == 0) {
+            *out_nonce = gnonce;
+            memcpy(out_hex, ghex, 65);
+            if (out_ms != NULL) {
+                *out_ms = gms;
+            }
+            return ANUBIS_OK;
+        }
+    }
 #endif
 
     rc = run_search(&job, &nonce64, out_hex, out_ms);

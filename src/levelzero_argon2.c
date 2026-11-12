@@ -624,3 +624,24 @@ int anubis_l0_fill_test(uint64_t prev[128], uint64_t ref[128], uint64_t out[128]
     pthread_mutex_unlock(&g_a2.mu);
     return 0;
 }
+/* Dump the first 32 words of the last block (testing/debug helper). */
+int anubis_l0_a2_lastblock(const uint8_t *challenge, size_t clen, int use_le,
+                           uint32_t nonce, uint64_t out[32]) {
+    if (challenge == NULL || out == NULL || clen > 4096 || !l0_a2_init()) {
+        return -1;
+    }
+    pthread_mutex_lock(&g_a2.mu);
+    memcpy(g_a2.challenge, challenge, clen);
+    if (a2_dispatch((uint32_t)clen, (uint32_t)use_le, 0xFFFFFFFEu, nonce,
+                    1u) != 0 ||
+        g_a2.results->count == 0) {
+        pthread_mutex_unlock(&g_a2.mu);
+        return -1;
+    }
+    for (int i = 0; i < 32; i++) {
+        out[i] = (uint64_t)g_a2.results->hashes[0][2 * i] |
+                 ((uint64_t)g_a2.results->hashes[0][2 * i + 1] << 32);
+    }
+    pthread_mutex_unlock(&g_a2.mu);
+    return 0;
+}

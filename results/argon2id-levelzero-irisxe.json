@@ -1,0 +1,14 @@
+{
+  "host": {
+    "gpu": "Intel Iris Xe Graphics (ADL GT2)",
+    "api": "oneAPI Level Zero + IGC 2.42",
+    "cpu": "1 thread of the laptop CPU",
+    "measured": "2026-11-12"
+  },
+  "config": {"m_cost": 19456, "t_cost": 2, "concurrent_hashes": 64},
+  "throughput_hps": {
+    "d6": {"cpu": 42.7, "gpu": 200.5, "speedup": 4.7},
+    "d8": {"cpu": 38.0, "gpu": 195.5, "speedup": 5.1}
+  },
+  "notes": "digest verified against argon2-cffi; 128 concurrent hashes was slower on the iGPU (2.55 GB working set)"
+}

@@ -268,6 +268,25 @@ is ~4× the 28-thread Xeon (411 h/s) from the earlier benchmark.
 Raw data: [`results/argon2id-cuda-t4.json`](results/argon2id-cuda-t4.json).
 `tools/bench_argon2_gpu.py` reproduces it.
 
+## Argon2id on Level Zero (Intel GPUs, opt-in)
+
+One work-group (32 work-items) per hash, 1 KiB block in local memory, 19 MiB
+matrix in device memory, 64 concurrent hashes. Enabled with
+`ANUBIS_GPU_ARGON2=1`; digests are re-verified on the CPU.
+
+Iris Xe (ADL GT2), 2026-11-12, CPU column is one laptop thread:
+
+| difficulty | CPU (1 thread) | Iris Xe (L0) | speedup |
+|---|---:|---:|---:|
+| d6 (64 hashes) | 1498 ms | 319 ms | 4.7× |
+| d8 (256 hashes) | 3934 ms | 1310 ms | 5.1× |
+
+That is ~200 h/s on the iGPU vs ~43 h/s for one CPU thread. Raising the
+concurrency to 128 hashes made it slower (2.55 GB working set thrashes the
+shared memory), so 64 is the default.
+
+Raw data: [`results/argon2id-levelzero-irisxe.json`](results/argon2id-levelzero-irisxe.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

@@ -376,6 +376,20 @@ __kernel void argon2id_pow(__global const uchar *challenge, uint clen,
         }
     }
 
+    if (difficulty == 0xFFFFFFFEu) {
+        if (tid == 0) {
+            const __global ulong *last =
+                mem + (ulong)(A2_M - 1u) * 128u;
+            for (uint i = 0; i < 32u; i++) {
+                res->hashes[0][2u * i] = (uint)last[i];
+                res->hashes[0][2u * i + 1u] = (uint)(last[i] >> 32);
+            }
+            res->nonces[0] = nonce;
+            res->count = 1;
+        }
+        return;
+    }
+
     if (tid == 0) {
         uchar tag[32];
         int ok = 1;
@@ -404,12 +418,12 @@ __kernel void argon2id_pow(__global const uchar *challenge, uint clen,
             if (slot < 8u) {
                 res->nonces[slot] = nonce;
                 for (i = 0; i < 8; i++) {
-                    ulong w = h0[i];
-                    res->hashes[slot][i] =
-                        ((uint)(w & 0xffUL) << 24) |
-                        ((uint)((w >> 8) & 0xffUL) << 16) |
-                        ((uint)((w >> 16) & 0xffUL) << 8) |
-                        (uint)((w >> 24) & 0xffUL);
+                    ulong w = h0[i >> 1];
+                    uint v = (uint)((i & 1) ? (w >> 32) : (w & 0xffffffffUL));
+                    res->hashes[slot][i] = ((v & 0xffu) << 24) |
+                                           ((v >> 8 & 0xffu) << 16) |
+                                           ((v >> 16 & 0xffu) << 8) |
+                                           (v >> 24 & 0xffu);
                 }
             }
         }

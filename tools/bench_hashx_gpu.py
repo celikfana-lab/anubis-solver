@@ -22,12 +22,12 @@ def main() -> int:
     mode = "gpu" if os.environ.get("ANUBIS_GPU_HASHX") else "cpu"
     print("gpu:", solver.gpu, "mode:", mode)
     ch = "ab" * 64
-    for d in (16, 20, 22):
+    for d in (24, 26, 28):
         t0 = time.perf_counter()
-        n, r, _ = solver._native.solve_hashx(ch, d, 1, 0)
+        n, r, ms = solver._native.solve_hashx(ch, d, 1, 0)
         dt = time.perf_counter() - t0
-        print(f"{mode} hashx d{d}: {dt*1000:9.1f} ms  {2**d/dt/1e6:8.2f} MH/s"
-              f"  (nonce {n})")
+        print(f"{mode} hashx d{d}: wall {dt*1000:8.1f} ms  reported {ms:8.1f} ms"
+              f"  {(n+1)/ms/1e6:7.2f} MH/s (nonce {n})")
     return 0
 
 

@@ -332,6 +332,23 @@ That is ~70–110 MH/s on the pair of T4s versus ~8.8 MH/s for one CPU thread
 
 Raw data: [`results/hashx-cuda-t4.json`](results/hashx-cuda-t4.json).
 
+### HashX on Level Zero (Intel GPUs)
+
+The same interpreter ported to OpenCL C. It is **correct** (it finds the same
+nonces as the CPU search) but on the Iris Xe it is *slower* than the CPU,
+because HashX is a branchy scalar interpreter and the iGPU has weak
+per-thread scalar throughput:
+
+| difficulty | CPU (1 thread) | Iris Xe (L0) | ratio |
+|---|---:|---:|---:|
+| d24 | 1402 ms | 1841 ms | 0.76× |
+| d26 | 20020 ms | 40491 ms | 0.49× |
+| d28 | 21259 ms | 45607 ms | 0.47× |
+
+It is therefore gated behind `ANUBIS_L0_HASHX=1`, not enabled by
+`ANUBIS_GPU_HASHX` (which turns on the CUDA path). Raw data:
+[`results/hashx-levelzero-irisxe.json`](results/hashx-levelzero-irisxe.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

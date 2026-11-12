@@ -43,7 +43,7 @@ L0_INC ?= $(if $(wildcard /usr/include/level_zero/ze_api.h),/usr/include,\
             $(if $(wildcard /usr/local/include/level_zero/ze_api.h),/usr/local/include,))
 ifneq ($(L0),0)
 ifneq ($(wildcard $(L0_INC)/level_zero/ze_api.h),)
-CORE_SRC += src/levelzero_sha256.c src/levelzero_argon2.c
+CORE_SRC += src/levelzero_sha256.c src/levelzero_argon2.c src/levelzero_hashx.c
 CFLAGS   += -DANUBIS_HAVE_LEVELZERO -I$(L0_INC)
 LDFLAGS  += -ldl
 endif

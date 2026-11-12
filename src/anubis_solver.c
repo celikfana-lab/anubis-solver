@@ -118,6 +118,12 @@ extern int anubis_l0_solve(const uint32_t mid[8], uint32_t prefix_len,
                            double budget_ms, uint32_t *out_nonce,
                            char out_hex[65], double *out_ms);
 
+extern int anubis_l0_hashx_available(void);
+extern int anubis_l0_hashx_solve(const void *state, size_t state_size,
+                                 int difficulty, uint64_t max_nonce,
+                                 double budget_ms, uint32_t *out_nonce,
+                                 char out_hex[65], double *out_ms);
+
 extern int anubis_l0_argon2_available(void);
 extern int anubis_l0_argon2_solve(const uint8_t *challenge, size_t clen,
                                   int use_le, int difficulty,
@@ -163,6 +169,11 @@ static uint64_t cuda_min_work(int bits_mode) {
     return bits_mode ? (1ull << 16) : (1ull << 20);
 }
 #endif
+
+static int l0_hashx_enabled(void) {
+    const char *e = getenv("ANUBIS_L0_HASHX");
+    return e != NULL && e[0] != '\0' && e[0] != '0';
+}
 
 static int gpu_hashx_enabled(void) {
     const char *e = getenv("ANUBIS_GPU_HASHX");
@@ -1910,6 +1921,35 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
         cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
         if (anubis_cuda_hashx_solve(state, state_size, difficulty, cap,
                                     budget_ms, &gnonce, ghex, &gms) == 0 &&
+            anubis_verify_hashx(challenge_hex, gnonce, difficulty, vhex) ==
+                ANUBIS_OK &&
+            memcmp(vhex, ghex, 65) == 0) {
+            hashx_free(state);
+            *out_nonce = gnonce;
+            memcpy(out_hex, ghex, 65);
+            if (out_ms != NULL) {
+                *out_ms = gms;
+            }
+            return ANUBIS_OK;
+        }
+    }
+#endif
+
+#if defined(ANUBIS_HAVE_LEVELZERO)
+    if (l0_hashx_enabled() && anubis_l0_hashx_available()) {
+        uint64_t expected = 1;
+        uint64_t cap;
+        uint32_t gnonce = 0;
+        char ghex[65];
+        char vhex[65];
+        double gms = 0.0;
+        int i;
+        for (i = 0; i < difficulty && i < 32; i++) {
+            expected *= 2;
+        }
+        cap = expected < (0xFFFFFFFFull / 8) ? expected * 8 : 0xFFFFFFFFull;
+        if (anubis_l0_hashx_solve(state, state_size, difficulty, cap, budget_ms,
+                                  &gnonce, ghex, &gms) == 0 &&
             anubis_verify_hashx(challenge_hex, gnonce, difficulty, vhex) ==
                 ANUBIS_OK &&
             memcmp(vhex, ghex, 65) == 0) {

@@ -1,0 +1,14 @@
+{
+  "host": {
+    "gpu": "Intel Iris Xe Graphics (ADL GT2)",
+    "api": "oneAPI Level Zero + IGC",
+    "cpu": "1 thread of the laptop CPU",
+    "measured": "2026-11-12"
+  },
+  "throughput_mhps": {
+    "d24": {"cpu": 4.91, "gpu": 3.26},
+    "d26": {"cpu": 3.93, "gpu": 1.94},
+    "d28": {"cpu": 3.70, "gpu": 1.73}
+  },
+  "notes": "CPU is one laptop thread. The iGPU is correct (same nonces as the CPU) but slower: HashX is a branchy scalar interpreter, which suits the iGPU poorly. Gated behind ANUBIS_L0_HASHX (not enabled by ANUBIS_GPU_HASHX)."
+}

@@ -638,9 +638,11 @@ int anubis_l0_a2_lastblock(const uint8_t *challenge, size_t clen, int use_le,
         pthread_mutex_unlock(&g_a2.mu);
         return -1;
     }
-    for (int i = 0; i < 32; i++) {
-        out[i] = (uint64_t)g_a2.results->hashes[0][2 * i] |
-                 ((uint64_t)g_a2.results->hashes[0][2 * i + 1] << 32);
+    {
+        const uint32_t *flat = (const uint32_t *)g_a2.results->hashes;
+        for (int i = 0; i < 32; i++) {
+            out[i] = (uint64_t)flat[2 * i] | ((uint64_t)flat[2 * i + 1] << 32);
+        }
     }
     pthread_mutex_unlock(&g_a2.mu);
     return 0;

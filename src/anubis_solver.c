@@ -174,12 +174,26 @@ static int parse_cpu_mask(const char *s, unsigned char *mask, int max) {
 static int read_core_id(int cpu) {
     char path[128];
     char buf[64];
+    long pkg = 0;
+    long core;
+
+    /* core_id is per package, so combine it with the package id; otherwise
+     * the second socket's cores look like duplicates of the first one's. */
+    snprintf(path, sizeof(path),
+             "/sys/devices/system/cpu/cpu%d/topology/physical_package_id", cpu);
+    if (read_small_file(path, buf, sizeof(buf)) == 0) {
+        pkg = strtol(buf, NULL, 10);
+    }
     snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/topology/core_id",
              cpu);
     if (read_small_file(path, buf, sizeof(buf)) != 0) {
         return -1;
     }
-    return (int)strtol(buf, NULL, 10);
+    core = strtol(buf, NULL, 10);
+    if (pkg < 0 || pkg > 1023) {
+        pkg = 0;
+    }
+    return (int)(pkg * 1024 + core);
 }
 
 static int read_max_freq(int cpu) {
@@ -922,7 +936,7 @@ static void worker_loop(solve_job *job, int tid) {
                         if (nibbles_ok(outs[k], job->difficulty)) {
                             pthread_mutex_lock(&job->mu);
                             if (!job->found) {
-                                job->found = 1;
+                                job->found = 1; job->stop = 1;
                                 job->nonce = nonce +
                                              (uint64_t)k * (uint64_t)job->threads;
                                 memcpy(job->digest, outs[k], 32);
@@ -938,7 +952,6 @@ static void worker_loop(solve_job *job, int tid) {
                     }
                     continue;
                 }
-                /* mixed digit counts: fall through and hash one scalar */
             }
 
             if (job->hash(job->hash_ctx, nonce, digest) != 0) {
@@ -949,7 +962,7 @@ static void worker_loop(solve_job *job, int tid) {
             if (nibbles_ok(digest, job->difficulty)) {
                 pthread_mutex_lock(&job->mu);
                 if (!job->found) {
-                    job->found = 1;
+                    job->found = 1; job->stop = 1;
                     job->nonce = nonce;
                     memcpy(job->digest, digest, 32);
                 }
@@ -984,7 +997,7 @@ static void worker_loop(solve_job *job, int tid) {
                         if (bits_ok(outs[k], job->difficulty)) {
                             pthread_mutex_lock(&job->mu);
                             if (!job->found) {
-                                job->found = 1;
+                                job->found = 1; job->stop = 1;
                                 job->nonce = nonce +
                                              (uint64_t)k * (uint64_t)job->threads;
                                 memcpy(job->digest, outs[k], 32);
@@ -1013,7 +1026,7 @@ static void worker_loop(solve_job *job, int tid) {
             if (bits_ok(digest, job->difficulty)) {
                 pthread_mutex_lock(&job->mu);
                 if (!job->found) {
-                    job->found = 1;
+                    job->found = 1; job->stop = 1;
                     job->nonce = nonce;
                     memcpy(job->digest, digest, 32);
                 }
@@ -1359,7 +1372,7 @@ int anubis_verify_bits(const char *challenge_hex, uint32_t nonce, int difficulty
 /* ------------------------------------------------------------------ */
 
 /* argon2::Argon2::default() uses m=19456 KiB, so each worker needs ~19 MiB. */
-#define ANUBIS_ARGON2_THREADS_MAX 16
+#define ANUBIS_ARGON2_THREADS_MAX 64
 
 static int argon2id_digest(const uint8_t *raw, size_t raw_len, uint32_t nonce,
                            uint8_t out[32]) {

@@ -39,7 +39,8 @@ endif
 # Optional oneAPI Level Zero backend (Intel GPUs). Needs the Level Zero
 # headers; the loader is dlopen()ed at runtime, so there is no hard link.
 L0 ?= auto
-L0_INC ?= /usr/include
+L0_INC ?= $(if $(wildcard /usr/include/level_zero/ze_api.h),/usr/include,\
+            $(if $(wildcard /usr/local/include/level_zero/ze_api.h),/usr/local/include,))
 ifneq ($(L0),0)
 ifneq ($(wildcard $(L0_INC)/level_zero/ze_api.h),)
 CORE_SRC += src/levelzero_sha256.c

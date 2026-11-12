@@ -1,0 +1,14 @@
+{
+  "host": {
+    "cpu": "Intel Xeon @ 2.00GHz (Kaggle GPU machine)",
+    "flags": ["avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"],
+    "vcpus": 4,
+    "measured": "2026-11-12",
+    "note": "Kaggle CPU-only machines are Broadwell-class and do NOT expose AVX-512; the T4 GPU machines do"
+  },
+  "throughput_MHps": {
+    "fast_d6": {"avx2_8way": 11.46, "avx512_16way": 16.45, "speedup": 1.44},
+    "sha256_b24": {"avx2_8way": 12.57, "avx512_16way": 22.24, "speedup": 1.77}
+  },
+  "correctness": "all digests verified against hashlib; tests/test_core.py passed"
+}

@@ -185,6 +185,23 @@ The HashX JIT is ~5.3× the interpreter: 0.30 / 0.60 / 1.20 MH/s for
 1 / 2 / 4 threads with `FB_HASHX_NOJIT=1`. Argon2id is memory-bound and
 peaks at two threads on this board.
 
+
+## AVX-512 (16-way batch)
+
+Measured on a Kaggle GPU-machine CPU: Intel Xeon @ 2.00 GHz, 4 vCPU,
+`avx512f/bw/cd/dq/vl`, one thread, Vulkan disabled (2026-11-12).
+Kaggle's CPU-only machines are Broadwell-class and do not expose AVX-512,
+so this needs the GPU flavour of the machine (the GPU itself is unused).
+
+| workload | AVX2 (8-way) | AVX-512 (16-way) | speedup |
+|---|---:|---:|---:|
+| `fast` d6 | 11.46 MH/s | 16.45 MH/s | 1.44× |
+| `sha256` b24 | 12.57 MH/s | 22.24 MH/s | 1.77× |
+
+`tools/kaggle_avx512.py` reproduces this: it runs the benchmark twice
+(native and `ANUBIS_NO_AVX512=1`) and verifies every digest against hashlib.
+Raw data: [`results/avx512-kaggle.json`](results/avx512-kaggle.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

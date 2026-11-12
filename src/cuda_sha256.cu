@@ -270,6 +270,7 @@ static int cuda_init(void) {
     return 1;
 }
 
+extern "C" {
 int anubis_cuda_available(void) {
     return cuda_init();
 }
@@ -412,3 +413,4 @@ done:
     pthread_mutex_unlock(&g_cu.mu);
     return rc;
 }
+} /* extern "C" */

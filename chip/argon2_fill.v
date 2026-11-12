@@ -113,7 +113,7 @@ module argon2_fill (
             gcnt <= 9'd0;
         end else if (start) begin
             for (i = 0; i < 128; i = i + 1) begin
-                r[i] <= prev[64*i +: 64] ^ refb[64*i +: 64];
+                r[i] = prev[64*i +: 64] ^ refb[64*i +: 64];
             end
             gcnt <= 9'd0;
             busy <= 1'b1;

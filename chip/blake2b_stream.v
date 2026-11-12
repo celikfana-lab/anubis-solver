@@ -123,7 +123,7 @@ module blake2b_stream (
                     if (!fullf) begin
                         blk[nw] <= blk[nw] & pad_mask(nbyte);
                         for (i = 0; i < 16; i = i + 1)
-                            if (i > nw) blk[i] <= 64'd0;
+                            if (i > nw) blk[i] = 64'd0;
                     end
                     core_hin <= h_flat;
                     core_t   <= total;
@@ -155,7 +155,7 @@ module blake2b_stream (
             end else if (state == S_WAIT) begin
                 if (core_done) begin
                     firstblk <= 1'b0;   // later blocks continue from the xored state
-                    for (i = 0; i < 8; i = i + 1) h[i] <= core_hout[511 - 64*i -: 64];
+                    for (i = 0; i < 8; i = i + 1) h[i] = core_hout[511 - 64*i -: 64];
                     if (lastblk) begin
                         h_out    <= core_hout;
                         done     <= 1'b1;

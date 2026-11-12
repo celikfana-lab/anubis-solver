@@ -65,8 +65,25 @@ solve:
 ./verify_solve.py <challenge_hex> <nonce> <tag_hex> [m_cost] [difficulty]
 ```
 
-`M_COST` is only a parameter — the same RTL runs the real 19456-block
-parameters, it is just slow to simulate (~10M cycles per hash).
+`M_COST` is only a parameter, and the same RTL runs the real 19456-block
+parameters. Icarus needs half an hour for that, so use Verilator, which
+compiles the RTL to C++ and is ~1000x faster here (2.5M cycles/s):
+
+```bash
+make vl64     # Verilator build at M_COST=64, then a 19-nonce search
+make vlreal   # real parameters: one hash is 10.1M cycles, ~3.9 s
+```
+
+Measured on a 56-core Xeon:
+
+| | Icarus | Verilator |
+|---|---|---|
+| 19 nonces at M_COST=64 | 174 s | 0.17 s |
+| one hash at M_COST=19456 | ~36 min | 3.9 s |
+
+`sim_top.v` + `sim_main.cpp` are the Verilator harness: a clocked FSM drives
+`argon2_engine` (no delays, nothing to synthesise differently) and the C++ main
+just toggles the clock and prints the tag.
 
 ```bash
 iverilog -g2012 -Ptb_anubis_solve.M_COST=19456 -Ptb_anubis_solve.DIFF=5 \

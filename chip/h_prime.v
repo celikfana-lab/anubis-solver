@@ -147,7 +147,7 @@ module h_prime (
                 // [511-64i -: 64] and its byte j (little-endian) at bit 8j
                 for (i = 0; i < 8; i = i + 1)
                     for (j = 0; j < 8; j = j + 1)
-                        vb[i*8+j] <= st_hout[448 - 64*i + 8*j +: 8];
+                        vb[i*8+j] = st_hout[448 - 64*i + 8*j +: 8];
                 n <= 32'd0;
                 phase <= P_EMIT;
             end else if (phase == P_EMIT) begin

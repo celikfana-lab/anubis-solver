@@ -80,7 +80,7 @@ module blake2b_core (
             // h[0] is pre-xored with the BLAKE2b parameter block; the same value
             // must be used in the finalisation xor, so store it in hv[0].
             hv[0] <= h_in[511:448] ^ param_xor;
-            for (i = 1; i < 8; i = i + 1) hv[i] <= h_in[511 - 64*i -: 64];
+            for (i = 1; i < 8; i = i + 1) hv[i] = h_in[511 - 64*i -: 64];
             v[0] <= h_in[511:448] ^ param_xor;
             v[1] <= h_in[447:384];
             v[2] <= h_in[383:320]; v[3] <= h_in[319:256];
@@ -89,7 +89,7 @@ module blake2b_core (
             v[8]  <= IV0; v[9]  <= IV1; v[10] <= IV2; v[11] <= IV3;
             v[12] <= IV4 ^ t; v[13] <= IV5;
             v[14] <= last ? (IV6 ^ 64'hFFFFFFFFFFFFFFFF) : IV6; v[15] <= IV7;
-            for (i = 0; i < 16; i = i + 1) m[i] <= block[1023 - 64*i -: 64];
+            for (i = 0; i < 16; i = i + 1) m[i] = block[1023 - 64*i -: 64];
             rnd <= 4'd0;
             stage <= 1'b0;
             busy <= 1'b1;

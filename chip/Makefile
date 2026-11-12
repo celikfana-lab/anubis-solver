@@ -3,6 +3,8 @@ VVP      ?= vvp
 DIFF     ?= 4
 MAXN     ?= 32
 YOSYS    ?= yosys
+VERILATOR ?= verilator
+NPROC    ?= $(shell nproc)
 
 .PHONY: all sim clean synth
 
@@ -92,8 +94,22 @@ tb_argon2_fill: tb_argon2_fill.v argon2_fill.v
 	python3 gen_argon_vectors.py
 	$(IVERILOG) -g2012 -o $@ tb_argon2_fill.v argon2_fill.v
 
+# Verilator turns the same RTL into C++: ~1000x faster than Icarus here, so a
+# real 19456-block hash takes seconds instead of half an hour.
+VL = $(VERILATOR) -cc --exe --build -j $(NPROC) -O3 -Wno-fatal \
+     -CFLAGS "-O3 -march=native" --top-module sim_top
+
+vl64: sim_top.v sim_main.cpp argon2_engine.v $(ARGON_SRC)
+	$(VL) -GM_COST=64 -GDIFF=4 -o sim64 sim_top.v argon2_engine.v $(ARGON_SRC) sim_main.cpp
+	./obj_dir/sim64 0 32 32 0
+
+vlreal: sim_top.v sim_main.cpp argon2_engine.v $(ARGON_SRC)
+	$(VL) -GM_COST=19456 -GDIFF=5 -o simreal sim_top.v argon2_engine.v $(ARGON_SRC) sim_main.cpp
+	./obj_dir/simreal 25 1 32 0
+
 synth:
 	$(YOSYS) -p "read_verilog -sv sha256_core.v anubis_pow.v; synth -top sha256_core; stat"
 
 clean:
+	rm -rf obj_dir
 	rm -f tb_sha256 tb_pow tb_argon2_fill tb_blake2b tb_blake2b_stream tb_h_prime tb_h0 tb_argon2_addr tb_argon2_engine tb_argon2_index tb_lpddr6 *.vcd prev.hex ref.hex dst.hex expected.hex b2_vectors.hex hp_vectors.hex h0_vectors.hex addr_vectors.hex index_vectors.hex engine_vectors.hex engine_pw.hex

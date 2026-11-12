@@ -17,3 +17,4 @@ vectors/solve_nonce.txt
 
 __pycache__/
 *.vcd
+vectors/hx_vectors.hex

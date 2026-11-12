@@ -12,8 +12,10 @@ NPROC     ?= $(shell nproc)
 # model, so the build parallelism is capped separately from the machine size.
 VLJOBS    ?= 16
 
-DIFF ?= 4      # `make solve` difficulty
+DIFF ?= 4      # `make solve` difficulty (argon2id)
 MAXN ?= 32     # `make solve` nonces to try
+HDIFF ?= 8     # `make solve-hashx` difficulty
+HMAXN ?= 256   # `make solve-hashx` nonces to try
 
 B   := build
 PY  := python3
@@ -26,15 +28,19 @@ MEM   := rtl/mem/lpddr6_model.v rtl/mem/lpddr6_if.v
 B2    := rtl/blake2b/blake2b_core.v rtl/blake2b/blake2b_stream.v
 HASH  := $(B2) rtl/blake2b/h0.v rtl/blake2b/h_prime.v
 ARGON := rtl/argon2/argon2_fill.v rtl/argon2/argon2_index.v rtl/argon2/argon2_addr.v
+HASHX := rtl/hashx/sipround.v rtl/hashx/hashx_prf.v rtl/hashx/hashx_exec.v \
+         rtl/hashx/hashx_top.v
+HASHX_REF := ../src/hashx
 ENGINE := rtl/argon2/argon2_engine.v $(ARGON) $(HASH)
 
 # ---- testbenches ----------------------------------------------------------
 # name: dependencies | vector generator
 TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
-       tb_h_prime tb_h0 tb_argon2_addr tb_argon2_index tb_argon2_engine
+       tb_h_prime tb_h0 tb_argon2_addr tb_argon2_index tb_argon2_engine \
+       tb_hashx
 
 .PHONY: all sim $(TBS) pow argon blake2b stream hprime h0 addr index engine \
-        solve vectors vl64 vlreal synth clean
+        hashx solve solve-hashx vectors vl64 vlreal synth clean
 .DEFAULT_GOAL := all
 
 all: sim
@@ -85,6 +91,23 @@ $(B)/tb_argon2_engine: tb/tb_argon2_engine.v $(ENGINE) | $(B)
 	$(PY) tools/gen_engine_vectors.py >/dev/null
 	$(IVERILOG) -g2012 -o $@ tb/tb_argon2_engine.v $(ENGINE)
 
+# HashX: the program is generated in software by the C reference, which keeps
+# this an interpreter plus a fixed table - the same split the GPU backends use.
+$(B)/gen_hashx_vectors: tools/gen_hashx_vectors.c $(HASHX_REF)/hashx.c | $(B)
+	$(CC) -O2 -I $(HASHX_REF) -o $@ tools/gen_hashx_vectors.c $(HASHX_REF)/hashx.c
+
+$(B)/tb_hashx: tb/tb_hashx.v $(HASHX) $(B)/gen_hashx_vectors | $(B)
+	$(B)/gen_hashx_vectors vectors/hx_vectors.hex
+	$(IVERILOG) -g2012 -o $@ tb/tb_hashx.v $(HASHX)
+
+$(B)/tb_hashx_solve: tb/tb_hashx_solve.v $(HASHX) $(B)/gen_hashx_vectors | $(B)
+	$(B)/gen_hashx_vectors vectors/hx_vectors.hex
+	$(IVERILOG) -g2012 -Ptb_hashx_solve.DIFF=$(HDIFF) -Ptb_hashx_solve.MAXN=$(HMAXN) \
+	  -o $@ tb/tb_hashx_solve.v $(HASHX)
+
+solve-hashx: $(B)/tb_hashx_solve
+	$(V) $(B)/tb_hashx_solve
+
 # The on-chip nonce search. M_COST is a tb parameter; leave it at 64 (or the
 # engine's 43k cycles per hash become 10M) and use `make vlreal` for the real
 # parameters.
@@ -105,9 +128,11 @@ h0:      ; $(MAKE) --no-print-directory $(B)/tb_h0 && $(V) $(B)/tb_h0
 addr:    ; $(MAKE) --no-print-directory $(B)/tb_argon2_addr && $(V) $(B)/tb_argon2_addr
 index:   ; $(MAKE) --no-print-directory $(B)/tb_argon2_index && $(V) $(B)/tb_argon2_index
 engine:  ; $(MAKE) --no-print-directory $(B)/tb_argon2_engine && $(V) $(B)/tb_argon2_engine
+hashx:   ; $(MAKE) --no-print-directory $(B)/tb_hashx && $(V) $(B)/tb_hashx
 
-vectors:
+vectors: $(B)/gen_hashx_vectors
 	@for g in tools/gen_*.py; do echo "== $$g"; $(PY) $$g; done
+	@$(B)/gen_hashx_vectors vectors/hx_vectors.hex
 
 # ---- Verilator ------------------------------------------------------------
 # Compiling the RTL to C++ is ~1000x faster than Icarus here: 0.17 s instead of
@@ -135,5 +160,6 @@ clean:
 	rm -rf $(B) vectors/*.hex~ vectors/prev.hex vectors/ref.hex vectors/dst.hex \
 	       vectors/expected.hex vectors/b2_vectors.hex vectors/hp_vectors.hex \
 	       vectors/h0_vectors.hex vectors/addr_vectors.hex vectors/index_vectors.hex \
-	       vectors/engine_vectors.hex vectors/engine_pw.hex vectors/solve_nonce.txt
+	       vectors/engine_vectors.hex vectors/engine_pw.hex vectors/solve_nonce.txt \
+	       vectors/hx_vectors.hex
 	-find . -name '__pycache__' -prune -exec rm -rf {} +

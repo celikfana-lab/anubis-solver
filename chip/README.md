@@ -18,6 +18,10 @@ rtl/
               argon2_index.v      index_alpha (reference block index)
               argon2_addr.v       data-independent address generator
               argon2_engine.v     a whole Argon2id hash: H0 -> fill -> tag
+  hashx/      sipround.v          one SipHash round
+              hashx_prf.v         SipHash-2-4 counter-mode PRF (nonce -> r[])
+              hashx_exec.v        the 11-opcode HashX VM
+              hashx_top.v         PRF, program, finalisation
   mem/        lpddr6_model.v      behavioural LPDDR6 model
               lpddr6_if.v         1 KiB block <-> 32-byte packet adaptor
 
@@ -48,9 +52,13 @@ reference implementation:
 | `rtl/blake2b/h0.v` | **verified** — Argon2's H0: the parameter block, \|P\|, the password stream, the 8-byte salt and the empty K/X lengths, for \|P\| = 1, 26, 96 and T = 32, 64 |
 | `rtl/argon2/argon2_index.v` | **verified** — `index_alpha` for one lane: 70 vectors across passes, slices and sizes, including the segment-entry cases |
 | `rtl/argon2/argon2_engine.v` | **verified** — a whole Argon2id hash: H0 → lane seeding → two-pass fill over both addressing modes → H′(32) tag, bit-exact against `argon2-cffi` for three passwords |
+| `rtl/hashx/hashx_prf.v` | **verified** — SipHash-2-4 counter-mode PRF; the ten rounds split 2/4/4 with the `0xee`/`0xdd` xors, matching `hashx_siphash24_ctr_state512` exactly |
+| `rtl/hashx/hashx_exec.v` | **verified** — the HashX interpreter: 11 opcodes, 8 registers, one taken branch, and the quirk that BRANCH tests the high half of the last high-multiply |
+| `rtl/hashx/hashx_top.v` | **verified** — a whole HashX hash, bit-exact against the C reference for 5 challenges at 512 instructions (533 cycles each) |
 | `tb/tb_anubis_solve.v` | **solves** — nonce search on the chip with the Anubis hit rule (see below) |
+| `tb/tb_hashx_solve.v` | **solves** — same for `hashx`: difficulty 8 in 229 nonces |
 
-`make sim` runs every testbench (11 of them, ~1 minute plus the engine's 40k
+`make sim` runs every testbench (12 of them, ~1 minute plus the engine's 40k
 cycles per hash). `make stream`, `make hprime`, `make h0` and `make blake2b`
 run the layers on their own.
 
@@ -198,7 +206,11 @@ make clean
 
 Single units have shortcuts: `make pow`, `make argon`, `make blake2b`,
 `make stream`, `make hprime`, `make h0`, `make addr`, `make index`,
-`make engine`. `make vectors` regenerates every `.hex` in `vectors/`.
+`make engine`, `make hashx`. `make vectors` regenerates every `.hex` in
+`vectors/`.
+
+`make solve` searches argon2id nonces on the die, `make solve-hashx` does the
+same for HashX (difficulty 8 in a couple of minutes of Icarus).
 
 Verilator targets (see below for why they matter): `make vl64`, `make vlreal`.
 
@@ -217,6 +229,32 @@ a 2-block message (nonce + padding) is ~1.5 M hashes/s per core. On an ASIC at
 1 GHz it is ~15.6 M hashes/s per core, and the core is small enough that
 hundreds fit on a die — which is exactly why memory-hard algorithms (Argon2id)
 exist to blunt this.
+
+## HashX
+
+HashX is a program generator plus an interpreter, so the chip does the part
+that runs once per nonce: `hashx_prf` turns the nonce into eight 64-bit
+registers with SipHash-2-4, `hashx_exec` runs the generated program over them
+(one instruction per cycle, 512 instructions, at most one taken branch), and
+`hashx_top` finalises with two SipRounds and the key xors.
+
+The program itself comes from software, exactly as it does for the CUDA and
+Level Zero backends: `tools/gen_hashx_vectors.c` calls the C reference's
+`hashx_init` / `hashx_export` / `hashx_hash` and stages
+`(keys, op, dst, src, imm32, tag)` into `vectors/hx_vectors.hex`. Generating a
+program is expensive and depends on the challenge, not the nonce, so it belongs
+on the host.
+
+```bash
+make hashx          # 5 whole hashes against the C reference
+make solve-hashx    # on-chip nonce search, difficulty 8 by default
+```
+
+```
+tb_hashx_solve: 512 instructions, difficulty 8
+HIT nonce=228 (0x00000000000000e4) leading_zero_bits=9 >= 8 after 229 tries
+TAG 005cedf17531748e9789a1845ed97134c914ed68c45bcf8825dafbc683be4f80
+```
 
 ## Notes / next steps
 

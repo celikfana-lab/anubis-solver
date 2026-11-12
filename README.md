@@ -198,8 +198,8 @@ core of an i7-1260P:
   by macro arguments; the message schedule lives in a 2 KiB stack frame.
 - `shani.s`: Intel SHA extensions (`sha256rnds2`, `sha256msg1/2`) for
   single-block hashing; used when a batch cannot form and by `verify_*`.
-- Runtime dispatch: AVX2 batch → SHA-NI single → portable C on x86-64; on
-  AArch64: ARMv8 SHA-2 (NEON) single block → portable C. `ANUBIS_NO_AVX2=1`,
+- Runtime dispatch on x86-64: AVX-512 16-way → AVX2 8-way → SHA-NI single →
+  portable C; on AArch64: ARMv8 SHA-2 (NEON) single block → portable C. `ANUBIS_NO_AVX2=1`,
   `ANUBIS_NO_SHANI=1` and `ANUBIS_NO_NEON=1` force the lower paths for A/B
   comparison.
 

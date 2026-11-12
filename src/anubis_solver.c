@@ -811,6 +811,23 @@ enum {
 extern void sha256_compress8_avx2(const uint32_t mid[8],
                                   const uint8_t tails[8][64],
                                   uint8_t out[8][32]);
+extern void sha256_compress16_avx512(const uint32_t mid[8],
+                                     const uint8_t tails[16][64],
+                                     uint8_t out[16][32]);
+
+static int anubis_avx512_available(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *off = getenv("ANUBIS_NO_AVX512");
+        if (off != NULL && off[0] != '\0' && off[0] != '0') {
+            cached = 0;
+        } else {
+            __builtin_cpu_init();
+            cached = __builtin_cpu_supports("avx512f") ? 1 : 0;
+        }
+    }
+    return cached;
+}
 
 static int anubis_avx2_available(void) {
     static int cached = -1;
@@ -835,17 +852,17 @@ static void store_length_be(uint8_t *tail, uint64_t bits) {
 
 /* fast/slow: all eight lanes must have the same decimal digit count. */
 static int batch_decimals(const batch_ctx *c, uint64_t nonce, uint32_t stride,
-                          uint8_t out[8][32]) {
-    char digits[8][24];
-    int dlen[8];
-    uint8_t tails[8][64];
+                          int lanes, uint8_t out[16][32]) {
+    char digits[16][24];
+    int dlen[16];
+    uint8_t tails[16][64];
     uint64_t bits;
     int lane;
 
     if (c->prefix_len % 64u != 0) {
         return 0;
     }
-    for (lane = 0; lane < 8; lane++) {
+    for (lane = 0; lane < lanes; lane++) {
         uint64_t n = nonce + (uint64_t)lane * (uint64_t)stride;
         dlen[lane] = u64_to_dec(n, digits[lane]);
         if (dlen[lane] != dlen[0]) {
@@ -853,27 +870,31 @@ static int batch_decimals(const batch_ctx *c, uint64_t nonce, uint32_t stride,
         }
     }
     bits = ((uint64_t)c->prefix_len + (uint64_t)dlen[0]) * 8u;
-    for (lane = 0; lane < 8; lane++) {
+    for (lane = 0; lane < lanes; lane++) {
         memset(tails[lane], 0, 64);
         memcpy(tails[lane], digits[lane], (size_t)dlen[0]);
         tails[lane][dlen[0]] = 0x80;
         store_length_be(tails[lane], bits);
     }
-    sha256_compress8_avx2(c->mid, (const uint8_t (*)[64])tails, out);
+    if (lanes == 16) {
+        sha256_compress16_avx512(c->mid, (const uint8_t (*)[64])tails, out);
+    } else {
+        sha256_compress8_avx2(c->mid, (const uint8_t (*)[64])tails, out);
+    }
     return 1;
 }
 
 /* wasm sha256: prefix + uint32 nonce, one byte order for the whole run. */
 static int batch_fixed4(const batch_ctx *c, uint64_t nonce, uint32_t stride,
-                        uint8_t out[8][32]) {
-    uint8_t tails[8][64];
+                        int lanes, uint8_t out[16][32]) {
+    uint8_t tails[16][64];
     uint64_t bits = ((uint64_t)c->prefix_len + 4u) * 8u;
     int lane;
 
     if (c->prefix_len % 64u != 0) {
         return 0;
     }
-    for (lane = 0; lane < 8; lane++) {
+    for (lane = 0; lane < lanes; lane++) {
         uint64_t n64 = nonce + (uint64_t)lane * (uint64_t)stride;
         uint32_t n;
         if (n64 > 0xffffffffull) {
@@ -895,23 +916,28 @@ static int batch_fixed4(const batch_ctx *c, uint64_t nonce, uint32_t stride,
         tails[lane][4] = 0x80;
         store_length_be(tails[lane], bits);
     }
-    sha256_compress8_avx2(c->mid, (const uint8_t (*)[64])tails, out);
+    if (lanes == 16) {
+        sha256_compress16_avx512(c->mid, (const uint8_t (*)[64])tails, out);
+    } else {
+        sha256_compress8_avx2(c->mid, (const uint8_t (*)[64])tails, out);
+    }
     return 1;
 }
 
 #else /* no AVX2 host */
 
 static int anubis_avx2_available(void) { return 0; }
+static int anubis_avx512_available(void) { return 0; }
 
 static int batch_decimals(const batch_ctx *c, uint64_t nonce, uint32_t stride,
-                          uint8_t out[8][32]) {
-    (void)c; (void)nonce; (void)stride; (void)out;
+                          int lanes, uint8_t out[16][32]) {
+    (void)c; (void)nonce; (void)stride; (void)lanes; (void)out;
     return 0;
 }
 
 static int batch_fixed4(const batch_ctx *c, uint64_t nonce, uint32_t stride,
-                        uint8_t out[8][32]) {
-    (void)c; (void)nonce; (void)stride; (void)out;
+                        int lanes, uint8_t out[16][32]) {
+    (void)c; (void)nonce; (void)stride; (void)lanes; (void)out;
     return 0;
 }
 
@@ -934,6 +960,7 @@ typedef struct {
     int threads;
     unsigned check_mask;    /* deadline check cadence: 0 = every iteration */
     int batch_kind;         /* BATCH_* fast path, 0 = scalar only */
+    int batch_lanes;        /* 8 (AVX2) or 16 (AVX-512) */
     batch_ctx bctx;
 
     pthread_mutex_t mu;
@@ -963,11 +990,11 @@ static void worker_loop(solve_job *job, int tid) {
             }
 
             if (job->batch_kind == BATCH_DECIMALS) {
-                uint8_t outs[8][32];
+                uint8_t outs[16][32];
                 if (batch_decimals(&job->bctx, nonce, (uint32_t)job->threads,
-                                   outs)) {
+                                   job->batch_lanes, outs)) {
                     int k;
-                    for (k = 0; k < 8; k++) {
+                    for (k = 0; k < job->batch_lanes; k++) {
                         if (nibbles_ok(outs[k], job->difficulty)) {
                             pthread_mutex_lock(&job->mu);
                             if (!job->found) {
@@ -980,7 +1007,8 @@ static void worker_loop(solve_job *job, int tid) {
                             return;
                         }
                     }
-                    nonce += 8u * (uint64_t)job->threads;
+                    nonce += (uint64_t)job->batch_lanes *
+                             (uint64_t)job->threads;
                     if (job->deadline > 0.0 && now_seconds() > job->deadline) {
                         job->stop = 1;
                         return;
@@ -1024,11 +1052,11 @@ static void worker_loop(solve_job *job, int tid) {
 
             if (job->batch_kind == BATCH_FIXED4 &&
                 nonce + 7u * (uint64_t)job->threads <= 0xffffffffull) {
-                uint8_t outs[8][32];
+                uint8_t outs[16][32];
                 if (batch_fixed4(&job->bctx, nonce, (uint32_t)job->threads,
-                                 outs)) {
+                                 job->batch_lanes, outs)) {
                     int k;
-                    for (k = 0; k < 8; k++) {
+                    for (k = 0; k < job->batch_lanes; k++) {
                         if (bits_ok(outs[k], job->difficulty)) {
                             pthread_mutex_lock(&job->mu);
                             if (!job->found) {
@@ -1041,7 +1069,8 @@ static void worker_loop(solve_job *job, int tid) {
                             return;
                         }
                     }
-                    nonce += 8u * (uint64_t)job->threads;
+                    nonce += (uint64_t)job->batch_lanes *
+                             (uint64_t)job->threads;
                     if (job->deadline > 0.0 && now_seconds() > job->deadline) {
                         job->stop = 1;
                         return;
@@ -1191,9 +1220,15 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
     sha256_init(&ctx.base);
     sha256_update(&ctx.base, challenge, clen);
 
-    job.batch_kind = (anubis_avx2_available() && clen % 64u == 0)
-                         ? BATCH_DECIMALS
-                         : BATCH_NONE;
+    job.batch_lanes = 0;
+    if (clen % 64u == 0) {
+        if (anubis_avx512_available()) {
+            job.batch_lanes = 16;
+        } else if (anubis_avx2_available()) {
+            job.batch_lanes = 8;
+        }
+    }
+    job.batch_kind = job.batch_lanes ? BATCH_DECIMALS : BATCH_NONE;
     job.bctx.mid = ctx.base.h;
     job.bctx.prefix_len = clen;
     job.bctx.use_le = 0;
@@ -1311,9 +1346,15 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
     sha256_init(&ctx.base);
     sha256_update(&ctx.base, raw, raw_len);
 
-    job.batch_kind = (anubis_avx2_available() && raw_len % 64u == 0)
-                         ? BATCH_FIXED4
-                         : BATCH_NONE;
+    job.batch_lanes = 0;
+    if (raw_len % 64u == 0) {
+        if (anubis_avx512_available()) {
+            job.batch_lanes = 16;
+        } else if (anubis_avx2_available()) {
+            job.batch_lanes = 8;
+        }
+    }
+    job.batch_kind = job.batch_lanes ? BATCH_FIXED4 : BATCH_NONE;
     job.bctx.mid = ctx.base.h;
     job.bctx.prefix_len = raw_len;
     job.bctx.use_le = ctx.use_le;
@@ -1637,6 +1678,20 @@ int anubis_sha256_midstate(const char *data, size_t len, uint32_t out[8]) {
     sha256_update(&c, data, len);
     memcpy(out, c.h, sizeof(uint32_t) * 8);
     return ANUBIS_OK;
+}
+
+/* Native SHA-256 batch width: 16 (AVX-512), 8 (AVX2) or 0 (scalar). */
+ANUBIS_EXPORT
+int anubis_batch_width(void) {
+#if defined(__x86_64__)
+    if (anubis_avx512_available()) {
+        return 16;
+    }
+    if (anubis_avx2_available()) {
+        return 8;
+    }
+#endif
+    return 0;
 }
 
 /* Vulkan device name, or NULL when no GPU backend is active. */

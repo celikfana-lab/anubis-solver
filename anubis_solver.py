@@ -245,6 +245,9 @@ class _Native:
         lib.anubis_cpu_affinity_info.restype = ctypes.c_char_p
         lib.anubis_cpu_affinity_info.argtypes = []
 
+        lib.anubis_batch_width.restype = ctypes.c_int
+        lib.anubis_batch_width.argtypes = []
+
         lib.anubis_sha256_hex.restype = ctypes.c_int
         lib.anubis_sha256_hex.argtypes = [
             ctypes.c_char_p,
@@ -327,6 +330,9 @@ class _Native:
 
     def affinity_info(self) -> str:
         return (self.lib.anubis_cpu_affinity_info() or b"").decode()
+
+    def batch_width(self) -> int:
+        return int(self.lib.anubis_batch_width())
 
     def sha256_hex(self, data: bytes) -> str:
         out = ctypes.create_string_buffer(65)
@@ -527,6 +533,11 @@ class AnubisSolver:
     def affinity(self) -> str:
         """CPU affinity in effect, e.g. ``pcores:0,2,4,6 (4 physical)``."""
         return self._native.affinity_info()
+
+    @property
+    def batch_width(self) -> int:
+        """SHA-256 batch width: 16 (AVX-512), 8 (AVX2) or 0 (scalar)."""
+        return self._native.batch_width()
 
     def supported(self, algorithm: str) -> bool:
         return algorithm in self.ALGORITHMS

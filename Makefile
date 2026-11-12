@@ -22,7 +22,7 @@ endif
 # Assembly kernels: x86-64 (AVX2 + SHA-NI) or AArch64 (NEON + SHA-2).
 # The portable C fallbacks are always compiled.
 ifeq ($(shell uname -m),x86_64)
-ASM_SRC  := src/avx2.s src/shani.s
+ASM_SRC  := src/avx2.s src/shani.s src/avx512.s
 else ifeq ($(shell uname -m),aarch64)
 ASM_SRC  := src/neon.s
 CFLAGS   += -DANUBIS_HAVE_NEON_ASM

@@ -30,9 +30,51 @@ reference implementation:
 | `h_prime.v` | **verified** — Argon2's H′ for τ = 1024 (31 chained calls), 96, 64 and 32, over X = 72 and X = 1024 bytes |
 | `argon2_addr.v` | **verified** — the data-independent address generator: Z from (pass, lane, slice, m', t, y, counter), then A = G(0, G(0, Z)). 5 cases incl. counter 0…128 |
 | `h0.v` | **verified** — Argon2's H0: the parameter block, \|P\|, the password stream, the 8-byte salt and the empty K/X lengths, for \|P\| = 1, 26, 96 and T = 32, 64 |
+| `argon2_index.v` | **verified** — `index_alpha` for one lane: 70 vectors across passes, slices and sizes, including the segment-entry cases |
+| `argon2_engine.v` | **verified** — a whole Argon2id hash: H0 → lane seeding → two-pass fill over both addressing modes → H′(32) tag, bit-exact against `argon2-cffi` for three passwords |
+| `tb_anubis_solve.v` | **solves** — nonce search on the chip with the Anubis hit rule (see below) |
 
-`make sim` runs every testbench. `make stream`, `make hprime`, `make h0` and
-`make blake2b` run the BLAKE2b layers on their own.
+`make sim` runs every testbench (11 of them, ~1 minute plus the engine's 40k
+cycles per hash). `make stream`, `make hprime`, `make h0` and `make blake2b`
+run the layers on their own.
+
+## Solving a challenge
+
+`tb_anubis_solve.v` wires the engine to the real Anubis rule: the password is
+the hex-decoded challenge, the salt is the nonce as a u64 (little-endian when
+the last challenge byte is `>= 0x80`), and a hit needs `DIFF` leading zero bits
+of the 32-byte tag.
+
+```bash
+cd chip
+make solve DIFF=4 MAXN=32      # M_COST=64: searches nonces on the chip
+```
+
+Result on a 32-byte challenge with `DIFF=4`, starting at nonce 0:
+
+```
+HIT nonce=18 (0x0000000000000012) leading_zero_bits=7 >= 4 after 19 tries
+TAG 019d8fecf65e34c89847ccaf23209c36668261d396680ad3b8e3c96246106ed0
+```
+
+`argon2-cffi` reproduces that tag byte for byte, so the chip solved the
+challenge rather than just hashing something. `verify_solve.py` rechecks any
+solve:
+
+```bash
+./verify_solve.py <challenge_hex> <nonce> <tag_hex> [m_cost] [difficulty]
+```
+
+`M_COST` is only a parameter — the same RTL runs the real 19456-block
+parameters, it is just slow to simulate (~10M cycles per hash).
+
+```bash
+iverilog -g2012 -Ptb_anubis_solve.M_COST=19456 -Ptb_anubis_solve.DIFF=5 \
+  -Ptb_anubis_solve.NSTART=25 -Ptb_anubis_solve.MAXN=1 -o tbreal \
+  tb_anubis_solve.v argon2_engine.v argon2_index.v argon2_addr.v argon2_fill.v \
+  h_prime.v h0.v blake2b_stream.v blake2b_core.v
+vvp tbreal
+```
 
 The bug that made it report nonce 275: `nblocks` was treated as a flag
 ("there is a second block") while the testbench meant it as the block count,
@@ -106,7 +148,7 @@ request scheduler on top of `lpddr6_if`.
 ```bash
 cd chip
 make sim      # verified core vectors (iverilog + vvp)
-make pow      # WIP PoW wrapper test
+make solve    # on-chip nonce search, M_COST=64
 make synth    # yosys area estimate for sha256_core
 ```
 
@@ -126,12 +168,16 @@ exist to blunt this.
 
 ## Notes / next steps
 
-- The BLAKE2b stack is done: `blake2b_core` → `blake2b_stream` → `h0` /
-  `h_prime`, i.e. H0, the 1 KiB lane seeding and the final tag all verify
-  against `hashlib`/`argon2-cffi` inputs.
-- Then the Argon2id top level: `index_alpha` (the reference block index),
-  the two-pass fill loop and a 19 MiB memory port (the LPDDR6 model is ready
-  for it). The address generator for pass 0 slices 0–1 is done.
+- Argon2id is complete end to end: `blake2b_core` → `blake2b_stream` → `h0` /
+  `h_prime`, `argon2_index`, `argon2_addr`, `argon2_fill` and `argon2_engine`,
+  with the block memory inside the engine. `tb_anubis_solve.v` searches nonces
+  and finds one that satisfies the Anubis difficulty.
+- What the chip does not have yet is the *memory interface*: `argon2_engine`
+  keeps its 1 KiB blocks in a flop array, which is fine for 64 blocks and
+  hopeless for 19456. Swapping that for `lpddr6_if` (already verified) plus a
+  multi-bank scheduler is the remaining engineering.
+- The nonce loop lives in the testbench; a real product would put the leading
+  zero counter and the nonce register on the die.
 - For `fast`/`slow` (decimal nonce) the padding position depends on the nonce
   length; that needs a byte-assembly front end instead of the fixed-word patch.
 - A pipelined version (one round per stage, 64-stage) would raise throughput

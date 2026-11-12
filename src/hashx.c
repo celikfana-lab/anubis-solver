@@ -2377,6 +2377,36 @@ int hashx_init(const unsigned char *data, size_t dlen, void **state_out,
 	}
 }
 
+/* Export the program and keys for the GPU backends (see hashx.h). */
+int hashx_export(const void *state, size_t state_size, uint64_t keys_out[4],
+                 uint32_t *prog_out, size_t *instr_count_out) {
+	const hashx_state *st = (const hashx_state *)state;
+	size_t n, i;
+	(void)state_size;
+
+	if (state == NULL || keys_out == NULL || prog_out == NULL ||
+	    instr_count_out == NULL) {
+		return 1;
+	}
+	keys_out[0] = st->keys.v0;
+	keys_out[1] = st->keys.v1;
+	keys_out[2] = st->keys.v2;
+	keys_out[3] = st->keys.v3;
+	n = st->program.code_size;
+	if (n > HASHX_PROGRAM_MAX_SIZE) {
+		n = HASHX_PROGRAM_MAX_SIZE;
+	}
+	for (i = 0; i < n; i++) {
+		const instruction *in = &st->program.code[i];
+		prog_out[4 * i + 0] = (uint32_t)in->opcode;
+		prog_out[4 * i + 1] = (uint32_t)in->dst;
+		prog_out[4 * i + 2] = (uint32_t)in->src;
+		prog_out[4 * i + 3] = in->imm32;
+	}
+	*instr_count_out = n;
+	return 0;
+}
+
 void hashx_hash(const void *state, size_t state_size,
                 unsigned long long n, unsigned char out[32]) {
 	const hashx_state *st = (const hashx_state *)state;

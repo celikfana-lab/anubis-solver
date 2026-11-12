@@ -11,7 +11,7 @@ NVCC ?= nvcc
 CUDA_SRC :=
 ifneq ($(CUDA),0)
 ifneq ($(shell command -v $(NVCC) 2>/dev/null),)
-CUDA_SRC := src/cuda_sha256.cu src/cuda_argon2.cu
+CUDA_SRC := src/cuda_sha256.cu src/cuda_argon2.cu src/cuda_hashx.cu
 CFLAGS   += -DANUBIS_HAVE_CUDA
 # nvcc is the linker here; it rejects bare -pthread, so pass it to the host
 # compiler explicitly.

@@ -9,6 +9,7 @@
  * wasm/pow/hashx/src/lib.rs byte-for-byte. */
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* Build a HashX instance from the challenge bytes `data`/`dlen`.
  *
@@ -26,6 +27,14 @@ int hashx_init(const unsigned char *data, size_t dlen,
 /* Fill out[32] with the HashX output for nonce `n`. */
 void hashx_hash(const void *state, size_t state_size,
                 unsigned long long n, unsigned char out[32]);
+
+/* Export the generated program and keys for a GPU backend.
+ *
+ * `keys_out` receives the four SipHash key words, `prog_out` receives
+ * `4 * code_size` u32 values (opcode, dst, src, imm32 per instruction) and
+ * `instr_count_out` the instruction count. Returns 0 on success. */
+int hashx_export(const void *state, size_t state_size, uint64_t keys_out[4],
+                 uint32_t *prog_out, size_t *instr_count_out);
 
 /* Release a state returned by hashx_init(). */
 void hashx_free(void *state);

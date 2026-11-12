@@ -186,20 +186,25 @@ The HashX JIT is ~5.3× the interpreter: 0.30 / 0.60 / 1.20 MH/s for
 peaks at two threads on this board.
 
 
-## AVX-512 (16-way batch)
+## ISA comparison
 
-Measured on a Kaggle GPU-machine CPU: Intel Xeon @ 2.00 GHz, 4 vCPU,
-`avx512f/bw/cd/dq/vl`, one thread, Vulkan disabled (2026-11-12).
-Kaggle's CPU-only machines are Broadwell-class and do not expose AVX-512,
-so this needs the GPU flavour of the machine (the GPU itself is unused).
+Measured on one Kaggle Xeon core (2.00 GHz, `avx512f/bw/cd/dq/vl`, no SHA-NI),
+one thread, Vulkan disabled, 2026-11-12:
 
-| workload | AVX2 (8-way) | AVX-512 (16-way) | speedup |
+| backend | batch width | `fast` d6 | `sha256` b24 |
 |---|---:|---:|---:|
-| `fast` d6 | 11.46 MH/s | 16.45 MH/s | 1.44× |
-| `sha256` b24 | 12.57 MH/s | 22.24 MH/s | 1.77× |
+| AVX-512 16-way (register schedule) | 16 | **18.49 MH/s** | **25.13 MH/s** |
+| AVX-512 16-way (first version) | 16 | 17.40 MH/s | 23.42 MH/s |
+| AVX2 8-way | 8 | 11.65 MH/s | 14.23 MH/s |
+| SHA-NI single block | — | not present on this host | — |
+| portable C | 0 | 3.01 MH/s | 3.17 MH/s |
 
-`tools/kaggle_avx512.py` reproduces this: it runs the benchmark twice
-(native and `ANUBIS_NO_AVX512=1`) and verifies every digest against hashlib.
+On a client CPU with SHA-NI but no AVX-512 (Alder Lake laptop), the same
+comparison gives AVX2 ≈ 9.1 MH/s, SHA-NI ≈ 8.1 MH/s, portable C ≈ 2.4 MH/s —
+so the dispatch order AVX-512 → AVX2 → SHA-NI → C matches the measurements.
+
+`tools/bench_isa.py` reproduces the table; `tools/kaggle_avx512.py` compares
+AVX2 vs AVX-512 and verifies every digest against hashlib.
 Raw data: [`results/avx512-kaggle.json`](results/avx512-kaggle.json).
 
 ## Notes

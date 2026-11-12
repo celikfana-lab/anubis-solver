@@ -65,7 +65,7 @@ module argon2_addr (
             fill_start <= 1'b0;
             case (1'b1)
                 (start): begin
-                    counter <= 64'd0;
+                    counter <= 64'd1;   // Argon2 pre-increments before filling
                     ready   <= 1'b0;
                     busy    <= 1'b1;
                     refsel  <= 1'b0;

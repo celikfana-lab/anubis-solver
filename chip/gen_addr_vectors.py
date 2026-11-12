@@ -19,12 +19,13 @@ def addr_block(p, l, s, m, t, y, ctr):
     return fill_block(ZERO, a1, ZERO, 0)       # A  = G(0, A1)
 
 
+# counter values start at 1: next_addresses() increments v[6] before hashing
 CASES = [
-    (0, 0, 0, 19456, 2, 2, 0),
     (0, 0, 0, 19456, 2, 2, 1),
-    (0, 0, 1, 19456, 2, 2, 37),
-    (1, 0, 2, 19456, 2, 2, 5),
-    (0, 3, 1, 65536, 3, 1, 128),
+    (0, 0, 0, 19456, 2, 2, 2),
+    (0, 0, 1, 19456, 2, 2, 38),
+    (1, 0, 2, 19456, 2, 2, 6),
+    (0, 3, 1, 65536, 3, 1, 129),
 ]
 
 

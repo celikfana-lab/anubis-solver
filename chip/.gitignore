@@ -7,6 +7,9 @@ tb_blake2b_stream
 tb_h_prime
 tb_h0
 tb_argon2_addr
+tb_argon2_index
+tb_argon2_engine
+tb_anubis_solve
 tb_lpddr6
 # waveforms
 *.vcd
@@ -19,3 +22,6 @@ b2_vectors.hex
 hp_vectors.hex
 h0_vectors.hex
 addr_vectors.hex
+index_vectors.hex
+engine_vectors.hex
+engine_pw.hex

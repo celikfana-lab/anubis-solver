@@ -75,6 +75,8 @@ OBJ := $(patsubst src/%.c,$(BUILD)/%.o,$(CORE_SRC)) \
 DEP := $(OBJ:.o=.d)
 -include $(DEP)
 
+.DEFAULT_GOAL := all
+
 .PHONY: all test clean shader
 
 all: $(LIB)

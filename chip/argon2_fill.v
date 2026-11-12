@@ -37,8 +37,8 @@ module argon2_fill (
 
     // Permutation row: which of the 4 words each of the 8 G's touches.
     // P/G: 8 G's per round, 4 words each.
-    function [1:0] perm_idx(input [2:0] gg, input integer p);
-        reg [1:0] v;
+    function [3:0] perm_idx(input [2:0] gg, input integer p);
+        reg [3:0] v;
         begin
             case (p)
                 0: case (gg)
@@ -75,20 +75,20 @@ module argon2_fill (
     wire [3:0] rnd  = gcnt[6:3];
     wire [2:0] gsel = gcnt[2:0];
     wire [6:0] i0_w, i1_w, i2_w, i3_w;
-    wire [1:0] p0 = perm_idx(gsel, 0);
-    wire [1:0] p1 = perm_idx(gsel, 1);
-    wire [1:0] p2 = perm_idx(gsel, 2);
-    wire [1:0] p3 = perm_idx(gsel, 3);
+    wire [3:0] p0 = perm_idx(gsel, 0);
+    wire [3:0] p1 = perm_idx(gsel, 1);
+    wire [3:0] p2 = perm_idx(gsel, 2);
+    wire [3:0] p3 = perm_idx(gsel, 3);
 
     // Column rounds use 16*rnd + p; row rounds use 2*(rnd-8) + off[p].
-    assign i0_w = (rnd < 4'd8) ? (7'd16 * rnd + {5'd0, p0})
-                               : (7'd2 * (rnd - 4'd8) + rowoff({2'b0, p0}));
-    assign i1_w = (rnd < 4'd8) ? (7'd16 * rnd + {5'd0, p1})
-                               : (7'd2 * (rnd - 4'd8) + rowoff({2'b0, p1}));
-    assign i2_w = (rnd < 4'd8) ? (7'd16 * rnd + {5'd0, p2})
-                               : (7'd2 * (rnd - 4'd8) + rowoff({2'b0, p2}));
-    assign i3_w = (rnd < 4'd8) ? (7'd16 * rnd + {5'd0, p3})
-                               : (7'd2 * (rnd - 4'd8) + rowoff({2'b0, p3}));
+    assign i0_w = (rnd < 4'd8) ? (7'd16 * rnd + {3'd0, p0})
+                               : (7'd2 * (rnd - 4'd8) + rowoff(p0));
+    assign i1_w = (rnd < 4'd8) ? (7'd16 * rnd + {3'd0, p1})
+                               : (7'd2 * (rnd - 4'd8) + rowoff(p1));
+    assign i2_w = (rnd < 4'd8) ? (7'd16 * rnd + {3'd0, p2})
+                               : (7'd2 * (rnd - 4'd8) + rowoff(p2));
+    assign i3_w = (rnd < 4'd8) ? (7'd16 * rnd + {3'd0, p3})
+                               : (7'd2 * (rnd - 4'd8) + rowoff(p3));
 
     wire [63:0] v0 = r[i0_w];
     wire [63:0] v1 = r[i1_w];

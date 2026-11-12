@@ -22,10 +22,9 @@ Both modules are verified in simulation:
 |---|---|
 | `sha256_core.v` | **verified** — empty string, `"abc"`, the 56-byte two-block vector and a chained `digest → midstate` case all match the reference |
 | `anubis_pow.v` | **verified** — 64 bytes of `a`, 4-byte big-endian nonce, difficulty 8 bits: finds nonce 83 with digest `008fa7f1…`, matching the reference |
-| `argon2_fill.v` | **WIP** — 128×64-bit BlaMka block permutation. The datapath is complete (8 column rounds + 8 row rounds, XOR-in/XOR-out) but word 0 does not yet match the Python reference, so `make argon` fails; `make sim` only runs the verified SHA-256 tests |
+| `argon2_fill.v` | **verified** — 128×64-bit BlaMka block permutation (8 column rounds + 8 row rounds, XOR-in/XOR-out) matches the Python reference on a 128-word block with `xor_en` asserted |
 
-`make sim` runs the two verified SHA-256 testbenches; `make argon` runs the
-WIP Argon2id fill test.
+`make sim` runs all three testbenches.
 
 The bug that made it report nonce 275: `nblocks` was treated as a flag
 ("there is a second block") while the testbench meant it as the block count,
@@ -78,8 +77,9 @@ exist to blunt this.
 
 ## Notes / next steps
 
-- Fix the `anubis_pow` control path (the wrapper's digest and the reported
-  nonce disagree; the core is proven by `tb_sha256`).
+- Wire the verified `fill_block` unit into a full Argon2id engine: it still
+  needs the BLAKE2b core (H0, H′, final tag), the address generator and a
+  19 MiB memory port.
 - For `fast`/`slow` (decimal nonce) the padding position depends on the nonce
   length; that needs a byte-assembly front end instead of the fixed-word patch.
 - A pipelined version (one round per stage, 64-stage) would raise throughput

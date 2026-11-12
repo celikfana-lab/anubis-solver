@@ -6,11 +6,11 @@ YOSYS    ?= yosys
 
 all: sim
 
-sim: tb_sha256 tb_pow
+sim: tb_sha256 tb_pow tb_argon2_fill
 	$(VVP) tb_sha256
 	$(VVP) tb_pow
+	$(VVP) tb_argon2_fill
 
-# Argon2id fill_block unit is WIP (see README), run it explicitly.
 argon: tb_argon2_fill
 	$(VVP) tb_argon2_fill
 

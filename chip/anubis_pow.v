@@ -12,7 +12,7 @@ module anubis_pow (
     input  wire [255:0] midstate,
     input  wire [511:0] block0,
     input  wire [511:0] block1,
-    input  wire         nblocks,      // 1 or 2 blocks after the midstate
+    input  wire [1:0]   nblocks,      // number of blocks after the midstate (1 or 2)
     input  wire [3:0]   nonce_word,   // which 32-bit word of block0
     input  wire         nonce_le,     // 0: big-endian nonce, 1: little-endian
     input  wire [5:0]   difficulty,   // leading zero bits
@@ -83,7 +83,7 @@ module anubis_pow (
                 core_start <= 1'b1;
             end else if (running && core_done && waiting) begin
                 waiting <= 1'b0;
-                if (phase == 1'b0 && nblocks) begin
+                if (phase == 1'b0 && nblocks == 2'd2) begin
                     phase <= 1'b1;
                     waiting <= 1'b1;
                     core_start <= 1'b1;

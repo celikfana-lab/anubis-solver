@@ -13,13 +13,19 @@ Makefile        make sim / make pow / make synth
 
 ## Status
 
+Both modules are verified in simulation:
+
 | module | state |
 |---|---|
 | `sha256_core.v` | **verified** — empty string, `"abc"`, the 56-byte two-block vector and a chained `digest → midstate` case all match the reference |
-| `anubis_pow.v` | **not yet correct** — the wrapper patches the nonce into the block template and runs the core, but it accepts nonces whose digest does not actually have the required leading zero bits (it reports nonce 275 for a case where the reference answer is 83). The core itself produces the right digest for the same midstate/block in simulation, so the fault is in the wrapper's control/data path. |
+| `anubis_pow.v` | **verified** — 64 bytes of `a`, 4-byte big-endian nonce, difficulty 8 bits: finds nonce 83 with digest `008fa7f1…`, matching the reference |
 
-`make sim` runs only the verified core test; `make pow` runs the WIP wrapper
-test (expected to fail).
+`make sim` runs both testbenches.
+
+The bug that made it report nonce 275: `nblocks` was treated as a flag
+("there is a second block") while the testbench meant it as the block count,
+so every search hashed an extra all-zero block. It is now a 2-bit count
+(`1` or `2`).
 
 ## Design
 

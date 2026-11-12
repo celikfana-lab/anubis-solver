@@ -6,10 +6,10 @@ YOSYS    ?= yosys
 
 all: sim
 
-sim: tb_sha256
+sim: tb_sha256 tb_pow
 	$(VVP) tb_sha256
+	$(VVP) tb_pow
 
-# Proof-of-work wrapper is still WIP (see README), run it explicitly.
 pow: tb_pow
 	$(VVP) tb_pow
 

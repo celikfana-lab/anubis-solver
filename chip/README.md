@@ -17,17 +17,20 @@ Makefile             make sim / make pow / make argon / make synth
 
 ## Status
 
-Both modules are verified in simulation:
+Everything below is verified in simulation against either the C core or a
+reference implementation:
 
 | module | state |
 |---|---|
 | `sha256_core.v` | **verified** — empty string, `"abc"`, the 56-byte two-block vector and a chained `digest → midstate` case all match the reference |
 | `anubis_pow.v` | **verified** — 64 bytes of `a`, 4-byte big-endian nonce, difficulty 8 bits: finds nonce 83 with digest `008fa7f1…`, matching the reference |
 | `argon2_fill.v` | **verified** — 128×64-bit BlaMka block permutation (8 column rounds + 8 row rounds, XOR-in/XOR-out) matches the Python reference on a 128-word block with `xor_en` asserted |
-| `blake2b_core.v` | **WIP** — 2 cycles/round BLAKE2b-512 compression core. The 24-cycle FSM runs and produces a digest, but it does not match the reference vectors yet (`make blake2b` fails) |
+| `blake2b_core.v` | **verified** — 2 cycles/round BLAKE2b-512 compression; empty message, 128×`a`, and a non-uniform block all match `hashlib` |
+| `blake2b_stream.v` | **verified** — byte-streaming BLAKE2b (128-byte block buffer, `flush`/`finish` handshake, `t` counter). 0, 3, 64, 112, 128 and 200-byte messages and a τ=32 digest match `hashlib` |
+| `h_prime.v` | **verified** — Argon2's H′ for τ = 1024 (31 chained calls), 96, 64 and 32, over X = 72 and X = 1024 bytes |
 
-`make sim` runs the three verified testbenches; `make blake2b` runs the WIP
-BLAKE2b core test.
+`make sim` runs every testbench. `make stream`, `make hprime` and
+`make blake2b` run the BLAKE2b layers on their own.
 
 The bug that made it report nonce 275: `nblocks` was treated as a flag
 ("there is a second block") while the testbench meant it as the block count,
@@ -121,9 +124,12 @@ exist to blunt this.
 
 ## Notes / next steps
 
-- Wire the verified `fill_block` unit into a full Argon2id engine: it still
-  needs the BLAKE2b core (H0, H′, final tag), the address generator and a
-  19 MiB memory port.
+- The BLAKE2b stack is done: `blake2b_core` → `blake2b_stream` → `h_prime`
+  (H0 itself is still missing: it is a fixed 40-byte prefix + password + salt
+  + lengths, so it needs its own byte sequencer in front of `blake2b_stream`).
+- Then the Argon2id top level: the address generator for pass 0 slices 0–1,
+  the two-pass fill loop with `index_alpha`, and a 19 MiB memory port (the
+  LPDDR6 model is ready for it).
 - For `fast`/`slow` (decimal nonce) the padding position depends on the nonce
   length; that needs a byte-assembly front end instead of the fixed-word patch.
 - A pipelined version (one round per stage, 64-stage) would raise throughput

@@ -4,6 +4,7 @@ tb_pow
 tb_argon2_fill
 tb_blake2b
 tb_blake2b_stream
+tb_h_prime
 tb_lpddr6
 # waveforms
 *.vcd
@@ -13,3 +14,4 @@ ref.hex
 dst.hex
 expected.hex
 b2_vectors.hex
+hp_vectors.hex

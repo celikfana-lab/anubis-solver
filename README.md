@@ -214,6 +214,8 @@ With a Vulkan GPU, `fast`/`slow` hard drops to ~77 ms and `sha256` 24 bits to
 On a Raspberry Pi 5 (Cortex-A76, 2.4 GHz) the NEON/SHA-2 path reaches
 ~10.1 MH/s (`fast`) and ~12.8 MH/s (`sha256`) per core, scaling to
 40.4 / 43.2 MH/s on four cores — about 5× faster than the portable C path.
+The AArch64 HashX JIT does ~1.6 MH/s per core (6.35 MH/s on four), ~5.3×
+the interpreter.
 
 Threading and CPU affinity: on hybrid CPUs (Intel P/E cores) workers are pinned
 to the physical P-cores by default and the default thread count is the P-core

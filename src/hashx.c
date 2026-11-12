@@ -1884,14 +1884,17 @@ void hashx_program_execute(const hashx_program* program, uint64_t r[8]) {
 }
 
 /* ---------------------------------------------------------------- *
- * x86-64 JIT
+ * JIT compilers
  *
- * This is a C port of the compiler in the upstream `hashx` crate v0.8.0
+ * The x86-64 path is a C port of the compiler in the upstream `hashx` crate v0.8.0
  * (src/compiler/x86_64.rs), Copyright (c) 2020 tevador, LGPL-3.0.
  * The generated code is byte-for-byte the same instruction sequence the
  * Rust JIT emits: the 8 virtual registers live in r8..r15, rdi points at
  * the register file, and rax/rdx implement the wide multiplies.  It is
  * ~9x faster than the interpreter on this machine.
+ *
+ * The AArch64 path below is an independent port of the same template to the
+ * ARMv8 instruction set (x8..x15 for virtual registers).
  *
  * If mmap/mprotect(PROT_EXEC) is unavailable (W^X, SELinux, snap seccomp),
  * hashx_init() falls back to the interpreter automatically.
@@ -2070,7 +2073,199 @@ static int hashx_jit_build(const hashx_program *prog, void **mem_out,
 static void hashx_jit_run(void *mem, uint64_t r[8]) {
 	((void (*)(uint64_t *))mem)(r);
 }
-#endif /* x86_64 JIT */
+#elif defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
+#define HASHX_HAVE_JIT 1
+#include <sys/mman.h>
+
+/* AArch64 port of the same compiler template.  x8..x15 hold the 8 virtual
+ * registers, x0 points at the register file, x16 accumulates the wide
+ * multiply result and x17 is the branch-disable flag. */
+typedef struct { uint32_t *p; size_t n, cap; } hashx_code;
+
+static void hx_w(hashx_code *c, uint32_t w) {
+	if (c->n < c->cap) c->p[c->n++] = w;
+}
+
+#define HX_A_REG(i) (8 + (i))
+
+static void hx_a_ldp(hashx_code *c, int rt, int rt2, int rn, int off) {
+	unsigned imm7 = (unsigned)(off / 8) & 0x7Fu;
+	hx_w(c, 0xA9400000u | (imm7 << 15) | ((unsigned)rt2 << 10) |
+	         ((unsigned)rn << 5) | (unsigned)rt);
+}
+static void hx_a_stp(hashx_code *c, int rt, int rt2, int rn, int off) {
+	unsigned imm7 = (unsigned)(off / 8) & 0x7Fu;
+	hx_w(c, 0xA9000000u | (imm7 << 15) | ((unsigned)rt2 << 10) |
+	         ((unsigned)rn << 5) | (unsigned)rt);
+}
+static void hx_a_add(hashx_code *c, int rd, int rn, int rm, unsigned sh) {
+	hx_w(c, 0x8B000000u | (sh << 10) | ((unsigned)rm << 16) |
+	         ((unsigned)rn << 5) | (unsigned)rd);
+}
+static void hx_a_sub(hashx_code *c, int rd, int rn, int rm) {
+	hx_w(c, 0xCB000000u | ((unsigned)rm << 16) | ((unsigned)rn << 5) | (unsigned)rd);
+}
+static void hx_a_eor(hashx_code *c, int rd, int rn, int rm) {
+	hx_w(c, 0xCA000000u | ((unsigned)rm << 16) | ((unsigned)rn << 5) | (unsigned)rd);
+}
+static void hx_a_mul(hashx_code *c, int rd, int rn, int rm) {
+	hx_w(c, 0x9B000000u | ((unsigned)rm << 16) | (0x1Fu << 10) |
+	         ((unsigned)rn << 5) | (unsigned)rd);
+}
+static void hx_a_umulh(hashx_code *c, int rd, int rn, int rm) {
+	hx_w(c, 0x9BC00000u | ((unsigned)rm << 16) | (0x1Fu << 10) |
+	         ((unsigned)rn << 5) | (unsigned)rd);
+}
+static void hx_a_smulh(hashx_code *c, int rd, int rn, int rm) {
+	hx_w(c, 0x9B400000u | ((unsigned)rm << 16) | (0x1Fu << 10) |
+	         ((unsigned)rn << 5) | (unsigned)rd);
+}
+static void hx_a_ror(hashx_code *c, int rd, int rn, unsigned imm) {
+	hx_w(c, 0x93C00000u | ((unsigned)rn << 16) | ((imm & 63u) << 10) |
+	         ((unsigned)rn << 5) | (unsigned)rd);
+}
+static void hx_a_mov(hashx_code *c, int rd, int rm) {
+	hx_w(c, 0xAA000000u | ((unsigned)rm << 16) | (31u << 5) | (unsigned)rd);
+}
+static void hx_a_mov_w(hashx_code *c, int rd, int rm) {
+	hx_w(c, 0x2A000000u | ((unsigned)rm << 16) | (31u << 5) | (unsigned)rd);
+}
+static void hx_a_movz(hashx_code *c, int rd, unsigned imm16, unsigned shift) {
+	hx_w(c, 0xD2800000u | ((shift / 16u) << 21) | ((imm16 & 0xFFFFu) << 5) | (unsigned)rd);
+}
+static void hx_a_movk(hashx_code *c, int rd, unsigned imm16, unsigned shift) {
+	hx_w(c, 0xF2800000u | ((shift / 16u) << 21) | ((imm16 & 0xFFFFu) << 5) | (unsigned)rd);
+}
+static void hx_a_movz_w(hashx_code *c, int rd, unsigned imm16, unsigned shift) {
+	hx_w(c, 0x52800000u | ((shift / 16u) << 21) | ((imm16 & 0xFFFFu) << 5) | (unsigned)rd);
+}
+static void hx_a_movk_w(hashx_code *c, int rd, unsigned imm16, unsigned shift) {
+	hx_w(c, 0x72800000u | ((shift / 16u) << 21) | ((imm16 & 0xFFFFu) << 5) | (unsigned)rd);
+}
+static void hx_a_movn_w(hashx_code *c, int rd) {
+	hx_w(c, 0x12800000u | (unsigned)rd);
+}
+static void hx_a_orr_w(hashx_code *c, int rd, int rn, int rm) {
+	hx_w(c, 0x2A000000u | ((unsigned)rm << 16) | ((unsigned)rn << 5) | (unsigned)rd);
+}
+static void hx_a_tst_w(hashx_code *c, int rn, int rm) {
+	hx_w(c, 0x6A00001Fu | ((unsigned)rm << 16) | ((unsigned)rn << 5));
+}
+static size_t hx_a_b(hashx_code *c) {
+	hx_w(c, 0x14000000u);
+	return c->n - 1;
+}
+static size_t hx_a_bcond(hashx_code *c, unsigned cond) {
+	hx_w(c, 0x54000000u | cond);
+	return c->n - 1;
+}
+static void hx_a_const64(hashx_code *c, int rd, uint64_t v) {
+	hx_a_movz(c, rd, (unsigned)(v & 0xFFFFu), 0);
+	if ((v >> 16) & 0xFFFFu) hx_a_movk(c, rd, (unsigned)((v >> 16) & 0xFFFFu), 16);
+	if ((v >> 32) & 0xFFFFu) hx_a_movk(c, rd, (unsigned)((v >> 32) & 0xFFFFu), 32);
+	if ((v >> 48) & 0xFFFFu) hx_a_movk(c, rd, (unsigned)((v >> 48) & 0xFFFFu), 48);
+}
+
+static int hashx_jit_compile(const hashx_program *prog, hashx_code *c) {
+	int target = -1;
+
+	if (prog->code_size > HASHX_PROGRAM_MAX_SIZE) return 0;
+
+	hx_a_ldp(c, 8, 9, 0, 0);
+	hx_a_ldp(c, 10, 11, 0, 16);
+	hx_a_ldp(c, 12, 13, 0, 32);
+	hx_a_ldp(c, 14, 15, 0, 48);
+	hx_a_movz(c, 16, 0, 0);
+	hx_a_movz(c, 17, 0, 0);
+
+	for (size_t i = 0; i < prog->code_size; i++) {
+		const instruction *in = &prog->code[i];
+		int d = HX_A_REG(in->dst), s = HX_A_REG(in->src);
+		switch (in->opcode) {
+		case INSTR_UMULH_R:
+			hx_a_umulh(c, 1, d, s); hx_a_mov(c, d, 1); hx_a_mov_w(c, 16, 1); break;
+		case INSTR_SMULH_R:
+			hx_a_smulh(c, 1, d, s); hx_a_mov(c, d, 1); hx_a_mov_w(c, 16, 1); break;
+		case INSTR_MUL_R: hx_a_mul(c, d, d, s); break;
+		case INSTR_SUB_R: hx_a_sub(c, d, d, s); break;
+		case INSTR_XOR_R: hx_a_eor(c, d, d, s); break;
+		case INSTR_ADD_RS:
+			if (in->imm32 > 3) return 0;
+			hx_a_add(c, d, d, s, in->imm32); break;
+		case INSTR_ROR_C: hx_a_ror(c, d, d, in->imm32); break;
+		case INSTR_ADD_C:
+			hx_a_const64(c, 1, (uint64_t)(int64_t)(int32_t)in->imm32);
+			hx_a_add(c, d, d, 1, 0); break;
+		case INSTR_XOR_C:
+			hx_a_const64(c, 1, (uint64_t)(int64_t)(int32_t)in->imm32);
+			hx_a_eor(c, d, d, 1); break;
+		case INSTR_TARGET: target = (int)c->n; break;
+		case INSTR_BRANCH: {
+			size_t skip, bpos;
+			int rel, srel;
+			if (target < 0) return 0;
+			hx_a_movz_w(c, 2, in->imm32 & 0xFFFFu, 0);
+			hx_a_movk_w(c, 2, (in->imm32 >> 16) & 0xFFFFu, 16);
+			hx_a_orr_w(c, 16, 16, 17);
+			hx_a_tst_w(c, 16, 2);
+			skip = hx_a_bcond(c, 1);              /* b.ne skip */
+			hx_a_movn_w(c, 17);                   /* branch taken: disable */
+			bpos = hx_a_b(c);                     /* b target */
+			rel = target - (int)bpos;
+			c->p[bpos] = 0x14000000u | ((unsigned)rel & 0x3FFFFFFu);
+			srel = (int)c->n - (int)skip;
+			c->p[skip] = 0x54000000u | 1u | (((unsigned)srel & 0x7FFFFu) << 5);
+			break; }
+		default:
+			return 0;
+		}
+	}
+
+	hx_a_stp(c, 8, 9, 0, 0);
+	hx_a_stp(c, 10, 11, 0, 16);
+	hx_a_stp(c, 12, 13, 0, 32);
+	hx_a_stp(c, 14, 15, 0, 48);
+	hx_w(c, 0xD65F03C0u);                         /* ret */
+
+	return c->n < c->cap;
+}
+
+static int hashx_jit_build(const hashx_program *prog, void **mem_out,
+                           size_t *len_out) {
+	hashx_code c;
+	size_t bytes;
+	void *m;
+	c.cap = 65536;
+	c.n = 0;
+	c.p = (uint32_t *)malloc(c.cap * sizeof(uint32_t));
+	if (!c.p) return 0;
+	if (!hashx_jit_compile(prog, &c)) {
+		free(c.p);
+		return 0;
+	}
+	bytes = c.n * sizeof(uint32_t);
+	m = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (m == MAP_FAILED) {
+		free(c.p);
+		return 0;
+	}
+	memcpy(m, c.p, bytes);
+	if (mprotect(m, bytes, PROT_READ | PROT_EXEC) != 0) {
+		munmap(m, bytes);
+		free(c.p);
+		return 0;
+	}
+	__builtin___clear_cache((char *)m, (char *)m + bytes);
+	free(c.p);
+	*mem_out = m;
+	*len_out = bytes;
+	return 1;
+}
+
+static void hashx_jit_run(void *mem, uint64_t r[8]) {
+	((void (*)(uint64_t *))mem)(r);
+}
+#endif /* x86-64 / AArch64 JIT */
 
 /* ---------------------------------------------------------------- *
  * Public interface

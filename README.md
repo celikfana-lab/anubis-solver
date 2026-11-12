@@ -6,6 +6,9 @@ same flow a browser does — fetch the challenge page, compute the proof-of-work
 GET `pass-challenge`, keep the auth cookie — with the hot loops in hand-written
 assembly and optional GPU backends.
 
+> **Built entirely by DeepSeek V4.1 Flash** in
+> [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness).
+
 > **Authorized use only.** Running this against a site circumvents the bot
 > mitigation its operator deliberately installed. Use it on systems you own or
 > have explicit permission to test. See [SECURITY.md](SECURITY.md).
@@ -361,4 +364,5 @@ tevador/hashx and remains **LGPL-3.0**; `third_party/argon2` is CC0-1.0 /
 Apache-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before
 redistributing binaries.
 
+[![](https://img.shields.io/badge/made%20by-DeepSeek%20V4.1%20Flash-4D6BFE?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)

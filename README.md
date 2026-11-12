@@ -304,8 +304,9 @@ v1.28.2   ok    ok    ok      ok     ok
 HashX also has a CUDA backend (`ANUBIS_GPU_HASHX=1`): the generated program is
 interpreted on the GPU, one thread per nonce, ~70-110 MH/s on two T4s versus
 ~8.8 MH/s for one CPU thread. Hits are re-verified by the CPU. A Level Zero
-HashX kernel also exists (`ANUBIS_L0_HASHX=1`), but it is slower than the CPU
-on an Iris Xe (~2-3 vs ~4 MH/s), so it is off by default.
+HashX kernel also exists (`ANUBIS_L0_HASHX=1`), and a Vulkan one
+(`ANUBIS_VULKAN_HASHX=1`), but both are slower than the CPU on an Iris Xe
+(~2-3 vs ~4 MH/s), so they are off by default.
 
 ## Tests
 

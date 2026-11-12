@@ -1,0 +1,19 @@
+{
+  "host": {
+    "gpu": "Intel Iris Xe Graphics (ADL GT2)",
+    "api": "Vulkan 1.1 compute (Mesa ANV)",
+    "cpu": "1 thread of the laptop CPU",
+    "measured": "2026-11-12"
+  },
+  "throughput_mhps": {
+    "d24": {
+      "cpu": 4.91,
+      "gpu": 2.92
+    },
+    "d26": {
+      "cpu": 3.93,
+      "gpu": 3.01
+    }
+  },
+  "notes": "GLSL interpreter with uvec2 64-bit emulation. Correct (same nonces as the CPU) but slower than one CPU thread on this GPU; gated behind ANUBIS_VULKAN_HASHX."
+}

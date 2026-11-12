@@ -30,12 +30,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "hashx.h"
 #include <time.h>
 
 #include <vulkan/vulkan.h>
 
 #include "sha256_comp.spv.h"
 #include "argon2id.spv.h"
+#include "hashx.spv.h"
 
 #define VK_FUNCS(X)                                                            \
     X(vkCreateInstance)                                                        \
@@ -1164,5 +1166,352 @@ int anubis_vulkan_argon2_digest(const uint8_t *challenge, size_t clen,
         out[4 * i + 3] = (uint8_t)w;
     }
     pthread_mutex_unlock(&g_a2vk.mu);
+    return 0;
+}
+
+/* ==================== HashX (Vulkan) ==================== */
+
+typedef struct {
+    uint32_t code_size;
+    uint32_t difficulty;
+    uint32_t base;
+    uint32_t count;
+    uint32_t k[8];
+} vk_hx_params;
+
+typedef struct {
+    uint32_t count;
+    uint32_t pad[3];
+    uint32_t nonces[8];
+    uint32_t hashes[8][8];
+} vk_hx_results;
+
+static struct {
+    int state;
+    VkBuffer params_buf, prog_buf, results_buf;
+    VkDeviceMemory params_mem, prog_mem, results_mem;
+    VkDescriptorSetLayout dsl;
+    VkPipelineLayout pl;
+    VkPipeline pipe;
+    VkShaderModule smod;
+    VkDescriptorPool dpool;
+    VkDescriptorSet dset;
+    VkCommandPool cpool;
+    VkCommandBuffer cmd;
+    vk_hx_params *params;
+    uint32_t *prog;
+    vk_hx_results *results;
+    pthread_mutex_t mu;
+} g_hxvk;
+
+static int vk_hx_init(void) {
+    VkDescriptorSetLayoutBinding binds[3];
+    VkDescriptorSetLayoutCreateInfo dlci;
+    VkPipelineLayoutCreateInfo pli;
+    VkShaderModuleCreateInfo smci;
+    VkComputePipelineCreateInfo cpci;
+    VkDescriptorPoolSize psize;
+    VkDescriptorPoolCreateInfo dpci;
+    VkDescriptorSetAllocateInfo dsai;
+    VkDescriptorBufferInfo infos[3];
+    VkWriteDescriptorSet writes[3];
+    VkCommandPoolCreateInfo cpi;
+    VkCommandBufferAllocateInfo cbai;
+
+    if (g_hxvk.state != 0) {
+        return g_hxvk.state == 1;
+    }
+    g_hxvk.state = -1;
+    if (!vk_init()) {
+        return 0;
+    }
+    g_hxvk.params_buf = make_buffer(sizeof(vk_hx_params), &g_hxvk.params_mem,
+                                    (void **)&g_hxvk.params);
+    g_hxvk.prog_buf = make_buffer(512u * 16u, &g_hxvk.prog_mem,
+                                  (void **)&g_hxvk.prog);
+    g_hxvk.results_buf = make_buffer(sizeof(vk_hx_results), &g_hxvk.results_mem,
+                                     (void **)&g_hxvk.results);
+    if (g_hxvk.params_buf == VK_NULL_HANDLE || g_hxvk.prog_buf == VK_NULL_HANDLE ||
+        g_hxvk.results_buf == VK_NULL_HANDLE) {
+        return 0;
+    }
+    memset(binds, 0, sizeof(binds));
+    for (int i = 0; i < 3; i++) {
+        binds[i].binding = (uint32_t)i;
+        binds[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binds[i].descriptorCount = 1;
+        binds[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.pNext = NULL;
+    dlci.flags = 0;
+    dlci.bindingCount = 3;
+    dlci.pBindings = binds;
+    if (p_vkCreateDescriptorSetLayout(g_vk.device, &dlci, NULL, &g_hxvk.dsl) !=
+        VK_SUCCESS) {
+        return 0;
+    }
+    pli.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pli.pNext = NULL;
+    pli.flags = 0;
+    pli.setLayoutCount = 1;
+    pli.pSetLayouts = &g_hxvk.dsl;
+    pli.pushConstantRangeCount = 0;
+    pli.pPushConstantRanges = NULL;
+    if (p_vkCreatePipelineLayout(g_vk.device, &pli, NULL, &g_hxvk.pl) !=
+        VK_SUCCESS) {
+        return 0;
+    }
+    smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    smci.pNext = NULL;
+    smci.flags = 0;
+    smci.codeSize = hashx_spv_bytes;
+    smci.pCode = hashx_spv;
+    if (p_vkCreateShaderModule(g_vk.device, &smci, NULL, &g_hxvk.smod) !=
+        VK_SUCCESS) {
+        return 0;
+    }
+    memset(&cpci, 0, sizeof(cpci));
+    cpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = g_hxvk.smod;
+    cpci.stage.pName = "main";
+    cpci.layout = g_hxvk.pl;
+    if (p_vkCreateComputePipelines(g_vk.device, VK_NULL_HANDLE, 1, &cpci, NULL,
+                                   &g_hxvk.pipe) != VK_SUCCESS) {
+        return 0;
+    }
+    psize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    psize.descriptorCount = 3;
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.pNext = NULL;
+    dpci.flags = 0;
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes = &psize;
+    if (p_vkCreateDescriptorPool(g_vk.device, &dpci, NULL, &g_hxvk.dpool) !=
+        VK_SUCCESS) {
+        return 0;
+    }
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.pNext = NULL;
+    dsai.descriptorPool = g_hxvk.dpool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &g_hxvk.dsl;
+    if (p_vkAllocateDescriptorSets(g_vk.device, &dsai, &g_hxvk.dset) !=
+        VK_SUCCESS) {
+        return 0;
+    }
+    infos[0].buffer = g_hxvk.params_buf;
+    infos[1].buffer = g_hxvk.prog_buf;
+    infos[2].buffer = g_hxvk.results_buf;
+    memset(writes, 0, sizeof(writes));
+    for (int i = 0; i < 3; i++) {
+        infos[i].offset = 0;
+        infos[i].range = VK_WHOLE_SIZE;
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = g_hxvk.dset;
+        writes[i].dstBinding = (uint32_t)i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i].pBufferInfo = &infos[i];
+    }
+    p_vkUpdateDescriptorSets(g_vk.device, 3, writes, 0, NULL);
+    cpi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cpi.pNext = NULL;
+    cpi.flags = 0;
+    cpi.queueFamilyIndex = g_vk.qfam;
+    if (p_vkCreateCommandPool(g_vk.device, &cpi, NULL, &g_hxvk.cpool) !=
+        VK_SUCCESS) {
+        return 0;
+    }
+    cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cbai.pNext = NULL;
+    cbai.commandPool = g_hxvk.cpool;
+    cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbai.commandBufferCount = 1;
+    if (p_vkAllocateCommandBuffers(g_vk.device, &cbai, &g_hxvk.cmd) !=
+        VK_SUCCESS) {
+        return 0;
+    }
+    pthread_mutex_init(&g_hxvk.mu, NULL);
+    g_hxvk.state = 1;
+    return 1;
+}
+
+int anubis_vulkan_hashx_available(void) {
+    return vk_hx_init();
+}
+
+const char *anubis_vulkan_hashx_info(void) {
+    static char buf[300];
+    if (!vk_hx_init()) {
+        return NULL;
+    }
+    snprintf(buf, sizeof(buf), "Vulkan HashX: %s", g_vk.name);
+    return buf;
+}
+
+static int hx_dispatch_vk(uint32_t code_size, uint32_t difficulty,
+                          uint32_t base, uint32_t count) {
+    VkCommandBufferBeginInfo bi;
+    VkMemoryBarrier mb;
+    VkSubmitInfo si;
+    uint32_t groups = (count + 255u) / 256u;
+
+    g_hxvk.params->code_size = code_size;
+    g_hxvk.params->difficulty = difficulty;
+    g_hxvk.params->base = base;
+    g_hxvk.params->count = count;
+    g_hxvk.results->count = 0;
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.pNext = NULL;
+    bi.flags = 0;
+    bi.pInheritanceInfo = NULL;
+    if (p_vkBeginCommandBuffer(g_hxvk.cmd, &bi) != VK_SUCCESS) {
+        return -1;
+    }
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.pNext = NULL;
+    mb.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    p_vkCmdPipelineBarrier(g_hxvk.cmd, VK_PIPELINE_STAGE_HOST_BIT,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0,
+                           NULL, 0, NULL);
+    p_vkCmdBindPipeline(g_hxvk.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_hxvk.pipe);
+    p_vkCmdBindDescriptorSets(g_hxvk.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                              g_hxvk.pl, 0, 1, &g_hxvk.dset, 0, NULL);
+    p_vkCmdDispatch(g_hxvk.cmd, groups, 1, 1);
+    if (p_vkEndCommandBuffer(g_hxvk.cmd) != VK_SUCCESS) {
+        return -1;
+    }
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.pNext = NULL;
+    si.waitSemaphoreCount = 0;
+    si.pWaitSemaphores = NULL;
+    si.pWaitDstStageMask = NULL;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &g_hxvk.cmd;
+    si.signalSemaphoreCount = 0;
+    si.pSignalSemaphores = NULL;
+    if (p_vkQueueSubmit(g_vk.queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) {
+        return -1;
+    }
+    if (p_vkQueueWaitIdle(g_vk.queue) != VK_SUCCESS) {
+        return -1;
+    }
+    return 0;
+}
+
+static void hx_hex_vk(const uint32_t w[8], char out[65]) {
+    static const char hexd[] = "0123456789abcdef";
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 4; j++) {
+            unsigned v = (w[i] >> (8 * (3 - j))) & 0xFFu;
+            out[(4 * i + j) * 2 + 0] = hexd[v >> 4];
+            out[(4 * i + j) * 2 + 1] = hexd[v & 0xFu];
+        }
+    }
+    out[64] = '\0';
+}
+
+int anubis_vulkan_hashx_solve(const void *state, size_t state_size,
+                              int difficulty, uint64_t max_nonce,
+                              double budget_ms, uint32_t *out_nonce,
+                              char out_hex[65], double *out_ms) {
+    uint64_t keys[4];
+    static uint32_t prog[512 * 4];
+    size_t ninstr = 0;
+    uint32_t chunk;
+    uint64_t base = 0;
+    uint64_t maxn;
+    double t0;
+    int rc = 1;
+
+    if (state == NULL || out_nonce == NULL || out_hex == NULL) {
+        return -1;
+    }
+    if (hashx_export(state, state_size, keys, prog, &ninstr) != 0 ||
+        !vk_hx_init()) {
+        return -1;
+    }
+    pthread_mutex_lock(&g_hxvk.mu);
+    t0 = now_seconds();
+    memcpy(g_hxvk.prog, prog, ninstr * 4u * sizeof(uint32_t));
+    {
+        uint64_t k[4] = {keys[0], keys[1], keys[2], keys[3]};
+        for (int i = 0; i < 4; i++) {
+            g_hxvk.params->k[2 * i] = (uint32_t)k[i];
+            g_hxvk.params->k[2 * i + 1] = (uint32_t)(k[i] >> 32);
+        }
+    }
+    chunk = env_u32("ANUBIS_VULKAN_HASHX_CHUNK", 1u << 22);
+    if (chunk < 1024u) {
+        chunk = 1024u;
+    }
+    if (chunk > (1u << 26)) {
+        chunk = 1u << 26;
+    }
+    maxn = max_nonce > 0xFFFFFFFFull ? 0xFFFFFFFFull : max_nonce;
+    while (base <= maxn) {
+        uint64_t remaining = maxn - base + 1;
+        uint32_t count = (uint32_t)(remaining < (uint64_t)chunk
+                                        ? remaining
+                                        : (uint64_t)chunk);
+        if (count == 0) {
+            break;
+        }
+        hx_dispatch_vk((uint32_t)ninstr, (uint32_t)difficulty, (uint32_t)base,
+                       count);
+        if (g_hxvk.results->count > 0) {
+            hx_hex_vk(g_hxvk.results->hashes[0], out_hex);
+            *out_nonce = g_hxvk.results->nonces[0];
+            if (out_ms != NULL) {
+                *out_ms = (now_seconds() - t0) * 1000.0;
+            }
+            rc = 0;
+            break;
+        }
+        base += count;
+        if (budget_ms > 0.0 && (now_seconds() - t0) * 1000.0 > budget_ms) {
+            rc = 1;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_hxvk.mu);
+    return rc;
+}
+
+int anubis_vulkan_hashx_digest(const void *state, size_t state_size,
+                               uint32_t nonce, uint8_t out[32]) {
+    uint64_t keys[4];
+    static uint32_t prog[512 * 4];
+    size_t ninstr = 0;
+
+    if (state == NULL || out == NULL ||
+        hashx_export(state, state_size, keys, prog, &ninstr) != 0 ||
+        !vk_hx_init()) {
+        return -1;
+    }
+    pthread_mutex_lock(&g_hxvk.mu);
+    memcpy(g_hxvk.prog, prog, ninstr * 4u * sizeof(uint32_t));
+    for (int i = 0; i < 4; i++) {
+        g_hxvk.params->k[2 * i] = (uint32_t)keys[i];
+        g_hxvk.params->k[2 * i + 1] = (uint32_t)(keys[i] >> 32);
+    }
+    if (hx_dispatch_vk((uint32_t)ninstr, 0u, nonce, 1u) != 0 ||
+        g_hxvk.results->count == 0) {
+        pthread_mutex_unlock(&g_hxvk.mu);
+        return -1;
+    }
+    for (int i = 0; i < 8; i++) {
+        uint32_t w = g_hxvk.results->hashes[0][i];
+        out[4 * i + 0] = (uint8_t)(w >> 24);
+        out[4 * i + 1] = (uint8_t)(w >> 16);
+        out[4 * i + 2] = (uint8_t)(w >> 8);
+        out[4 * i + 3] = (uint8_t)w;
+    }
+    pthread_mutex_unlock(&g_hxvk.mu);
     return 0;
 }

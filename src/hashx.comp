@@ -1,0 +1,180 @@
+#version 450
+/* hashx.comp — Vulkan HashX interpreter. One invocation per nonce; the
+ * 64-bit register file uses uvec2 arithmetic (GLSL has no 64-bit ints). */
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer Params {
+    uint code_size; uint difficulty; uint base; uint count; uint k[8];
+};
+layout(std430, binding = 1) buffer Prog { uvec4 instr[]; };
+layout(std430, binding = 2) buffer Results {
+    uint rcount; uint rpad[3]; uint rnonces[8]; uint rhashes[8][8];
+};
+
+uvec2 add64(uvec2 a, uvec2 b) {
+    uint lo = a.x + b.x;
+    uint c = (lo < a.x) ? 1u : 0u;
+    return uvec2(lo, a.y + b.y + c);
+}
+uvec2 sub64(uvec2 a, uvec2 b) {
+    uint lo = a.x - b.x;
+    uint br = (a.x < b.x) ? 1u : 0u;
+    return uvec2(lo, a.y - b.y - br);
+}
+uvec2 xor64(uvec2 a, uvec2 b) { return uvec2(a.x ^ b.x, a.y ^ b.y); }
+uvec2 rotl64(uvec2 x, uint n) {
+    if (n == 0u) return x;
+    if (n == 32u) return uvec2(x.y, x.x);
+    if (n < 32u) {
+        return uvec2((x.x << n) | (x.y >> (32u - n)),
+                     (x.y << n) | (x.x >> (32u - n)));
+    }
+    uint s = 64u - n;
+    return uvec2((x.x >> s) | (x.y << (32u - s)),
+                 (x.y >> s) | (x.x << (32u - s)));
+}
+uvec2 rotr64(uvec2 x, uint n) { return rotl64(x, (64u - n) & 63u); }
+uvec2 shiftl64(uvec2 x, uint n) {
+    if (n == 0u) return x;
+    if (n >= 64u) return uvec2(0u, 0u);
+    if (n >= 32u) return uvec2(0u, x.x << (n - 32u));
+    return uvec2(x.x << n, (x.y << n) | (x.x >> (32u - n)));
+}
+uvec2 umulh64(uvec2 a, uvec2 b) {
+    uint h0, l0;
+    umulExtended(a.x, b.x, h0, l0);
+    uvec2 p1 = uvec2(0u, a.x * b.y);
+    uvec2 p2 = uvec2(0u, a.y * b.x);
+    return add64(add64(uvec2(0u, h0), p1), p2);
+}
+uvec2 smulh64(uvec2 a, uvec2 b) {
+    uvec2 h = umulh64(a, b);
+    if ((a.y & 0x80000000u) != 0u) h = sub64(h, b);
+    if ((b.y & 0x80000000u) != 0u) h = sub64(h, a);
+    return h;
+}
+uvec2 mul64(uvec2 a, uvec2 b) {
+    uint h, l;
+    umulExtended(a.x, b.x, h, l);
+    return uvec2(l, a.x * b.y + a.y * b.x + h);
+}
+
+#define SIPROUND(v0, v1, v2, v3) { v0 = add64(v0, v1); v2 = add64(v2, v3); \
+    v1 = rotl64(v1, 13u); v3 = rotl64(v3, 16u); v1 = xor64(v1, v0); \
+    v3 = xor64(v3, v2); v0 = rotl64(v0, 32u); v2 = add64(v2, v1); \
+    v0 = add64(v0, v3); v1 = rotl64(v1, 17u); v3 = rotl64(v3, 21u); \
+    v1 = xor64(v1, v2); v3 = xor64(v3, v0); v2 = rotl64(v2, 32u); }
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= count) return;
+    uint nonce = base + idx;
+    uvec2 r[8];
+    uvec2 v0 = uvec2(k[0], k[1]);
+    uvec2 v1 = uvec2(k[2], k[3]);
+    uvec2 v2 = uvec2(k[4], k[5]);
+    uvec2 v3 = uvec2(k[6], k[7]);
+    uvec2 nn = uvec2(nonce, 0u);
+
+    v1 = xor64(v1, uvec2(0xeeu, 0u));
+    v3 = xor64(v3, nn);
+    SIPROUND(v0, v1, v2, v3);
+    SIPROUND(v0, v1, v2, v3);
+    v0 = xor64(v0, nn);
+    v2 = xor64(v2, uvec2(0xeeu, 0u));
+    SIPROUND(v0, v1, v2, v3);
+    SIPROUND(v0, v1, v2, v3);
+    SIPROUND(v0, v1, v2, v3);
+    SIPROUND(v0, v1, v2, v3);
+    r[0] = v0; r[1] = v1; r[2] = v2; r[3] = v3;
+    v1 = xor64(v1, uvec2(0xddu, 0u));
+    SIPROUND(v0, v1, v2, v3);
+    SIPROUND(v0, v1, v2, v3);
+    SIPROUND(v0, v1, v2, v3);
+    SIPROUND(v0, v1, v2, v3);
+    r[4] = v0; r[5] = v1; r[6] = v2; r[7] = v3;
+
+    uint result = 0u;
+    uint target = 0u;
+    bool be = true;
+    int i = 0;
+    while (i < int(code_size)) {
+        uvec4 ins = instr[i];
+        uint o = ins.x;
+        uint dst = ins.y;
+        uint src = ins.z;
+        uint imm = ins.w;
+        if (o == 0u) {
+            r[dst] = umulh64(r[dst], r[src]);
+            result = r[dst].x;
+        } else if (o == 1u) {
+            r[dst] = smulh64(r[dst], r[src]);
+            result = r[dst].x;
+        } else if (o == 2u) {
+            r[dst] = mul64(r[dst], r[src]);
+        } else if (o == 3u) {
+            r[dst] = sub64(r[dst], r[src]);
+        } else if (o == 4u) {
+            r[dst] = xor64(r[dst], r[src]);
+        } else if (o == 5u) {
+            r[dst] = add64(r[dst], shiftl64(r[src], imm & 63u));
+        } else if (o == 6u) {
+            r[dst] = rotr64(r[dst], imm & 63u);
+        } else if (o == 7u) {
+            r[dst] = add64(r[dst], uvec2(imm, (int(imm) < 0) ? 0xFFFFFFFFu : 0u));
+        } else if (o == 8u) {
+            r[dst] = xor64(r[dst], uvec2(imm, (int(imm) < 0) ? 0xFFFFFFFFu : 0u));
+        } else if (o == 9u) {
+            target = uint(i);
+        } else if (o == 10u) {
+            if (be && (result & imm) == 0u) {
+                i = int(target);
+                be = false;
+            }
+        }
+        i++;
+    }
+
+    r[0] = add64(r[0], uvec2(k[0], k[1]));
+    r[1] = add64(r[1], uvec2(k[2], k[3]));
+    r[6] = add64(r[6], uvec2(k[4], k[5]));
+    r[7] = add64(r[7], uvec2(k[6], k[7]));
+    v0 = r[0]; v1 = r[1]; v2 = r[2]; v3 = r[3];
+    SIPROUND(v0, v1, v2, v3);
+    r[0] = v0; r[1] = v1; r[2] = v2; r[3] = v3;
+    v0 = r[4]; v1 = r[5]; v2 = r[6]; v3 = r[7];
+    SIPROUND(v0, v1, v2, v3);
+    r[4] = v0; r[5] = v1; r[6] = v2; r[7] = v3;
+    uvec2 w[4];
+    w[0] = xor64(r[0], r[4]);
+    w[1] = xor64(r[1], r[5]);
+    w[2] = xor64(r[2], r[6]);
+    w[3] = xor64(r[3], r[7]);
+
+    uint dg[32];
+    for (uint q = 0u; q < 4u; q++) {
+        uint lo = w[q].x;
+        uint hi = w[q].y;
+        for (uint j = 0u; j < 4u; j++) {
+            dg[8u * q + j] = (lo >> (8u * j)) & 0xffu;
+            dg[8u * q + 4u + j] = (hi >> (8u * j)) & 0xffu;
+        }
+    }
+    bool ok = true;
+    for (uint b = 0u; b < difficulty; b++) {
+        if (((dg[b >> 3u] >> (7u - (b & 7u))) & 1u) != 0u) {
+            ok = false;
+            break;
+        }
+    }
+    if (ok) {
+        uint slot = atomicAdd(rcount, 1u);
+        if (slot < 8u) {
+            rnonces[slot] = nonce;
+            for (uint q = 0u; q < 8u; q++) {
+                rhashes[slot][q] = (dg[4u * q] << 24) | (dg[4u * q + 1u] << 16) |
+                                   (dg[4u * q + 2u] << 8) | dg[4u * q + 3u];
+            }
+        }
+    }
+}

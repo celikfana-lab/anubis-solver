@@ -349,6 +349,19 @@ It is therefore gated behind `ANUBIS_L0_HASHX=1`, not enabled by
 `ANUBIS_GPU_HASHX` (which turns on the CUDA path). Raw data:
 [`results/hashx-levelzero-irisxe.json`](results/hashx-levelzero-irisxe.json).
 
+### HashX on Vulkan
+
+Same interpreter in GLSL with `uvec2` emulation of the 64-bit registers. It is
+correct (same nonces as the CPU) but slower than one CPU thread on the Iris Xe:
+
+| difficulty | CPU (1 thread) | Iris Xe (Vulkan) | ratio |
+|---|---:|---:|---:|
+| d24 | 1402 ms | 2355 ms | 0.60× |
+| d26 | 20020 ms | 26174 ms | 0.76× |
+
+Gated behind `ANUBIS_VULKAN_HASHX=1`. Raw data:
+[`results/hashx-vulkan-irisxe.json`](results/hashx-vulkan-irisxe.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

@@ -83,6 +83,13 @@ int anubis_sha256_midstate(const char *data, size_t len, uint32_t out[8]);
 Which family to call: `nibbles` for `fast`/`slow`, `bits` for
 `sha256`/`wasm-sha256`, `argon2id`, `hashx` respectively.
 
+Argument encoding matters:
+
+- `anubis_solve_nibbles` takes the **raw challenge string** (any bytes).
+- the `bits`, `argon2id` and `hashx` families take the challenge **hex-encoded**
+  (`challenge_hex`), because the site serves it as base64/hex and the solver
+  decodes it first. Passing a non-hex string returns `ANUBIS_ERR_ARG`.
+
 ## Return codes
 
 | value | constant | meaning |

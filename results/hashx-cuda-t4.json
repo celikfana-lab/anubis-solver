@@ -1,0 +1,13 @@
+{
+  "host": {
+    "gpu": "2x Tesla T4 (Kaggle)",
+    "cpu": "one host thread (Xeon @ 2.0 GHz)",
+    "measured": "2026-11-12"
+  },
+  "throughput_mhps": {
+    "d24": {"cpu": 8.65, "gpu": 69.6, "speedup": 8.0},
+    "d26": {"cpu": 8.83, "gpu": 104.5, "speedup": 11.8},
+    "d28": {"cpu": 8.87, "gpu": 108.5, "speedup": 12.2}
+  },
+  "notes": "HashX program interpreted per thread on the GPU; every hit is re-verified by the CPU, and the GPU found the same nonces as the CPU search in a fraction of the time"
+}

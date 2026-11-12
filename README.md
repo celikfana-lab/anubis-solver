@@ -301,6 +301,10 @@ v1.28.2   ok    ok    ok      ok     ok
 [`results/version-matrix.json`](results/version-matrix.json),
 [`results/version-matrix-prereleases.json`](results/version-matrix-prereleases.json).
 
+HashX also has a CUDA backend (`ANUBIS_GPU_HASHX=1`): the generated program is
+interpreted on the GPU, one thread per nonce, ~70-110 MH/s on two T4s versus
+~8.8 MH/s for one CPU thread. Hits are re-verified by the CPU.
+
 ## Tests
 
 ```bash

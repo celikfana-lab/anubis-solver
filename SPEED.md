@@ -312,6 +312,26 @@ On this GPU the Vulkan path is slightly ahead of Level Zero (229/326 h/s vs
 
 Raw data: [`results/argon2id-vulkan-irisxe.json`](results/argon2id-vulkan-irisxe.json).
 
+## HashX on CUDA (opt-in)
+
+The generated HashX program is uploaded once; each CUDA thread expands its
+512-bit register file from the SipHash key + nonce, interprets the program and
+checks the leading zero bits. Every hit is re-verified on the CPU. Enabled with
+`ANUBIS_GPU_HASHX=1`.
+
+2× Tesla T4, 2026-11-12 (CPU column is one host thread):
+
+| difficulty | CPU (1 thread) | 2× T4 | speedup |
+|---|---:|---:|---:|
+| d24 | 795.6 ms | 98.9 ms | 8.0× |
+| d26 | 8910.6 ms | 753.3 ms | 11.8× |
+| d28 | 8879.4 ms | 724.8 ms | 12.2× |
+
+That is ~70–110 MH/s on the pair of T4s versus ~8.8 MH/s for one CPU thread
+(~35 MH/s on four server cores, so still ~3× faster than a 4-thread CPU).
+
+Raw data: [`results/hashx-cuda-t4.json`](results/hashx-cuda-t4.json).
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

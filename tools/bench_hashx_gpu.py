@@ -27,7 +27,7 @@ def main() -> int:
         n, r, ms = solver._native.solve_hashx(ch, d, 1, 0)
         dt = time.perf_counter() - t0
         print(f"{mode} hashx d{d}: wall {dt*1000:8.1f} ms  reported {ms:8.1f} ms"
-              f"  {(n+1)/ms/1e6:7.2f} MH/s (nonce {n})")
+              f"  {(n+1)/(ms/1000.0)/1e6:7.2f} MH/s (nonce {n})")
     return 0
 
 

@@ -1,14 +1,26 @@
 # C API
 
-The shared library is `libanubis_solver.so` (built by `make`). There is no
-installed public header yet; declare the prototypes you use, or copy the block
-below.
+The shared library is `libanubis_solver.so` (built by `make`), and the public
+header is [`include/anubis-solver.h`](../include/anubis-solver.h). It is valid C
+and C++ (`extern "C"` guards), so:
+
+```c
+#include <anubis-solver.h>
+```
+
+```cpp
+#include <anubis-solver.h>   // same header from C++
+```
 
 ## Link against it
 
 ```bash
-cc demo.c -L. -lanubis_solver -Wl,-rpath,'$ORIGIN' -o demo
+cc  demo.c   -Iinclude -L. -lanubis_solver -Wl,-rpath,'$ORIGIN' -o demo
+c++ demo.cpp -Iinclude -L. -lanubis_solver -Wl,-rpath,'$ORIGIN' -o demo
 ```
+
+Complete samples: [`examples/c_demo.c`](../examples/c_demo.c) and
+[`examples/cpp_demo.cpp`](../examples/cpp_demo.cpp).
 
 ## Load it at runtime
 
@@ -24,6 +36,8 @@ int (*solve_nibbles)(const char *, int, int, int64_t, double,
 This is what `anubis_solver.py` does, so it works without headers.
 
 ## Prototypes
+
+The header declares all of the following; the list below mirrors it.
 
 ```c
 #include <stdint.h>

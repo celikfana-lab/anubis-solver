@@ -33,6 +33,11 @@ results/             raw results from the version, speed and CVE runs
 
 ## Documentation
 
+C and C++ users can `#include <anubis-solver.h>` from
+[`include/`](include/anubis-solver.h) — see
+[`examples/c_demo.c`](examples/c_demo.c) and
+[`examples/cpp_demo.cpp`](examples/cpp_demo.cpp).
+
 New here? Start with [BEGINNER.md](BEGINNER.md) — build, quick start, first
 request in a few minutes. The rest lives in [`docs/`](docs/index.md):
 

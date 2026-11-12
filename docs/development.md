@@ -4,6 +4,8 @@
 
 ```
 anubis_solver.py        Python API + CLI (ctypes around the shared library)
+include/anubis-solver.h public C/C++ header (extern "C")
+examples/               Python, C and C++ samples
 src/anubis_solver.c     C core: hashing, search loop, dispatch
 src/hashx.c / hashx.h   HashX generator, interpreter, x86-64/AArch64 JITs
 src/avx2.s, shani.s, avx512.s, neon.s   hand-written SHA-256 kernels

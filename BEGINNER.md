@@ -126,38 +126,40 @@ throughput is in [`docs/gpu.md`](docs/gpu.md) and [`SPEED.md`](SPEED.md).
 
 ---
 
-## 5. Use the C library directly
+## 5. Use it from C or C++
+
+There is a public header: **`include/anubis-solver.h`**. It works for both
+languages (`extern "C"` is included), so C++ users can `#include` it directly.
 
 ```c
 #include <stdio.h>
 #include <stdint.h>
-
-/* prototypes (no public header yet — see docs/c-api.md) */
-int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
-                         int64_t max_nonce, double budget_ms,
-                         uint64_t *out_nonce, char *out_hex, double *out_ms);
-const char *anubis_solver_version(void);
+#include <anubis-solver.h>
 
 int main(void) {
     uint64_t nonce = 0;
-    char hex[65];
-    double ms = 0;
-    int rc = anubis_solve_nibbles("your-challenge-string", 4, 0, 0, 0,
+    char hex[65] = {0};
+    double ms = 0.0;
+
+    int rc = anubis_solve_nibbles("your-challenge-string", 4, 0, 0, 0.0,
                                   &nonce, hex, &ms);
-    printf("rc=%d nonce=%llu %s %.1f ms\n", rc,
-           (unsigned long long)nonce, hex, ms);
+    if (rc != ANUBIS_OK) {
+        fprintf(stderr, "search failed: %d\n", rc);
+        return 1;
+    }
+    printf("nonce %llu -> %s (%.1f ms)\n", (unsigned long long)nonce, hex, ms);
     return 0;
 }
 ```
 
 ```bash
-cc demo.c -L. -lanubis_solver -Wl,-rpath,'$ORIGIN' -o demo && ./demo
+cc  demo.c   -Iinclude -L. -lanubis_solver -Wl,-rpath,"$PWD" -o demo && ./demo
+c++ demo.cpp -Iinclude -L. -lanubis_solver -Wl,-rpath,"$PWD" -o demo && ./demo
 ```
 
-Function reference, the four solve/verify families and the return codes are in
-[`docs/c-api.md`](docs/c-api.md).
-
----
+Runnable samples live in [`examples/c_demo.c`](examples/c_demo.c) and
+[`examples/cpp_demo.cpp`](examples/cpp_demo.cpp). The full function reference,
+return codes and the `dlopen` variant are in [`docs/c-api.md`](docs/c-api.md).
 
 ## 6. Where to go next
 

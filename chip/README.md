@@ -28,8 +28,9 @@ reference implementation:
 | `blake2b_core.v` | **verified** — 2 cycles/round BLAKE2b-512 compression; empty message, 128×`a`, and a non-uniform block all match `hashlib` |
 | `blake2b_stream.v` | **verified** — byte-streaming BLAKE2b (128-byte block buffer, `flush`/`finish` handshake, `t` counter). 0, 3, 64, 112, 128 and 200-byte messages and a τ=32 digest match `hashlib` |
 | `h_prime.v` | **verified** — Argon2's H′ for τ = 1024 (31 chained calls), 96, 64 and 32, over X = 72 and X = 1024 bytes |
+| `h0.v` | **verified** — Argon2's H0: the parameter block, \|P\|, the password stream, the 8-byte salt and the empty K/X lengths, for \|P\| = 1, 26, 96 and T = 32, 64 |
 
-`make sim` runs every testbench. `make stream`, `make hprime` and
+`make sim` runs every testbench. `make stream`, `make hprime`, `make h0` and
 `make blake2b` run the BLAKE2b layers on their own.
 
 The bug that made it report nonce 275: `nblocks` was treated as a flag
@@ -124,9 +125,9 @@ exist to blunt this.
 
 ## Notes / next steps
 
-- The BLAKE2b stack is done: `blake2b_core` → `blake2b_stream` → `h_prime`
-  (H0 itself is still missing: it is a fixed 40-byte prefix + password + salt
-  + lengths, so it needs its own byte sequencer in front of `blake2b_stream`).
+- The BLAKE2b stack is done: `blake2b_core` → `blake2b_stream` → `h0` /
+  `h_prime`, i.e. H0, the 1 KiB lane seeding and the final tag all verify
+  against `hashlib`/`argon2-cffi` inputs.
 - Then the Argon2id top level: the address generator for pass 0 slices 0–1,
   the two-pass fill loop with `index_alpha`, and a 19 MiB memory port (the
   LPDDR6 model is ready for it).

@@ -9,7 +9,8 @@
  *                                 uint8_t out[16][32]);
  *
  * Each lane hashes one padded 64-byte tail block from a shared midstate.
- * Requires AVX-512F (runtime-dispatched in C).
+ * The message schedule lives in zmm16..zmm31 and is updated in place, so
+ * the round loop touches no stack at all. Requires AVX-512F.
  */
 
     .section .rodata
@@ -86,59 +87,55 @@
     .hidden sha256_compress16_avx512
     .type sha256_compress16_avx512, @function
 
-/* w[i] = w[i-16] + s0(w[i-15]) + w[i-7] + s1(w[i-2]) */
-.macro SCHED i
-    vmovdqa32 (\i-15)*64(%rsp), %zmm8
-    vprord  $7, %zmm8, %zmm9
-    vprord  $18, %zmm8, %zmm10
-    vpxord  %zmm10, %zmm9, %zmm9
-    vpsrld  $3, %zmm8, %zmm10
-    vpxord  %zmm10, %zmm9, %zmm9
-    vpaddd  (\i-16)*64(%rsp), %zmm9, %zmm9
-    vpaddd  (\i-7)*64(%rsp), %zmm9, %zmm9
-    vmovdqa32 (\i-2)*64(%rsp), %zmm8
-    vprord  $17, %zmm8, %zmm10
-    vprord  $19, %zmm8, %zmm11
-    vpxord  %zmm11, %zmm10, %zmm10
-    vpsrld  $10, %zmm8, %zmm11
-    vpxord  %zmm11, %zmm10, %zmm10
-    vpaddd  %zmm10, %zmm9, %zmm9
-    vmovdqa32 %zmm9, \i*64(%rsp)
-.endm
-
 /* One SHA-256 round. Afterwards \h holds the new a and \d the new e, so
- * the next round's arguments are rotated right by one. */
-.macro ROUND a,b,c,d,e,f,g,h,wo,ko
+ * the next round's arguments are rotated right by one. \w is a register
+ * holding this round's message word (W+K is the memory operand). */
+.macro ROUND a,b,c,d,e,f,g,h,w,ko
     vprord  $6, \e, %zmm8
     vprord  $11, \e, %zmm9
-    vpxord  %zmm9, %zmm8, %zmm8
-    vprord  $25, \e, %zmm9
-    vpxord  %zmm9, %zmm8, %zmm8          /* S1 */
+    vprord  $25, \e, %zmm10
+    vpternlogd $0x96, %zmm10, %zmm9, %zmm8   /* S1 = ror6^ror11^ror25 */
 
     vmovdqa32 \e, %zmm9
-    vpternlogd $0xCA, \g, \f, %zmm9    /* Ch */
+    vpternlogd $0xCA, \g, \f, %zmm9        /* Ch */
 
     vpaddd  \h, %zmm8, %zmm8
     vpaddd  %zmm9, %zmm8, %zmm8
     vpaddd  .Lavx512_kb+\ko(%rip), %zmm8, %zmm8
-    vpaddd  \wo(%rsp), %zmm8, %zmm8     /* T1 */
+    vpaddd  \w, %zmm8, %zmm8                 /* T1 */
 
     vprord  $2, \a, %zmm10
     vprord  $13, \a, %zmm11
-    vpxord  %zmm11, %zmm10, %zmm10
-    vprord  $22, \a, %zmm11
-    vpxord  %zmm11, %zmm10, %zmm10       /* S0 */
-
+    vprord  $22, \a, %zmm12
+    vpternlogd $0x96, %zmm12, %zmm11, %zmm10 /* S0 */
     vmovdqa32 \a, %zmm11
-    vpternlogd $0xE8, \c, \b, %zmm11   /* Maj */
-    vpaddd  %zmm11, %zmm10, %zmm10       /* T2 */
+    vpternlogd $0xE8, \c, \b, %zmm11       /* Maj */
+    vpaddd  %zmm11, %zmm10, %zmm10           /* T2 */
 
     vpaddd  \d, %zmm8, \d
     vpaddd  %zmm10, %zmm8, \h
 .endm
 
-/* Build one message word across the sixteen lanes. */
-.macro LOADW off, woff
+/* w[i] = w[i-16] + s0(w[i-15]) + w[i-7] + s1(w[i-2]); dst is the register
+ * that held w[i-16] and becomes w[i]. */
+.macro SCHED dst, w15, w7, w2
+    vprord  $7, \w15, %zmm8
+    vprord  $18, \w15, %zmm9
+    vpsrld  $3, \w15, %zmm10
+    vpternlogd $0x96, %zmm10, %zmm9, %zmm8   /* s0 */
+
+    vprord  $17, \w2, %zmm9
+    vprord  $19, \w2, %zmm10
+    vpsrld  $10, \w2, %zmm11
+    vpternlogd $0x96, %zmm11, %zmm10, %zmm9  /* s1 */
+
+    vpaddd  \dst, %zmm8, %zmm8
+    vpaddd  \w7, %zmm8, %zmm8
+    vpaddd  %zmm9, %zmm8, \dst
+.endm
+
+/* Build one message word across the sixteen lanes into \dst. */
+.macro LOADW off, dst
     movl    \off+0(%rsi), %eax
     bswap   %eax
     vmovd   %eax, %xmm8
@@ -196,81 +193,31 @@
     vinserti32x4 $1, %xmm9, %zmm12, %zmm12
     vinserti32x4 $2, %xmm10, %zmm12, %zmm12
     vinserti32x4 $3, %xmm11, %zmm12, %zmm12
-    vmovdqa32 %zmm12, \woff(%rsp)
+    vmovdqa32 %zmm12, \dst
 .endm
 
 sha256_compress16_avx512:
     pushq   %rbp
     movq    %rsp, %rbp
     andq    $-64, %rsp
-    subq    $8192, %rsp
+    subq    $1024, %rsp
 
-    LOADW 0, 0
-    LOADW 4, 64
-    LOADW 8, 128
-    LOADW 12, 192
-    LOADW 16, 256
-    LOADW 20, 320
-    LOADW 24, 384
-    LOADW 28, 448
-    LOADW 32, 512
-    LOADW 36, 576
-    LOADW 40, 640
-    LOADW 44, 704
-    LOADW 48, 768
-    LOADW 52, 832
-    LOADW 56, 896
-    LOADW 60, 960
-
-    /* message schedule */
-    SCHED 16
-    SCHED 17
-    SCHED 18
-    SCHED 19
-    SCHED 20
-    SCHED 21
-    SCHED 22
-    SCHED 23
-    SCHED 24
-    SCHED 25
-    SCHED 26
-    SCHED 27
-    SCHED 28
-    SCHED 29
-    SCHED 30
-    SCHED 31
-    SCHED 32
-    SCHED 33
-    SCHED 34
-    SCHED 35
-    SCHED 36
-    SCHED 37
-    SCHED 38
-    SCHED 39
-    SCHED 40
-    SCHED 41
-    SCHED 42
-    SCHED 43
-    SCHED 44
-    SCHED 45
-    SCHED 46
-    SCHED 47
-    SCHED 48
-    SCHED 49
-    SCHED 50
-    SCHED 51
-    SCHED 52
-    SCHED 53
-    SCHED 54
-    SCHED 55
-    SCHED 56
-    SCHED 57
-    SCHED 58
-    SCHED 59
-    SCHED 60
-    SCHED 61
-    SCHED 62
-    SCHED 63
+    LOADW 0, %zmm16
+    LOADW 4, %zmm17
+    LOADW 8, %zmm18
+    LOADW 12, %zmm19
+    LOADW 16, %zmm20
+    LOADW 20, %zmm21
+    LOADW 24, %zmm22
+    LOADW 28, %zmm23
+    LOADW 32, %zmm24
+    LOADW 36, %zmm25
+    LOADW 40, %zmm26
+    LOADW 44, %zmm27
+    LOADW 48, %zmm28
+    LOADW 52, %zmm29
+    LOADW 56, %zmm30
+    LOADW 60, %zmm31
 
     /* initial state */
     vmovd   0(%rdi), %xmm8
@@ -290,71 +237,119 @@ sha256_compress16_avx512:
     vmovd   28(%rdi), %xmm8
     vpbroadcastd %xmm8, %zmm7
 
-    /* 64 rounds, register roles rotated */
-    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,0,0
-    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,64,64
-    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,128,128
-    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,192,192
-    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,256,256
-    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,320,320
-    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,384,384
-    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,448,448
-    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,512,512
-    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,576,576
-    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,640,640
-    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,704,704
-    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,768,768
-    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,832,832
-    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,896,896
-    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,960,960
-    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,1024,1024
-    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,1088,1088
-    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,1152,1152
-    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,1216,1216
-    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,1280,1280
-    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,1344,1344
-    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,1408,1408
-    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,1472,1472
-    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,1536,1536
-    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,1600,1600
-    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,1664,1664
-    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,1728,1728
-    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,1792,1792
-    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,1856,1856
-    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,1920,1920
-    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,1984,1984
-    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,2048,2048
-    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,2112,2112
-    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,2176,2176
-    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,2240,2240
-    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,2304,2304
-    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,2368,2368
-    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,2432,2432
-    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,2496,2496
-    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,2560,2560
-    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,2624,2624
-    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,2688,2688
-    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,2752,2752
-    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,2816,2816
-    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,2880,2880
-    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,2944,2944
-    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,3008,3008
-    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,3072,3072
-    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,3136,3136
-    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,3200,3200
-    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,3264,3264
-    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,3328,3328
-    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,3392,3392
-    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,3456,3456
-    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,3520,3520
-    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,3584,3584
-    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,3648,3648
-    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,3712,3712
-    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,3776,3776
-    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,3840,3840
-    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,3904,3904
-    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,3968,3968
-    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,4032,4032
+    /* 64 rounds: schedule updated in place, roles rotated */
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm16,0
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm17,64
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm18,128
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm19,192
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm20,256
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm21,320
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm22,384
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm23,448
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm24,512
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm25,576
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm26,640
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm27,704
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm28,768
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm29,832
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm30,896
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm31,960
+    SCHED %zmm16, %zmm17, %zmm25, %zmm30
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm16,1024
+    SCHED %zmm17, %zmm18, %zmm26, %zmm31
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm17,1088
+    SCHED %zmm18, %zmm19, %zmm27, %zmm16
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm18,1152
+    SCHED %zmm19, %zmm20, %zmm28, %zmm17
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm19,1216
+    SCHED %zmm20, %zmm21, %zmm29, %zmm18
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm20,1280
+    SCHED %zmm21, %zmm22, %zmm30, %zmm19
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm21,1344
+    SCHED %zmm22, %zmm23, %zmm31, %zmm20
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm22,1408
+    SCHED %zmm23, %zmm24, %zmm16, %zmm21
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm23,1472
+    SCHED %zmm24, %zmm25, %zmm17, %zmm22
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm24,1536
+    SCHED %zmm25, %zmm26, %zmm18, %zmm23
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm25,1600
+    SCHED %zmm26, %zmm27, %zmm19, %zmm24
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm26,1664
+    SCHED %zmm27, %zmm28, %zmm20, %zmm25
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm27,1728
+    SCHED %zmm28, %zmm29, %zmm21, %zmm26
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm28,1792
+    SCHED %zmm29, %zmm30, %zmm22, %zmm27
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm29,1856
+    SCHED %zmm30, %zmm31, %zmm23, %zmm28
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm30,1920
+    SCHED %zmm31, %zmm16, %zmm24, %zmm29
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm31,1984
+    SCHED %zmm16, %zmm17, %zmm25, %zmm30
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm16,2048
+    SCHED %zmm17, %zmm18, %zmm26, %zmm31
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm17,2112
+    SCHED %zmm18, %zmm19, %zmm27, %zmm16
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm18,2176
+    SCHED %zmm19, %zmm20, %zmm28, %zmm17
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm19,2240
+    SCHED %zmm20, %zmm21, %zmm29, %zmm18
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm20,2304
+    SCHED %zmm21, %zmm22, %zmm30, %zmm19
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm21,2368
+    SCHED %zmm22, %zmm23, %zmm31, %zmm20
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm22,2432
+    SCHED %zmm23, %zmm24, %zmm16, %zmm21
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm23,2496
+    SCHED %zmm24, %zmm25, %zmm17, %zmm22
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm24,2560
+    SCHED %zmm25, %zmm26, %zmm18, %zmm23
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm25,2624
+    SCHED %zmm26, %zmm27, %zmm19, %zmm24
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm26,2688
+    SCHED %zmm27, %zmm28, %zmm20, %zmm25
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm27,2752
+    SCHED %zmm28, %zmm29, %zmm21, %zmm26
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm28,2816
+    SCHED %zmm29, %zmm30, %zmm22, %zmm27
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm29,2880
+    SCHED %zmm30, %zmm31, %zmm23, %zmm28
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm30,2944
+    SCHED %zmm31, %zmm16, %zmm24, %zmm29
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm31,3008
+    SCHED %zmm16, %zmm17, %zmm25, %zmm30
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm16,3072
+    SCHED %zmm17, %zmm18, %zmm26, %zmm31
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm17,3136
+    SCHED %zmm18, %zmm19, %zmm27, %zmm16
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm18,3200
+    SCHED %zmm19, %zmm20, %zmm28, %zmm17
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm19,3264
+    SCHED %zmm20, %zmm21, %zmm29, %zmm18
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm20,3328
+    SCHED %zmm21, %zmm22, %zmm30, %zmm19
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm21,3392
+    SCHED %zmm22, %zmm23, %zmm31, %zmm20
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm22,3456
+    SCHED %zmm23, %zmm24, %zmm16, %zmm21
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm23,3520
+    SCHED %zmm24, %zmm25, %zmm17, %zmm22
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm24,3584
+    SCHED %zmm25, %zmm26, %zmm18, %zmm23
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm25,3648
+    SCHED %zmm26, %zmm27, %zmm19, %zmm24
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm26,3712
+    SCHED %zmm27, %zmm28, %zmm20, %zmm25
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm27,3776
+    SCHED %zmm28, %zmm29, %zmm21, %zmm26
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm28,3840
+    SCHED %zmm29, %zmm30, %zmm22, %zmm27
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm29,3904
+    SCHED %zmm30, %zmm31, %zmm23, %zmm28
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm30,3968
+    SCHED %zmm31, %zmm16, %zmm24, %zmm29
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm31,4032
 
     /* add the prefix midstate */
     vmovd   0(%rdi), %xmm8
@@ -383,396 +378,396 @@ sha256_compress16_avx512:
     vpaddd  %zmm8, %zmm7, %zmm7
 
     /* spill the state and write big-endian lane digests */
-    vmovdqa32 %zmm0, 4096(%rsp)
-    vmovdqa32 %zmm1, 4160(%rsp)
-    vmovdqa32 %zmm2, 4224(%rsp)
-    vmovdqa32 %zmm3, 4288(%rsp)
-    vmovdqa32 %zmm4, 4352(%rsp)
-    vmovdqa32 %zmm5, 4416(%rsp)
-    vmovdqa32 %zmm6, 4480(%rsp)
-    vmovdqa32 %zmm7, 4544(%rsp)
-    movl    4096(%rsp), %eax
+    vmovdqa32 %zmm0, 0(%rsp)
+    vmovdqa32 %zmm1, 64(%rsp)
+    vmovdqa32 %zmm2, 128(%rsp)
+    vmovdqa32 %zmm3, 192(%rsp)
+    vmovdqa32 %zmm4, 256(%rsp)
+    vmovdqa32 %zmm5, 320(%rsp)
+    vmovdqa32 %zmm6, 384(%rsp)
+    vmovdqa32 %zmm7, 448(%rsp)
+    movl    0(%rsp), %eax
     bswap   %eax
     movl    %eax, 0(%rdx)
-    movl    4160(%rsp), %eax
+    movl    64(%rsp), %eax
     bswap   %eax
     movl    %eax, 4(%rdx)
-    movl    4224(%rsp), %eax
+    movl    128(%rsp), %eax
     bswap   %eax
     movl    %eax, 8(%rdx)
-    movl    4288(%rsp), %eax
+    movl    192(%rsp), %eax
     bswap   %eax
     movl    %eax, 12(%rdx)
-    movl    4352(%rsp), %eax
+    movl    256(%rsp), %eax
     bswap   %eax
     movl    %eax, 16(%rdx)
-    movl    4416(%rsp), %eax
+    movl    320(%rsp), %eax
     bswap   %eax
     movl    %eax, 20(%rdx)
-    movl    4480(%rsp), %eax
+    movl    384(%rsp), %eax
     bswap   %eax
     movl    %eax, 24(%rdx)
-    movl    4544(%rsp), %eax
+    movl    448(%rsp), %eax
     bswap   %eax
     movl    %eax, 28(%rdx)
-    movl    4100(%rsp), %eax
+    movl    4(%rsp), %eax
     bswap   %eax
     movl    %eax, 32(%rdx)
-    movl    4164(%rsp), %eax
+    movl    68(%rsp), %eax
     bswap   %eax
     movl    %eax, 36(%rdx)
-    movl    4228(%rsp), %eax
+    movl    132(%rsp), %eax
     bswap   %eax
     movl    %eax, 40(%rdx)
-    movl    4292(%rsp), %eax
+    movl    196(%rsp), %eax
     bswap   %eax
     movl    %eax, 44(%rdx)
-    movl    4356(%rsp), %eax
+    movl    260(%rsp), %eax
     bswap   %eax
     movl    %eax, 48(%rdx)
-    movl    4420(%rsp), %eax
+    movl    324(%rsp), %eax
     bswap   %eax
     movl    %eax, 52(%rdx)
-    movl    4484(%rsp), %eax
+    movl    388(%rsp), %eax
     bswap   %eax
     movl    %eax, 56(%rdx)
-    movl    4548(%rsp), %eax
+    movl    452(%rsp), %eax
     bswap   %eax
     movl    %eax, 60(%rdx)
-    movl    4104(%rsp), %eax
+    movl    8(%rsp), %eax
     bswap   %eax
     movl    %eax, 64(%rdx)
-    movl    4168(%rsp), %eax
+    movl    72(%rsp), %eax
     bswap   %eax
     movl    %eax, 68(%rdx)
-    movl    4232(%rsp), %eax
+    movl    136(%rsp), %eax
     bswap   %eax
     movl    %eax, 72(%rdx)
-    movl    4296(%rsp), %eax
+    movl    200(%rsp), %eax
     bswap   %eax
     movl    %eax, 76(%rdx)
-    movl    4360(%rsp), %eax
+    movl    264(%rsp), %eax
     bswap   %eax
     movl    %eax, 80(%rdx)
-    movl    4424(%rsp), %eax
+    movl    328(%rsp), %eax
     bswap   %eax
     movl    %eax, 84(%rdx)
-    movl    4488(%rsp), %eax
+    movl    392(%rsp), %eax
     bswap   %eax
     movl    %eax, 88(%rdx)
-    movl    4552(%rsp), %eax
+    movl    456(%rsp), %eax
     bswap   %eax
     movl    %eax, 92(%rdx)
-    movl    4108(%rsp), %eax
+    movl    12(%rsp), %eax
     bswap   %eax
     movl    %eax, 96(%rdx)
-    movl    4172(%rsp), %eax
+    movl    76(%rsp), %eax
     bswap   %eax
     movl    %eax, 100(%rdx)
-    movl    4236(%rsp), %eax
+    movl    140(%rsp), %eax
     bswap   %eax
     movl    %eax, 104(%rdx)
-    movl    4300(%rsp), %eax
+    movl    204(%rsp), %eax
     bswap   %eax
     movl    %eax, 108(%rdx)
-    movl    4364(%rsp), %eax
+    movl    268(%rsp), %eax
     bswap   %eax
     movl    %eax, 112(%rdx)
-    movl    4428(%rsp), %eax
+    movl    332(%rsp), %eax
     bswap   %eax
     movl    %eax, 116(%rdx)
-    movl    4492(%rsp), %eax
+    movl    396(%rsp), %eax
     bswap   %eax
     movl    %eax, 120(%rdx)
-    movl    4556(%rsp), %eax
+    movl    460(%rsp), %eax
     bswap   %eax
     movl    %eax, 124(%rdx)
-    movl    4112(%rsp), %eax
+    movl    16(%rsp), %eax
     bswap   %eax
     movl    %eax, 128(%rdx)
-    movl    4176(%rsp), %eax
+    movl    80(%rsp), %eax
     bswap   %eax
     movl    %eax, 132(%rdx)
-    movl    4240(%rsp), %eax
+    movl    144(%rsp), %eax
     bswap   %eax
     movl    %eax, 136(%rdx)
-    movl    4304(%rsp), %eax
+    movl    208(%rsp), %eax
     bswap   %eax
     movl    %eax, 140(%rdx)
-    movl    4368(%rsp), %eax
+    movl    272(%rsp), %eax
     bswap   %eax
     movl    %eax, 144(%rdx)
-    movl    4432(%rsp), %eax
+    movl    336(%rsp), %eax
     bswap   %eax
     movl    %eax, 148(%rdx)
-    movl    4496(%rsp), %eax
+    movl    400(%rsp), %eax
     bswap   %eax
     movl    %eax, 152(%rdx)
-    movl    4560(%rsp), %eax
+    movl    464(%rsp), %eax
     bswap   %eax
     movl    %eax, 156(%rdx)
-    movl    4116(%rsp), %eax
+    movl    20(%rsp), %eax
     bswap   %eax
     movl    %eax, 160(%rdx)
-    movl    4180(%rsp), %eax
+    movl    84(%rsp), %eax
     bswap   %eax
     movl    %eax, 164(%rdx)
-    movl    4244(%rsp), %eax
+    movl    148(%rsp), %eax
     bswap   %eax
     movl    %eax, 168(%rdx)
-    movl    4308(%rsp), %eax
+    movl    212(%rsp), %eax
     bswap   %eax
     movl    %eax, 172(%rdx)
-    movl    4372(%rsp), %eax
+    movl    276(%rsp), %eax
     bswap   %eax
     movl    %eax, 176(%rdx)
-    movl    4436(%rsp), %eax
+    movl    340(%rsp), %eax
     bswap   %eax
     movl    %eax, 180(%rdx)
-    movl    4500(%rsp), %eax
+    movl    404(%rsp), %eax
     bswap   %eax
     movl    %eax, 184(%rdx)
-    movl    4564(%rsp), %eax
+    movl    468(%rsp), %eax
     bswap   %eax
     movl    %eax, 188(%rdx)
-    movl    4120(%rsp), %eax
+    movl    24(%rsp), %eax
     bswap   %eax
     movl    %eax, 192(%rdx)
-    movl    4184(%rsp), %eax
+    movl    88(%rsp), %eax
     bswap   %eax
     movl    %eax, 196(%rdx)
-    movl    4248(%rsp), %eax
+    movl    152(%rsp), %eax
     bswap   %eax
     movl    %eax, 200(%rdx)
-    movl    4312(%rsp), %eax
+    movl    216(%rsp), %eax
     bswap   %eax
     movl    %eax, 204(%rdx)
-    movl    4376(%rsp), %eax
+    movl    280(%rsp), %eax
     bswap   %eax
     movl    %eax, 208(%rdx)
-    movl    4440(%rsp), %eax
+    movl    344(%rsp), %eax
     bswap   %eax
     movl    %eax, 212(%rdx)
-    movl    4504(%rsp), %eax
+    movl    408(%rsp), %eax
     bswap   %eax
     movl    %eax, 216(%rdx)
-    movl    4568(%rsp), %eax
+    movl    472(%rsp), %eax
     bswap   %eax
     movl    %eax, 220(%rdx)
-    movl    4124(%rsp), %eax
+    movl    28(%rsp), %eax
     bswap   %eax
     movl    %eax, 224(%rdx)
-    movl    4188(%rsp), %eax
+    movl    92(%rsp), %eax
     bswap   %eax
     movl    %eax, 228(%rdx)
-    movl    4252(%rsp), %eax
+    movl    156(%rsp), %eax
     bswap   %eax
     movl    %eax, 232(%rdx)
-    movl    4316(%rsp), %eax
+    movl    220(%rsp), %eax
     bswap   %eax
     movl    %eax, 236(%rdx)
-    movl    4380(%rsp), %eax
+    movl    284(%rsp), %eax
     bswap   %eax
     movl    %eax, 240(%rdx)
-    movl    4444(%rsp), %eax
+    movl    348(%rsp), %eax
     bswap   %eax
     movl    %eax, 244(%rdx)
-    movl    4508(%rsp), %eax
+    movl    412(%rsp), %eax
     bswap   %eax
     movl    %eax, 248(%rdx)
-    movl    4572(%rsp), %eax
+    movl    476(%rsp), %eax
     bswap   %eax
     movl    %eax, 252(%rdx)
-    movl    4128(%rsp), %eax
+    movl    32(%rsp), %eax
     bswap   %eax
     movl    %eax, 256(%rdx)
-    movl    4192(%rsp), %eax
+    movl    96(%rsp), %eax
     bswap   %eax
     movl    %eax, 260(%rdx)
-    movl    4256(%rsp), %eax
+    movl    160(%rsp), %eax
     bswap   %eax
     movl    %eax, 264(%rdx)
-    movl    4320(%rsp), %eax
+    movl    224(%rsp), %eax
     bswap   %eax
     movl    %eax, 268(%rdx)
-    movl    4384(%rsp), %eax
+    movl    288(%rsp), %eax
     bswap   %eax
     movl    %eax, 272(%rdx)
-    movl    4448(%rsp), %eax
+    movl    352(%rsp), %eax
     bswap   %eax
     movl    %eax, 276(%rdx)
-    movl    4512(%rsp), %eax
+    movl    416(%rsp), %eax
     bswap   %eax
     movl    %eax, 280(%rdx)
-    movl    4576(%rsp), %eax
+    movl    480(%rsp), %eax
     bswap   %eax
     movl    %eax, 284(%rdx)
-    movl    4132(%rsp), %eax
+    movl    36(%rsp), %eax
     bswap   %eax
     movl    %eax, 288(%rdx)
-    movl    4196(%rsp), %eax
+    movl    100(%rsp), %eax
     bswap   %eax
     movl    %eax, 292(%rdx)
-    movl    4260(%rsp), %eax
+    movl    164(%rsp), %eax
     bswap   %eax
     movl    %eax, 296(%rdx)
-    movl    4324(%rsp), %eax
+    movl    228(%rsp), %eax
     bswap   %eax
     movl    %eax, 300(%rdx)
-    movl    4388(%rsp), %eax
+    movl    292(%rsp), %eax
     bswap   %eax
     movl    %eax, 304(%rdx)
-    movl    4452(%rsp), %eax
+    movl    356(%rsp), %eax
     bswap   %eax
     movl    %eax, 308(%rdx)
-    movl    4516(%rsp), %eax
+    movl    420(%rsp), %eax
     bswap   %eax
     movl    %eax, 312(%rdx)
-    movl    4580(%rsp), %eax
+    movl    484(%rsp), %eax
     bswap   %eax
     movl    %eax, 316(%rdx)
-    movl    4136(%rsp), %eax
+    movl    40(%rsp), %eax
     bswap   %eax
     movl    %eax, 320(%rdx)
-    movl    4200(%rsp), %eax
+    movl    104(%rsp), %eax
     bswap   %eax
     movl    %eax, 324(%rdx)
-    movl    4264(%rsp), %eax
+    movl    168(%rsp), %eax
     bswap   %eax
     movl    %eax, 328(%rdx)
-    movl    4328(%rsp), %eax
+    movl    232(%rsp), %eax
     bswap   %eax
     movl    %eax, 332(%rdx)
-    movl    4392(%rsp), %eax
+    movl    296(%rsp), %eax
     bswap   %eax
     movl    %eax, 336(%rdx)
-    movl    4456(%rsp), %eax
+    movl    360(%rsp), %eax
     bswap   %eax
     movl    %eax, 340(%rdx)
-    movl    4520(%rsp), %eax
+    movl    424(%rsp), %eax
     bswap   %eax
     movl    %eax, 344(%rdx)
-    movl    4584(%rsp), %eax
+    movl    488(%rsp), %eax
     bswap   %eax
     movl    %eax, 348(%rdx)
-    movl    4140(%rsp), %eax
+    movl    44(%rsp), %eax
     bswap   %eax
     movl    %eax, 352(%rdx)
-    movl    4204(%rsp), %eax
+    movl    108(%rsp), %eax
     bswap   %eax
     movl    %eax, 356(%rdx)
-    movl    4268(%rsp), %eax
+    movl    172(%rsp), %eax
     bswap   %eax
     movl    %eax, 360(%rdx)
-    movl    4332(%rsp), %eax
+    movl    236(%rsp), %eax
     bswap   %eax
     movl    %eax, 364(%rdx)
-    movl    4396(%rsp), %eax
+    movl    300(%rsp), %eax
     bswap   %eax
     movl    %eax, 368(%rdx)
-    movl    4460(%rsp), %eax
+    movl    364(%rsp), %eax
     bswap   %eax
     movl    %eax, 372(%rdx)
-    movl    4524(%rsp), %eax
+    movl    428(%rsp), %eax
     bswap   %eax
     movl    %eax, 376(%rdx)
-    movl    4588(%rsp), %eax
+    movl    492(%rsp), %eax
     bswap   %eax
     movl    %eax, 380(%rdx)
-    movl    4144(%rsp), %eax
+    movl    48(%rsp), %eax
     bswap   %eax
     movl    %eax, 384(%rdx)
-    movl    4208(%rsp), %eax
+    movl    112(%rsp), %eax
     bswap   %eax
     movl    %eax, 388(%rdx)
-    movl    4272(%rsp), %eax
+    movl    176(%rsp), %eax
     bswap   %eax
     movl    %eax, 392(%rdx)
-    movl    4336(%rsp), %eax
+    movl    240(%rsp), %eax
     bswap   %eax
     movl    %eax, 396(%rdx)
-    movl    4400(%rsp), %eax
+    movl    304(%rsp), %eax
     bswap   %eax
     movl    %eax, 400(%rdx)
-    movl    4464(%rsp), %eax
+    movl    368(%rsp), %eax
     bswap   %eax
     movl    %eax, 404(%rdx)
-    movl    4528(%rsp), %eax
+    movl    432(%rsp), %eax
     bswap   %eax
     movl    %eax, 408(%rdx)
-    movl    4592(%rsp), %eax
+    movl    496(%rsp), %eax
     bswap   %eax
     movl    %eax, 412(%rdx)
-    movl    4148(%rsp), %eax
+    movl    52(%rsp), %eax
     bswap   %eax
     movl    %eax, 416(%rdx)
-    movl    4212(%rsp), %eax
+    movl    116(%rsp), %eax
     bswap   %eax
     movl    %eax, 420(%rdx)
-    movl    4276(%rsp), %eax
+    movl    180(%rsp), %eax
     bswap   %eax
     movl    %eax, 424(%rdx)
-    movl    4340(%rsp), %eax
+    movl    244(%rsp), %eax
     bswap   %eax
     movl    %eax, 428(%rdx)
-    movl    4404(%rsp), %eax
+    movl    308(%rsp), %eax
     bswap   %eax
     movl    %eax, 432(%rdx)
-    movl    4468(%rsp), %eax
+    movl    372(%rsp), %eax
     bswap   %eax
     movl    %eax, 436(%rdx)
-    movl    4532(%rsp), %eax
+    movl    436(%rsp), %eax
     bswap   %eax
     movl    %eax, 440(%rdx)
-    movl    4596(%rsp), %eax
+    movl    500(%rsp), %eax
     bswap   %eax
     movl    %eax, 444(%rdx)
-    movl    4152(%rsp), %eax
+    movl    56(%rsp), %eax
     bswap   %eax
     movl    %eax, 448(%rdx)
-    movl    4216(%rsp), %eax
+    movl    120(%rsp), %eax
     bswap   %eax
     movl    %eax, 452(%rdx)
-    movl    4280(%rsp), %eax
+    movl    184(%rsp), %eax
     bswap   %eax
     movl    %eax, 456(%rdx)
-    movl    4344(%rsp), %eax
+    movl    248(%rsp), %eax
     bswap   %eax
     movl    %eax, 460(%rdx)
-    movl    4408(%rsp), %eax
+    movl    312(%rsp), %eax
     bswap   %eax
     movl    %eax, 464(%rdx)
-    movl    4472(%rsp), %eax
+    movl    376(%rsp), %eax
     bswap   %eax
     movl    %eax, 468(%rdx)
-    movl    4536(%rsp), %eax
+    movl    440(%rsp), %eax
     bswap   %eax
     movl    %eax, 472(%rdx)
-    movl    4600(%rsp), %eax
+    movl    504(%rsp), %eax
     bswap   %eax
     movl    %eax, 476(%rdx)
-    movl    4156(%rsp), %eax
+    movl    60(%rsp), %eax
     bswap   %eax
     movl    %eax, 480(%rdx)
-    movl    4220(%rsp), %eax
+    movl    124(%rsp), %eax
     bswap   %eax
     movl    %eax, 484(%rdx)
-    movl    4284(%rsp), %eax
+    movl    188(%rsp), %eax
     bswap   %eax
     movl    %eax, 488(%rdx)
-    movl    4348(%rsp), %eax
+    movl    252(%rsp), %eax
     bswap   %eax
     movl    %eax, 492(%rdx)
-    movl    4412(%rsp), %eax
+    movl    316(%rsp), %eax
     bswap   %eax
     movl    %eax, 496(%rdx)
-    movl    4476(%rsp), %eax
+    movl    380(%rsp), %eax
     bswap   %eax
     movl    %eax, 500(%rdx)
-    movl    4540(%rsp), %eax
+    movl    444(%rsp), %eax
     bswap   %eax
     movl    %eax, 504(%rdx)
-    movl    4604(%rsp), %eax
+    movl    508(%rsp), %eax
     bswap   %eax
     movl    %eax, 508(%rdx)
 

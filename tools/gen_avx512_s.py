@@ -2,18 +2,18 @@
 """
 Generate avx512.s: a 16-way AVX-512 SHA-256 compression kernel.
 
-Our own assembly. The repetitive parts (48 schedule steps, 64 rounds with
-rotating register names) are expanded here so the .s stays reviewable.
+Our own assembly. Repetitive parts are expanded here; the round and schedule
+macros are written once.
 
     void sha256_compress16_avx512(const uint32_t mid[8],
                                   const uint8_t tails[16][64],
                                   uint8_t out[16][32]);
 
-16 lanes in zmm registers (one dword per lane). State in zmm0..7, temps in
-zmm8..11, message schedule in a 4 KiB stack frame. Uses AVX-512F only:
-vprord for the rotates and vpternlogd for Ch/Maj.
-
-Calling convention: SysV AMD64 (rdi, rsi, rdx).
+Layout: 16 lanes in zmm registers (one dword per lane).
+  zmm0..7    SHA-256 state a..h
+  zmm8..12   round/schedule temporaries
+  zmm16..31  the 16-word message schedule (register-resident ring)
+Only AVX-512F is used; vpternlogd computes the 3-way XOR rotates and Ch/Maj.
 """
 
 from pathlib import Path
@@ -30,7 +30,8 @@ HEADER = """\
  *                                 uint8_t out[16][32]);
  *
  * Each lane hashes one padded 64-byte tail block from a shared midstate.
- * Requires AVX-512F (runtime-dispatched in C).
+ * The message schedule lives in zmm16..zmm31 and is updated in place, so
+ * the round loop touches no stack at all. Requires AVX-512F.
  */
 
     .section .rodata
@@ -58,59 +59,55 @@ PROLOGUE = """
     .hidden sha256_compress16_avx512
     .type sha256_compress16_avx512, @function
 
-/* w[i] = w[i-16] + s0(w[i-15]) + w[i-7] + s1(w[i-2]) */
-.macro SCHED i
-    vmovdqa32 (\\i-15)*64(%rsp), %zmm8
-    vprord  $7, %zmm8, %zmm9
-    vprord  $18, %zmm8, %zmm10
-    vpxord  %zmm10, %zmm9, %zmm9
-    vpsrld  $3, %zmm8, %zmm10
-    vpxord  %zmm10, %zmm9, %zmm9
-    vpaddd  (\\i-16)*64(%rsp), %zmm9, %zmm9
-    vpaddd  (\\i-7)*64(%rsp), %zmm9, %zmm9
-    vmovdqa32 (\\i-2)*64(%rsp), %zmm8
-    vprord  $17, %zmm8, %zmm10
-    vprord  $19, %zmm8, %zmm11
-    vpxord  %zmm11, %zmm10, %zmm10
-    vpsrld  $10, %zmm8, %zmm11
-    vpxord  %zmm11, %zmm10, %zmm10
-    vpaddd  %zmm10, %zmm9, %zmm9
-    vmovdqa32 %zmm9, \\i*64(%rsp)
-.endm
-
 /* One SHA-256 round. Afterwards \\h holds the new a and \\d the new e, so
- * the next round's arguments are rotated right by one. */
-.macro ROUND a,b,c,d,e,f,g,h,wo,ko
+ * the next round's arguments are rotated right by one. \\w is a register
+ * holding this round's message word (W+K is the memory operand). */
+.macro ROUND a,b,c,d,e,f,g,h,w,ko
     vprord  $6, \\e, %zmm8
     vprord  $11, \\e, %zmm9
-    vpxord  %zmm9, %zmm8, %zmm8
-    vprord  $25, \\e, %zmm9
-    vpxord  %zmm9, %zmm8, %zmm8          /* S1 */
+    vprord  $25, \\e, %zmm10
+    vpternlogd $0x96, %zmm10, %zmm9, %zmm8   /* S1 = ror6^ror11^ror25 */
 
     vmovdqa32 \\e, %zmm9
-    vpternlogd $0xCA, \\g, \\f, %zmm9    /* Ch */
+    vpternlogd $0xCA, \\g, \\f, %zmm9        /* Ch */
 
     vpaddd  \\h, %zmm8, %zmm8
     vpaddd  %zmm9, %zmm8, %zmm8
     vpaddd  .Lavx512_kb+\\ko(%rip), %zmm8, %zmm8
-    vpaddd  \\wo(%rsp), %zmm8, %zmm8     /* T1 */
+    vpaddd  \\w, %zmm8, %zmm8                 /* T1 */
 
     vprord  $2, \\a, %zmm10
     vprord  $13, \\a, %zmm11
-    vpxord  %zmm11, %zmm10, %zmm10
-    vprord  $22, \\a, %zmm11
-    vpxord  %zmm11, %zmm10, %zmm10       /* S0 */
-
+    vprord  $22, \\a, %zmm12
+    vpternlogd $0x96, %zmm12, %zmm11, %zmm10 /* S0 */
     vmovdqa32 \\a, %zmm11
-    vpternlogd $0xE8, \\c, \\b, %zmm11   /* Maj */
-    vpaddd  %zmm11, %zmm10, %zmm10       /* T2 */
+    vpternlogd $0xE8, \\c, \\b, %zmm11       /* Maj */
+    vpaddd  %zmm11, %zmm10, %zmm10           /* T2 */
 
     vpaddd  \\d, %zmm8, \\d
     vpaddd  %zmm10, %zmm8, \\h
 .endm
 
-/* Build one message word across the sixteen lanes. */
-.macro LOADW off, woff
+/* w[i] = w[i-16] + s0(w[i-15]) + w[i-7] + s1(w[i-2]); dst is the register
+ * that held w[i-16] and becomes w[i]. */
+.macro SCHED dst, w15, w7, w2
+    vprord  $7, \\w15, %zmm8
+    vprord  $18, \\w15, %zmm9
+    vpsrld  $3, \\w15, %zmm10
+    vpternlogd $0x96, %zmm10, %zmm9, %zmm8   /* s0 */
+
+    vprord  $17, \\w2, %zmm9
+    vprord  $19, \\w2, %zmm10
+    vpsrld  $10, \\w2, %zmm11
+    vpternlogd $0x96, %zmm11, %zmm10, %zmm9  /* s1 */
+
+    vpaddd  \\dst, %zmm8, %zmm8
+    vpaddd  \\w7, %zmm8, %zmm8
+    vpaddd  %zmm9, %zmm8, \\dst
+.endm
+
+/* Build one message word across the sixteen lanes into dst. */
+.macro LOADW off, dst
     movl    \\off+0(%rsi), %eax
     bswap   %eax
     vmovd   %eax, %xmm8
@@ -168,14 +165,14 @@ PROLOGUE = """
     vinserti32x4 $1, %xmm9, %zmm12, %zmm12
     vinserti32x4 $2, %xmm10, %zmm12, %zmm12
     vinserti32x4 $3, %xmm11, %zmm12, %zmm12
-    vmovdqa32 %zmm12, \\woff(%rsp)
+    vmovdqa32 %zmm12, \dst
 .endm
 
 sha256_compress16_avx512:
     pushq   %rbp
     movq    %rsp, %rbp
     andq    $-64, %rsp
-    subq    $8192, %rsp
+    subq    $1024, %rsp
 """
 
 
@@ -187,11 +184,23 @@ def emit_k() -> str:
 
 
 def emit_loadw() -> str:
-    return "\n".join(f"    LOADW {4 * i}, {64 * i}" for i in range(16))
+    return "\n".join(f"    LOADW {4 * i}, %zmm{16 + i}" for i in range(16))
 
 
-def emit_sched() -> str:
-    return "\n".join(f"    SCHED {i}" for i in range(16, 64))
+def wreg(i: int) -> str:
+    return f"%zmm{16 + (i % 16)}"
+
+
+def emit_rounds() -> str:
+    lines = []
+    for k in range(64):
+        if k >= 16:
+            lines.append(
+                f"    SCHED {wreg(k)}, {wreg(k - 15)}, {wreg(k - 7)}, {wreg(k - 2)}"
+            )
+        regs = [f"%zmm{((i - k) % 8)}" for i in range(8)]
+        lines.append(f"    ROUND {','.join(regs)},{wreg(k)},{64 * k}")
+    return "\n".join(lines)
 
 
 def emit_state_init() -> str:
@@ -199,14 +208,6 @@ def emit_state_init() -> str:
     for i in range(8):
         lines.append(f"    vmovd   {4 * i}(%rdi), %xmm8")
         lines.append(f"    vpbroadcastd %xmm8, %zmm{i}")
-    return "\n".join(lines)
-
-
-def emit_rounds() -> str:
-    lines = []
-    for k in range(64):
-        regs = [f"%zmm{((i - k) % 8)}" for i in range(8)]
-        lines.append(f"    ROUND {','.join(regs)},{64 * k},{64 * k}")
     return "\n".join(lines)
 
 
@@ -218,10 +219,10 @@ def emit_epilogue() -> str:
         out.append(f"    vpaddd  %zmm8, %zmm{i}, %zmm{i}")
     out.append("\n    /* spill the state and write big-endian lane digests */")
     for i in range(8):
-        out.append(f"    vmovdqa32 %zmm{i}, {4096 + 64 * i}(%rsp)")
+        out.append(f"    vmovdqa32 %zmm{i}, {64 * i}(%rsp)")
     for lane in range(16):
         for i in range(8):
-            out.append(f"    movl    {4096 + 64 * i + 4 * lane}(%rsp), %eax")
+            out.append(f"    movl    {64 * i + 4 * lane}(%rsp), %eax")
             out.append("    bswap   %eax")
             out.append(f"    movl    %eax, {32 * lane + 4 * i}(%rdx)")
     out.append("""
@@ -238,10 +239,9 @@ def emit_epilogue() -> str:
 
 def main() -> None:
     parts = [HEADER, emit_k(), PROLOGUE, emit_loadw(),
-             "\n    /* message schedule */", emit_sched(),
              "\n    /* initial state */", emit_state_init(),
-             "\n    /* 64 rounds, register roles rotated */", emit_rounds(),
-             emit_epilogue()]
+             "\n    /* 64 rounds: schedule updated in place, roles rotated */",
+             emit_rounds(), emit_epilogue()]
     out = Path(__file__).resolve().parent.parent / "src" / "avx512.s"
     with open(out, "w") as f:
         f.write("\n".join(parts))

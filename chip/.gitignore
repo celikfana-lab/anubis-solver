@@ -25,3 +25,4 @@ addr_vectors.hex
 index_vectors.hex
 engine_vectors.hex
 engine_pw.hex
+solve_nonce.txt

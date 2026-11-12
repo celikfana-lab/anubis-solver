@@ -24,6 +24,9 @@ rtl/
               hashx_top.v         PRF, program, finalisation
   mem/        lpddr6_model.v      behavioural LPDDR6 model
               lpddr6_if.v         1 KiB block <-> 32-byte packet adaptor
+  periph/     uart_tx.v           8N1 serial transmitter
+              uart_log.v          console: banner, and a HIT line per solve
+              axil_regs.v         BAR0 register file on AXI4-Lite (the PCIe side)
 
 tb/           one testbench per unit; tb_anubis_solve.v is the end-to-end search
 sim/          sim_top.v + sim_main.cpp, the Verilator harness
@@ -229,6 +232,45 @@ a 2-block message (nonce + padding) is ~1.5 M hashes/s per core. On an ASIC at
 1 GHz it is ~15.6 M hashes/s per core, and the core is small enough that
 hundreds fit on a die — which is exactly why memory-hard algorithms (Argon2id)
 exist to blunt this.
+
+## Host interfaces: PCIe and UART
+
+Two blocks make the design a card rather than a testbench.
+
+**PCIe.** The TLP and PHY layers are vendor hard IP (Xilinx XDMA, Intel HIP);
+what you write is the AXI4-Lite slave that the host reaches through BAR0, and
+that is `rtl/periph/axil_regs.v`:
+
+| offset | | |
+|---|---|---|
+| 0x000 | R | ID, 32'hA0B15C01 |
+| 0x004 | RW | CTRL: start, abort, algorithm |
+| 0x008 | R | STATUS: busy, done, hit, leading zeros |
+| 0x00C/0x010 | RW | NONCE low / high |
+| 0x014 | RW | CHALLENGE_LEN |
+| 0x018 | W | CHALLENGE_DATA at CH_INDEX*4, index auto-increments |
+| 0x01C | RW | CH_INDEX |
+| 0x040..0x05C | R | RESULT0..7, the 32-byte digest |
+
+Writing CTRL with bit 0 set raises a one-cycle `start_pulse`. A larger program
+load (the HashX table is up to 8 KiB) belongs on the IP's DMA stream, not
+through the register window.
+
+**UART.** `uart_log.v` prints a banner on start and one line per hit:
+
+```
+ANUBIS v1
+HIT NONCE 0x000000123456789A LZ 13
+```
+
+Baud and clock are parameters (`CLK_HZ`, `BAUD`), so the same core works at
+50 MHz/115200 on a board and at fast dividers in simulation.
+
+Both are verified: `tb/tb_uart.v` decodes the serial line and checks the text,
+`tb/tb_axil.v` drives BAR0 like a host and checks the register behaviour.
+What is *not* wired yet is the card top that instantiates a register file, an
+engine and the logger together - that also needs registers for the HashX keys
+and program length.
 
 ## HashX
 

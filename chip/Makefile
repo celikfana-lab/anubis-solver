@@ -37,6 +37,7 @@ HASH  := $(B2) rtl/blake2b/h0.v rtl/blake2b/h_prime.v
 ARGON := rtl/argon2/argon2_fill.v rtl/argon2/argon2_index.v rtl/argon2/argon2_addr.v
 HASHX := rtl/hashx/sipround.v rtl/hashx/hashx_prf.v rtl/hashx/hashx_exec.v \
          rtl/hashx/hashx_top.v
+PERIPH := rtl/periph/uart_tx.v rtl/periph/uart_log.v rtl/periph/axil_regs.v
 HASHX_REF := ../src/hashx
 ENGINE := rtl/argon2/argon2_engine.v $(ARGON) $(HASH)
 
@@ -44,7 +45,7 @@ ENGINE := rtl/argon2/argon2_engine.v $(ARGON) $(HASH)
 # name: dependencies | vector generator
 TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
        tb_h_prime tb_h0 tb_argon2_addr tb_argon2_index tb_argon2_engine \
-       tb_hashx
+       tb_hashx tb_uart tb_axil
 
   .PHONY: all sim $(TBS) run-all pow argon blake2b stream hprime h0 addr index engine \
         hashx solve solve-hashx mpipe vectors vl64 vlreal synth area clean \
@@ -107,6 +108,12 @@ $(B)/tb_argon2_engine: tb/tb_argon2_engine.v $(ENGINE) | $(B)
 # this an interpreter plus a fixed table - the same split the GPU backends use.
 $(B)/gen_hashx_vectors: tools/gen_hashx_vectors.c $(HASHX_REF)/hashx.c | $(B)
 	$(CC) -O2 -I $(HASHX_REF) -o $@ tools/gen_hashx_vectors.c $(HASHX_REF)/hashx.c
+
+$(B)/tb_uart: tb/tb_uart.v $(PERIPH) | $(B)
+	$(IVERILOG) -g2012 -o $@ tb/tb_uart.v rtl/periph/uart_log.v rtl/periph/uart_tx.v
+
+$(B)/tb_axil: tb/tb_axil.v rtl/periph/axil_regs.v | $(B)
+	$(IVERILOG) -g2012 -o $@ tb/tb_axil.v rtl/periph/axil_regs.v
 
 $(B)/tb_hashx: tb/tb_hashx.v $(HASHX) $(B)/gen_hashx_vectors | $(B)
 	$(B)/gen_hashx_vectors vectors/hx_vectors.hex

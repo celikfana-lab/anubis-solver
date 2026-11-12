@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed src/sha256_pow.spv into src/sha256_pow.spv.h."""
+"""Embed src/levelzero/sha256_pow.spv into src/levelzero/sha256_pow.spv.h."""
 
 from pathlib import Path
 
@@ -16,7 +16,7 @@ def main() -> None:
         for i in range(0, len(words), 8)
     ]
     header = (
-        "/* Generated from src/sha256_pow.cl — do not edit. */\n"
+        "/* Generated from src/levelzero/sha256_pow.cl — do not edit. */\n"
         "static const unsigned int sha256_pow_spv[] = {\n"
         + "\n".join(lines)
         + "\n};\n"

@@ -80,20 +80,15 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 ```
 include/anubis-solver.h  public C/C++ API
 anubis_solver.py         Python library (ctypes), requests client, CLI
-src/anubis_solver.c      C core: hashing, search loop, backends dispatch
-src/hashx.c/.h           C port of tevador/hashx (LGPL-3.0) + x86-64/AArch64 JITs
-src/avx2.s, shani.s      x86-64 SHA-256 kernels
-src/avx512.s             AVX-512 16-way SHA-256 kernel
-src/neon.s               AArch64 NEON + ARMv8 SHA-2 kernel
-src/cuda_sha256.cu       CUDA SHA-256
-src/cuda_argon2.cu       CUDA Argon2id (one block per hash)
-src/cuda_hashx.cu        CUDA HashX (program interpreter)
-src/levelzero_sha256.c   Level Zero SHA-256
-src/levelzero_argon2.c   Level Zero Argon2id
-src/levelzero_hashx.c    Level Zero HashX
-src/*.cl, *.comp         OpenCL C / GLSL kernels (embedded as SPIR-V)
-src/vulkan.c             Vulkan SHA-256, Argon2id and HashX
-src/opencl_backend.c     portable OpenCL host (not wired yet)
+src/core/anubis_solver.c   C core: hashing, search loop, backend dispatch
+src/hashx/hashx.c/.h       HashX generator, interpreter, x86-64/AArch64 JITs
+src/cpu/*.s                AVX2, SHA-NI, AVX-512 and NEON SHA-256 kernels
+src/cuda/*.cu              CUDA backends (SHA-256, Argon2id, HashX)
+src/levelzero/*.c          Level Zero backends
+src/levelzero/*.cl         their OpenCL C kernels (embedded SPIR-V)
+src/vulkan/vulkan.c        Vulkan backends
+src/vulkan/*.comp          their GLSL kernels (embedded SPIR-V)
+src/opencl/                portable OpenCL host (not wired yet)
 third_party/argon2/      reference Argon2id (CC0-1.0 / Apache-2.0)
 tests/                   unit, local end-to-end, version matrix, CVE harness
 examples/                Python, C and C++ samples
@@ -359,7 +354,7 @@ go build -o /tmp/anubis-build/anubis ./cmd/anubis
 
 ## License
 
-Original code is MIT (see [LICENSE](LICENSE)). `src/hashx.c` is a port of
+Original code is MIT (see [LICENSE](LICENSE)). `src/hashx/hashx.c` is a port of
 tevador/hashx and remains **LGPL-3.0**; `third_party/argon2` is CC0-1.0 /
 Apache-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before
 redistributing binaries.

@@ -6,13 +6,13 @@
 anubis_solver.py        Python API + CLI (ctypes around the shared library)
 include/anubis-solver.h public C/C++ header (extern "C")
 examples/               Python, C and C++ samples
-src/anubis_solver.c     C core: hashing, search loop, dispatch
-src/hashx.c / hashx.h   HashX generator, interpreter, x86-64/AArch64 JITs
-src/avx2.s, shani.s, avx512.s, neon.s   hand-written SHA-256 kernels
-src/cuda_*.cu           CUDA backends (SHA-256, Argon2id, HashX)
-src/levelzero_*.c       Level Zero backends (+ *.cl kernels, *.spv.h)
-src/vulkan.c            Vulkan backends (GLSL kernels in *.comp)
-src/opencl_backend.c    portable OpenCL host (same kernels as Level Zero)
+src/core/anubis_solver.c   C core: hashing, search loop, dispatch
+src/hashx/hashx.c/.h       HashX generator, interpreter, x86-64/AArch64 JITs
+src/cpu/*.s             hand-written SHA-256 kernels
+src/cuda/*.cu           CUDA backends (SHA-256, Argon2id, HashX)
+src/levelzero/*.c       Level Zero backends (+ *.cl kernels, *.spv.h)
+src/vulkan/*.c          Vulkan backends (GLSL kernels in *.comp)
+src/opencl/             portable OpenCL host (same kernels as Level Zero)
 third_party/argon2      Argon2id reference implementation
 tools/                  generators, kernel build scripts, benchmarks
 tests/                  test suite
@@ -48,16 +48,16 @@ changes.
 
 | script | input → output |
 |---|---|
-| `tools/build_shader.sh` | `src/sha256_comp.comp` → Vulkan SPIR-V |
-| `tools/embed_spv.py` | SPIR-V → `src/sha256_comp.spv.h` |
-| `tools/build_l0_shader.sh` | `src/sha256_pow.cl` → `src/sha256_pow.spv` (clang + llvm-spirv, SPIR-V 1.2) |
-| `tools/embed_l0_spv.py` | → `src/sha256_pow.spv.h` |
-| `tools/build_l0_argon2.sh` | `src/argon2id_l0.cl` → `src/argon2id_l0.spv(.h)` |
-| `tools/build_argon2_vk.sh` | `src/argon2id.comp` → `src/argon2id.spv` (needs `glslangValidator`) |
+| `tools/build_shader.sh` | `src/vulkan/sha256_comp.comp` → Vulkan SPIR-V |
+| `tools/embed_spv.py` | SPIR-V → `src/vulkan/sha256_comp.spv.h` |
+| `tools/build_l0_shader.sh` | `src/levelzero/sha256_pow.cl` → `src/levelzero/sha256_pow.spv` |
+| `tools/embed_l0_spv.py` | → `src/levelzero/sha256_pow.spv.h` |
+| `tools/build_l0_argon2.sh` | `src/levelzero/argon2id_l0.cl` → `src/levelzero/argon2id_l0.spv(.h)` |
+| `tools/build_argon2_vk.sh` | `src/vulkan/argon2id.comp` → `src/vulkan/argon2id.spv` (needs `glslangValidator`) |
 | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` | generate the x86-64 assembly kernels |
 
-`src/opencl_kernels.h` embeds the three `.cl` sources for the portable OpenCL
-backend; regenerate it after editing a `.cl` file.
+`src/opencl/opencl_kernels.h` embeds the three `.cl` sources for the portable
+OpenCL backend; regenerate it after editing a `.cl` file.
 
 Level Zero rejects SPIR-V newer than 1.2, hence
 `llvm-spirv --spirv-max-version=1.2` in the build scripts.

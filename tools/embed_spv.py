@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Embed src/sha256_comp.spv into a C header (src/sha256_comp.spv.h)."""
+"""Embed src/vulkan/sha256_comp.spv into a C header (src/vulkan/sha256_comp.spv.h)."""
 
 from pathlib import Path
 
@@ -16,7 +16,7 @@ def main() -> None:
         for i in range(0, len(words), 8)
     ]
     header = (
-        "/* Generated from src/sha256_comp.comp by tools/build_shader.sh — do not edit. */\n"
+        "/* Generated from src/vulkan/sha256_comp.comp by tools/build_shader.sh — do not edit. */\n"
         "static const unsigned int sha256_comp_spv[] = {\n"
         + "\n".join(lines)
         + "\n};\n"

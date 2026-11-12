@@ -2,7 +2,8 @@ CC      ?= cc
 CFLAGS  ?= -O3 -fPIC -Wall -Wextra
 NATIVE  ?= -march=native
 LDFLAGS ?= -shared -pthread
-INC     := -Isrc -Ithird_party/argon2
+INC     := -Isrc -Isrc/core -Isrc/hashx -Isrc/cpu -Isrc/cuda \
+           -Isrc/levelzero -Isrc/vulkan -Isrc/opencl -Ithird_party/argon2
 
 # Optional CUDA backend (NVIDIA). Built when nvcc is available; the library
 # then links libcudart and prefers CUDA over Vulkan at runtime.
@@ -11,7 +12,7 @@ NVCC ?= nvcc
 CUDA_SRC :=
 ifneq ($(CUDA),0)
 ifneq ($(shell command -v $(NVCC) 2>/dev/null),)
-CUDA_SRC := src/cuda_sha256.cu src/cuda_argon2.cu src/cuda_hashx.cu
+CUDA_SRC := src/cuda/cuda_sha256.cu src/cuda/cuda_argon2.cu src/cuda/cuda_hashx.cu
 CFLAGS   += -DANUBIS_HAVE_CUDA
 # nvcc is the linker here; it rejects bare -pthread, so pass it to the host
 # compiler explicitly.
@@ -23,7 +24,7 @@ LINK     ?= $(CC)
 
 LIB      := libanubis_solver.so
 BUILD    := build
-CORE_SRC := src/anubis_solver.c src/hashx.c
+CORE_SRC := src/core/anubis_solver.c src/hashx/hashx.c
 
 # Optional Vulkan backend (SHA-256 challenges). Auto-detects the headers;
 # the library dlopen()s libvulkan.so.1 at runtime, so there is no hard
@@ -31,7 +32,7 @@ CORE_SRC := src/anubis_solver.c src/hashx.c
 VULKAN ?= auto
 ifneq ($(VULKAN),0)
 ifneq ($(wildcard /usr/include/vulkan/vulkan.h),)
-CORE_SRC += src/vulkan.c src/opencl_backend.c
+CORE_SRC += src/vulkan/vulkan.c src/opencl/opencl_backend.c
 CFLAGS  += -DANUBIS_HAVE_VULKAN
 LDFLAGS += -ldl
 endif
@@ -43,7 +44,8 @@ L0_INC ?= $(if $(wildcard /usr/include/level_zero/ze_api.h),/usr/include,\
             $(if $(wildcard /usr/local/include/level_zero/ze_api.h),/usr/local/include,))
 ifneq ($(L0),0)
 ifneq ($(wildcard $(L0_INC)/level_zero/ze_api.h),)
-CORE_SRC += src/levelzero_sha256.c src/levelzero_argon2.c src/levelzero_hashx.c
+CORE_SRC += src/levelzero/levelzero_sha256.c src/levelzero/levelzero_argon2.c \
+             src/levelzero/levelzero_hashx.c
 CFLAGS   += -DANUBIS_HAVE_LEVELZERO -I$(L0_INC)
 LDFLAGS  += -ldl
 endif
@@ -52,9 +54,9 @@ endif
 # Assembly kernels: x86-64 (AVX2 + SHA-NI) or AArch64 (NEON + SHA-2).
 # The portable C fallbacks are always compiled.
 ifeq ($(shell uname -m),x86_64)
-ASM_SRC  := src/avx2.s src/shani.s src/avx512.s
+ASM_SRC  := src/cpu/avx2.s src/cpu/shani.s src/cpu/avx512.s
 else ifeq ($(shell uname -m),aarch64)
-ASM_SRC  := src/neon.s
+ASM_SRC  := src/cpu/neon.s
 CFLAGS   += -DANUBIS_HAVE_NEON_ASM
 else
 ASM_SRC  :=
@@ -85,12 +87,15 @@ $(BUILD):
 	mkdir -p $(BUILD)/argon2/blake2
 
 $(BUILD)/%.o: src/%.c | $(BUILD)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(NATIVE) $(INC) -pthread -MMD -MP -c $< -o $@
 
 $(BUILD)/%.o: src/%.cu | $(BUILD)
-	$(NVCC) -O3 -Xcompiler -fPIC -c $< -o $@
+	@mkdir -p $(dir $@)
+	$(NVCC) -O3 -Xcompiler -fPIC $(INC) -c $< -o $@
 
 $(BUILD)/%.o: src/%.s | $(BUILD)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/argon2/%.o: third_party/argon2/%.c | $(BUILD)

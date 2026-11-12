@@ -208,7 +208,7 @@ static struct {
     cuda_results *results[CUDA_MAX_DEV];
     cuda_params hparams;
     cuda_results hresults;
-    char info[128];
+    char info[192];
 } g_cu = { 0, 0, 0, PTHREAD_MUTEX_INITIALIZER, {0}, {0}, {0}, {0}, {0} };
 
 static double now_s(void) {
@@ -256,10 +256,10 @@ static int cuda_init(void) {
             return 0;
         }
         if (count == 1) {
-            snprintf(g_cu.info, sizeof(g_cu.info), "CUDA: %s", prop.name);
+            snprintf(g_cu.info, sizeof(g_cu.info), "CUDA: %.96s", prop.name);
         } else {
-            snprintf(g_cu.info, sizeof(g_cu.info), "CUDA: %s x%d", prop.name,
-                     count);
+            snprintf(g_cu.info, sizeof(g_cu.info), "CUDA: %.80s x%d",
+                     prop.name, count);
         }
     }
     if (cudaSetDevice(0) != cudaSuccess) {

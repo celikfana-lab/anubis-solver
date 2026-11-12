@@ -1429,7 +1429,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
                                         ctx.use_le, difficulty, 1, cap,
                                         budget_ms, &gnonce, ghex, &gms);
             if (grc == 0 &&
-                anubis_verify_bits(challenge, gnonce, difficulty, vhex) ==
+                anubis_verify_bits(challenge_hex, gnonce, difficulty, vhex) ==
                     ANUBIS_OK &&
                 memcmp(vhex, ghex, 65) == 0) {
                 *out_nonce = gnonce;

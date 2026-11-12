@@ -19,10 +19,10 @@ module tb_argon2_fill;
     always #5 clk = ~clk;
 
     initial begin
-        $readmemh("prev.hex", m_prev);
-        $readmemh("ref.hex", m_ref);
-        $readmemh("dst.hex", m_dst);
-        $readmemh("expected.hex", m_exp);
+        $readmemh("vectors/prev.hex", m_prev);
+        $readmemh("vectors/ref.hex", m_ref);
+        $readmemh("vectors/dst.hex", m_dst);
+        $readmemh("vectors/expected.hex", m_exp);
         prev = 0; refb = 0; dst = 0;
         for (k = 0; k < 128; k = k + 1) begin
             prev = prev | ({8064'b0, m_prev[k]} << (64 * k));

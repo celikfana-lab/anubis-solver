@@ -1,19 +1,35 @@
-# chip/ — SHA-256 proof-of-work core in Verilog
+# chip/ — SHA-256 and Argon2id proof of work in Verilog
 
-A synthesizeable SHA-256 compression core plus a proof-of-work nonce scanner,
-written for the Anubis `sha256` (WebAssembly) challenge family.
+Synthesizable RTL for the two Anubis challenge families: a SHA-256 core with a
+nonce scanner (`fast`/`slow`/`sha256`), and a complete Argon2id datapath
+(`argon2id`) that solves real challenges in simulation.
+
+## Layout
 
 ```
-sha256_core.v        iterative SHA-256 block compressor, one round per cycle
-anubis_pow.v         nonce scanner on top of the core
-argon2_fill.v        Argon2id fill_block (BlaMka) unit — verified
-blake2b_core.v       BLAKE2b-512 compression core — WIP (wrong digest)
-gen_argon_vectors.py generates prev/ref/dst/expected vectors for the Argon2 tb
-tb_sha256.v          known-answer tests (4 vectors, incl. a chained 2-block case)
-tb_pow.v             end-to-end PoW test (nonce 83, difficulty 8 bits)
-tb_argon2_fill.v     fill_block test against the reference vector (WIP)
-Makefile             make sim / make pow / make argon / make synth
+rtl/
+  sha256/     sha256_core.v       iterative SHA-256 block compressor, 1 round/cycle
+              anubis_pow.v        nonce scanner on top of the core
+  blake2b/    blake2b_core.v      BLAKE2b-512 compression, 2 cycles per round
+              blake2b_stream.v    byte-streaming BLAKE2b (block buffer, t counter)
+              h0.v                Argon2 H0
+              h_prime.v           Argon2 H' (variable-length expansion)
+  argon2/     argon2_fill.v       fill_block / BlaMka permutation
+              argon2_index.v      index_alpha (reference block index)
+              argon2_addr.v       data-independent address generator
+              argon2_engine.v     a whole Argon2id hash: H0 -> fill -> tag
+  mem/        lpddr6_model.v      behavioural LPDDR6 model
+              lpddr6_if.v         1 KiB block <-> 32-byte packet adaptor
+
+tb/           one testbench per unit; tb_anubis_solve.v is the end-to-end search
+sim/          sim_top.v + sim_main.cpp, the Verilator harness
+tools/        gen_*.py vector generators, verify_solve.py
+vectors/      .hex vectors (generated on demand, except solve_challenge.hex)
+build/        compiled testbenches and Verilator output (git-ignored)
 ```
+
+Everything below runs from this directory: `$readmemh` picks up `vectors/`
+with a relative path.
 
 ## Status
 
@@ -22,17 +38,17 @@ reference implementation:
 
 | module | state |
 |---|---|
-| `sha256_core.v` | **verified** — empty string, `"abc"`, the 56-byte two-block vector and a chained `digest → midstate` case all match the reference |
-| `anubis_pow.v` | **verified** — 64 bytes of `a`, 4-byte big-endian nonce, difficulty 8 bits: finds nonce 83 with digest `008fa7f1…`, matching the reference |
-| `argon2_fill.v` | **verified** — 128×64-bit BlaMka block permutation (8 column rounds + 8 row rounds, XOR-in/XOR-out) matches the Python reference on a 128-word block with `xor_en` asserted |
-| `blake2b_core.v` | **verified** — 2 cycles/round BLAKE2b-512 compression; empty message, 128×`a`, and a non-uniform block all match `hashlib` |
-| `blake2b_stream.v` | **verified** — byte-streaming BLAKE2b (128-byte block buffer, `flush`/`finish` handshake, `t` counter). 0, 3, 64, 112, 128 and 200-byte messages and a τ=32 digest match `hashlib` |
-| `h_prime.v` | **verified** — Argon2's H′ for τ = 1024 (31 chained calls), 96, 64 and 32, over X = 72 and X = 1024 bytes |
-| `argon2_addr.v` | **verified** — the data-independent address generator: Z from (pass, lane, slice, m', t, y, counter), then A = G(0, G(0, Z)). 5 cases incl. counter 0…128 |
-| `h0.v` | **verified** — Argon2's H0: the parameter block, \|P\|, the password stream, the 8-byte salt and the empty K/X lengths, for \|P\| = 1, 26, 96 and T = 32, 64 |
-| `argon2_index.v` | **verified** — `index_alpha` for one lane: 70 vectors across passes, slices and sizes, including the segment-entry cases |
-| `argon2_engine.v` | **verified** — a whole Argon2id hash: H0 → lane seeding → two-pass fill over both addressing modes → H′(32) tag, bit-exact against `argon2-cffi` for three passwords |
-| `tb_anubis_solve.v` | **solves** — nonce search on the chip with the Anubis hit rule (see below) |
+| `rtl/sha256/sha256_core.v` | **verified** — empty string, `"abc"`, the 56-byte two-block vector and a chained `digest → midstate` case all match the reference |
+| `rtl/sha256/anubis_pow.v` | **verified** — 64 bytes of `a`, 4-byte big-endian nonce, difficulty 8 bits: finds nonce 83 with digest `008fa7f1…`, matching the reference |
+| `rtl/argon2/argon2_fill.v` | **verified** — 128×64-bit BlaMka block permutation (8 column rounds + 8 row rounds, XOR-in/XOR-out) matches the Python reference on a 128-word block with `xor_en` asserted |
+| `rtl/blake2b/blake2b_core.v` | **verified** — 2 cycles/round BLAKE2b-512 compression; empty message, 128×`a`, and a non-uniform block all match `hashlib` |
+| `rtl/blake2b/blake2b_stream.v` | **verified** — byte-streaming BLAKE2b (128-byte block buffer, `flush`/`finish` handshake, `t` counter). 0, 3, 64, 112, 128 and 200-byte messages and a τ=32 digest match `hashlib` |
+| `rtl/blake2b/h_prime.v` | **verified** — Argon2's H′ for τ = 1024 (31 chained calls), 96, 64 and 32, over X = 72 and X = 1024 bytes |
+| `rtl/argon2/argon2_addr.v` | **verified** — the data-independent address generator: Z from (pass, lane, slice, m', t, y, counter), then A = G(0, G(0, Z)). 5 cases incl. counter 0…128 |
+| `rtl/blake2b/h0.v` | **verified** — Argon2's H0: the parameter block, \|P\|, the password stream, the 8-byte salt and the empty K/X lengths, for \|P\| = 1, 26, 96 and T = 32, 64 |
+| `rtl/argon2/argon2_index.v` | **verified** — `index_alpha` for one lane: 70 vectors across passes, slices and sizes, including the segment-entry cases |
+| `rtl/argon2/argon2_engine.v` | **verified** — a whole Argon2id hash: H0 → lane seeding → two-pass fill over both addressing modes → H′(32) tag, bit-exact against `argon2-cffi` for three passwords |
+| `tb/tb_anubis_solve.v` | **solves** — nonce search on the chip with the Anubis hit rule (see below) |
 
 `make sim` runs every testbench (11 of them, ~1 minute plus the engine's 40k
 cycles per hash). `make stream`, `make hprime`, `make h0` and `make blake2b`
@@ -66,10 +82,10 @@ HIT nonce=18 (0x0000000000000012) leading_zero_bits=7 >= 4 after 19 tries
 TAG 019d8fecf65e34c89847ccaf23209c36668261d396680ad3b8e3c96246106ed0
 ```
 
-`verify_solve.py` rechecks any solve:
+`tools/verify_solve.py` rechecks any solve:
 
 ```bash
-./verify_solve.py <challenge_hex> <nonce> <tag_hex> [m_cost] [difficulty]
+tools/verify_solve.py <challenge_hex> <nonce> <tag_hex> [m_cost] [difficulty]
 ```
 
 `M_COST` is only a parameter, and the same RTL runs the real 19456-block
@@ -88,16 +104,17 @@ Measured on a 56-core Xeon:
 | 19 nonces at M_COST=64 | 174 s | 0.17 s |
 | one hash at M_COST=19456 | ~36 min | 3.9 s |
 
-`sim_top.v` + `sim_main.cpp` are the Verilator harness: a clocked FSM drives
+`sim/sim_top.v` + `sim/sim_main.cpp` are the Verilator harness: a clocked FSM drives
 `argon2_engine` (no delays, nothing to synthesise differently) and the C++ main
 just toggles the clock and prints the tag.
 
 ```bash
 iverilog -g2012 -Ptb_anubis_solve.M_COST=19456 -Ptb_anubis_solve.DIFF=5 \
-  -Ptb_anubis_solve.NSTART=25 -Ptb_anubis_solve.MAXN=1 -o tbreal \
-  tb_anubis_solve.v argon2_engine.v argon2_index.v argon2_addr.v argon2_fill.v \
-  h_prime.v h0.v blake2b_stream.v blake2b_core.v
-vvp tbreal
+  -Ptb_anubis_solve.NSTART=25 -Ptb_anubis_solve.MAXN=1 -o build/tbreal \
+  tb/tb_anubis_solve.v rtl/argon2/argon2_engine.v rtl/argon2/argon2_index.v \
+  rtl/argon2/argon2_addr.v rtl/argon2/argon2_fill.v rtl/blake2b/h_prime.v \
+  rtl/blake2b/h0.v rtl/blake2b/blake2b_stream.v rtl/blake2b/blake2b_core.v
+vvp build/tbreal          # ~36 minutes; `make vlreal` does it in 4 seconds
 ```
 
 The bug that made it report nonce 275: `nblocks` was treated as a flag
@@ -147,12 +164,12 @@ What is in the tree:
 
 | file | role |
 |---|---|
-| `lpddr6_model.v` | behavioural DRAM model: 32-byte packets, configurable latency, byte/access counters |
-| `lpddr6_if.v` | adaptor between a 1 KiB Argon2 block and `NPKT` (default 32) 32-byte packet accesses |
-| `tb_lpddr6.v` | writes and reads back a 1 KiB block through the adaptor and checks it |
+| `rtl/mem/lpddr6_model.v` | behavioural DRAM model: 32-byte packets, configurable latency, byte/access counters |
+| `rtl/mem/lpddr6_if.v` | adaptor between a 1 KiB Argon2 block and `NPKT` (default 32) 32-byte packet accesses |
+| `tb/tb_lpddr6.v` | writes and reads back a 1 KiB block through the adaptor and checks it |
 
 ```
-$ make tb_lpddr6 && vvp tb_lpddr6
+$ make build/tb_lpddr6 && vvp build/tb_lpddr6
 write: 64 cycles, 1024 bytes
 read: 864 cycles, 2048 bytes
 tb_lpddr6: 1 KiB block round-trip OK through 32 x 32-byte packets
@@ -169,17 +186,28 @@ request scheduler on top of `lpddr6_if`.
 
 ## Simulate
 
+Every command runs from this directory; artifacts land in `build/`.
+
 ```bash
 cd chip
-make sim      # verified core vectors (iverilog + vvp)
-make solve    # on-chip nonce search, M_COST=64
-make synth    # yosys area estimate for sha256_core
+make sim        # all 11 testbenches (iverilog + vvp)
+make solve      # on-chip nonce search, M_COST=64 (DIFF=4 MAXN=32 by default)
+make synth      # yosys area estimate for sha256_core
+make clean
 ```
 
-Requires `iverilog` (Icarus Verilog) and optionally `yosys`:
+Single units have shortcuts: `make pow`, `make argon`, `make blake2b`,
+`make stream`, `make hprime`, `make h0`, `make addr`, `make index`,
+`make engine`. `make vectors` regenerates every `.hex` in `vectors/`.
+
+Verilator targets (see below for why they matter): `make vl64`, `make vlreal`.
+
+Requires `iverilog` (Icarus Verilog), `python3` with `argon2-cffi` for the
+engine vectors, and optionally `yosys` / `verilator`:
 
 ```bash
-sudo apt-get install iverilog yosys
+sudo apt-get install iverilog yosys verilator
+pip install argon2-cffi
 ```
 
 ## Throughput

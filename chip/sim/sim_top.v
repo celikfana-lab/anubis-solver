@@ -25,7 +25,7 @@ module sim_top #(
     output wire         eng_busy
 );
     reg [7:0] pw [0:255];
-    initial $readmemh("solve_challenge.hex", pw);
+    initial $readmemh("vectors/solve_challenge.hex", pw);
 
     reg         eng_start;
     reg  [31:0] eng_plen;

@@ -1,28 +1,19 @@
-# simulation binaries
-tb_sha256
-tb_pow
-tb_argon2_fill
-tb_blake2b
-tb_blake2b_stream
-tb_h_prime
-tb_h0
-tb_argon2_addr
-tb_argon2_index
-tb_argon2_engine
-tb_anubis_solve
-tb_lpddr6
-# waveforms
+# build output
+build/
+
+# generated vectors (rebuilt by `make` / `make vectors`)
+vectors/prev.hex
+vectors/ref.hex
+vectors/dst.hex
+vectors/expected.hex
+vectors/b2_vectors.hex
+vectors/hp_vectors.hex
+vectors/h0_vectors.hex
+vectors/addr_vectors.hex
+vectors/index_vectors.hex
+vectors/engine_vectors.hex
+vectors/engine_pw.hex
+vectors/solve_nonce.txt
+
+__pycache__/
 *.vcd
-# generated vectors (rebuilt by the Makefile)
-prev.hex
-ref.hex
-dst.hex
-expected.hex
-b2_vectors.hex
-hp_vectors.hex
-h0_vectors.hex
-addr_vectors.hex
-index_vectors.hex
-engine_vectors.hex
-engine_pw.hex
-solve_nonce.txt

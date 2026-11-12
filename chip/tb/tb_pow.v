@@ -26,7 +26,7 @@ module tb_pow;
     always #5 clk = ~clk;
 
     initial begin
-        $dumpfile("tb_pow.vcd");
+        $dumpfile("build/tb_pow.vcd");
         $dumpvars(0, tb_pow);
         midstate = {32'hdf5bb81c, 32'he81e0626, 32'hfb45a894, 32'h4fd40f31,
                     32'hb25e6816, 32'hd6d499c1, 32'hab904929, 32'h00635e66};

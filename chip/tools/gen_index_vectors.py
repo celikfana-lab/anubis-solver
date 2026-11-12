@@ -32,7 +32,7 @@ for _ in range(60):
     CASES.append((p, s, idx, random.getrandbits(32), lane_len, seg))
 
 
-def main(path="index_vectors.hex"):
+def main(path="vectors/index_vectors.hex"):
     out = []
     for p, s, idx, prand, lane_len, seg in CASES:
         out.append("%08x%08x" % (p, s))      # 0

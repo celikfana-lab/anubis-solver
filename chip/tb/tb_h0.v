@@ -21,7 +21,7 @@ module tb_h0;
             .done(done), .busy(busy));
     always #5 clk = ~clk;
 
-    initial $readmemh("h0_vectors.hex", mem);
+    initial $readmemh("vectors/h0_vectors.hex", mem);
 
     initial begin
         errs = 0;

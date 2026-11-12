@@ -55,7 +55,7 @@ module tb_anubis_solve;
 
     initial begin
         for (i = 0; i < 256; i = i + 1) pw[i] = 8'h00;
-        $readmemh("solve_challenge.hex", pw);
+        $readmemh("vectors/solve_challenge.hex", pw);
         plen = 64;                    // set below by counting the file
     end
 

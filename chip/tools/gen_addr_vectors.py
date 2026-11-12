@@ -29,7 +29,7 @@ CASES = [
 ]
 
 
-def main(path="addr_vectors.hex"):
+def main(path="vectors/addr_vectors.hex"):
     out = []
     for p, l, s, m, t, y, ctr in CASES:
         out.extend("%016x" % v for v in (p, l, s, m, t, y, ctr, 0))

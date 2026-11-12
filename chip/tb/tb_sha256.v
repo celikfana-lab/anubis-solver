@@ -65,7 +65,7 @@ module tb_sha256;
     endtask
 
     initial begin
-        $dumpfile("tb_sha256.vcd");
+        $dumpfile("build/tb_sha256.vcd");
         $dumpvars(0, tb_sha256);
         repeat (3) @(negedge clk);
         rst_n = 1;

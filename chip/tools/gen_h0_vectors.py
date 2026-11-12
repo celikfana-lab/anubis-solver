@@ -32,7 +32,7 @@ CASES = [
 ]
 
 
-def main(path="h0_vectors.hex"):
+def main(path="vectors/h0_vectors.hex"):
     out = []
     for pw, salt, taglen in CASES:
         assert len(pw) <= 192

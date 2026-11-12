@@ -23,7 +23,7 @@ module tb_blake2b_stream;
 
     initial begin
         for (k = 0; k < NC*BLOCK; k = k + 1) mem[k] = 8'h00;
-        $readmemh("b2_vectors.hex", mem);
+        $readmemh("vectors/b2_vectors.hex", mem);
     end
 
     initial begin

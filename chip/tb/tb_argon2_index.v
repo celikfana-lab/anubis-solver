@@ -12,7 +12,7 @@ module tb_argon2_index;
     argon2_index dut (.pass_i(p), .slice_i(s), .index_i(idx), .lane_len(lane_len),
                       .seg_len(seg), .pseudo_rand(prand), .ref_index(ref_index));
 
-    initial $readmemh("index_vectors.hex", mem);
+    initial $readmemh("vectors/index_vectors.hex", mem);
 
     initial begin
         errs = 0; bad = 0;

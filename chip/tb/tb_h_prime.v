@@ -24,7 +24,7 @@ module tb_h_prime;
                  .done(done), .busy(busy));
     always #5 clk = ~clk;
 
-    initial $readmemh("hp_vectors.hex", mem);
+    initial $readmemh("vectors/hp_vectors.hex", mem);
 
     always @(posedge clk) if (out_we) got[out_addr] <= out_data;
 

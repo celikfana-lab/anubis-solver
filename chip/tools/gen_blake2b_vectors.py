@@ -35,7 +35,7 @@ CASES = [
 ]
 
 
-def main(path="b2_vectors.hex"):
+def main(path="vectors/b2_vectors.hex"):
     assert len(CASES) == NC
     out = []
     for msg, tau in CASES:

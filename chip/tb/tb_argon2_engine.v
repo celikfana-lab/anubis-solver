@@ -24,8 +24,8 @@ module tb_argon2_engine;
     always #5 clk = ~clk;
 
     initial begin
-        $readmemh("engine_vectors.hex", v);
-        $readmemh("engine_pw.hex", pw);
+        $readmemh("vectors/engine_vectors.hex", v);
+        $readmemh("vectors/engine_pw.hex", pw);
     end
 
     initial begin

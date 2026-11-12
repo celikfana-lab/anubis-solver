@@ -39,7 +39,7 @@ def main() -> int:
     ref = [(0x100000001B3 * (i + 7)) & M for i in range(128)]
     dst = [(0xDEADBEEFCAFEBABE ^ i) & M for i in range(128)]
     out = fill_block(prev, ref, dst, with_xor=1)
-    here = Path(__file__).resolve().parent
+    here = Path(__file__).resolve().parent.parent / "vectors"
     for name, words in (("prev.hex", prev), ("ref.hex", ref), ("dst.hex", dst),
                         ("expected.hex", out)):
         (here / name).write_text("\n".join(f"{w:016x}" for w in words) + "\n")

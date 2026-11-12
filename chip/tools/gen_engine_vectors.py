@@ -21,7 +21,7 @@ CASES = [
 
 
 def main():
-    here = Path(__file__).resolve().parent
+    here = Path(__file__).resolve().parent.parent / "vectors"
     lines = []
     pw = []
     for p, salt in CASES:

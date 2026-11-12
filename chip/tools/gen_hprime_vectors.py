@@ -36,7 +36,7 @@ CASES = [
 ]
 
 
-def main(path="hp_vectors.hex"):
+def main(path="vectors/hp_vectors.hex"):
     out = []
     for X, tau in CASES:
         assert len(X) <= 1024

@@ -18,7 +18,7 @@ module tb_argon2_addr;
                      .blk(blk), .ready(ready), .busy(busy));
     always #5 clk = ~clk;
 
-    initial $readmemh("addr_vectors.hex", mem);
+    initial $readmemh("vectors/addr_vectors.hex", mem);
 
     task wait_ready;
         begin

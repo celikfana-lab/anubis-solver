@@ -379,6 +379,103 @@ correct with verification off (checked against argon2-cffi); it is a
 benchmarking switch, not a production default. Raw data:
 [`results/gpu-verify-t4.json`](results/gpu-verify-t4.json).
 
+## Hardware (the Verilog reference in `chip/`)
+
+`chip/` solves both challenge families in simulation — see
+[`chip/README.md`](chip/README.md). Everything here is **cycle-accurate
+simulation, not silicon**, so read it as architecture: the cycle counts are
+measured, the clock is assumed. No static timing analysis has been run, so
+"1 GHz" is a plausible target rather than a verified one.
+
+### Test setup
+
+| | |
+|---|---|
+| RTL | `chip/rtl/` — SHA-256 PoW, full Argon2id, full HashX |
+| Simulator | Icarus Verilog 12.0 (function), Verilator 5.020 (single-hash speed) |
+| Machine | 56-core Xeon, Ubuntu 24.04 |
+| Run | `make -C chip remote-sim`, `make -C chip remote-mpipe`, 2026-11-12 |
+| Raw data | [`results/chip-throughput-2026-11-12.json`](results/chip-throughput-2026-11-12.json) |
+
+### One engine
+
+| algorithm | cycles per hash | hashes/s @ 200 MHz | @ 1 GHz |
+|---|---:|---:|---:|
+| `fast` / `slow` / `sha256` (2-block message) | 128 | 1.56 M | 7.8 M |
+| `hashx` (512-instruction program) | 533 | 375 k | 1.88 M |
+| `argon2id` (m=19456, t=2) | 10,126,531 | 19.8 | 98.8 |
+
+The SHA-256 and HashX cores are small enough to replicate: 100 HashX engines
+at 1 GHz would be ~188 M hashes/s, which is 1.7× the measured 2× T4 pair
+without any memory pressure. Argon2id is the opposite — 10 million cycles and
+139 MB of traffic per hash, so one engine is nearly irrelevant.
+
+### Scaling Argon2id: engines vs HBM3
+
+The question for Argon2id is never the datapath, it is whether memory keeps
+the engines fed. `chip/rtl/argon2/argon2_mpipe.v` carries N engines with two
+hashes each against `chip/rtl/mem/hbm3_model.v` (819 B/cycle, 350-cycle
+latency, byte-credit admission). `fill_block` is a 260-cycle counter there, so
+this measures arbitration, occupancy and latency hiding.
+
+At 1 GHz against one HBM3 stack, 118 hashes in flight at 59 engines:
+
+| engines | in flight | link | hashes/s @ 1 GHz | cycles/engine/block |
+|---:|---:|---:|---:|---:|
+| 24 | 48 | 331 / 819 GB/s | 2,074 | 297 |
+| 48 | 96 | 662 / 819 GB/s | 4,151 | 297 |
+| **59** | **118** | **813 / 819 GB/s** | **5,090** | 298 |
+| 64 | 128 | 819 / 819 GB/s | 5,870 | 280 |
+| 96 | 192 | 819 / 819 GB/s | 5,881 | 420 (33 idle) |
+
+59 engines is where the link runs out. 64 buys another 15% because the model
+still costs ~37 cycles of request-grant latency per block that a design with
+per-engine request queues would not have; 96 adds 0.2% and wastes 33 engines.
+
+One caveat moves this more than any other. A random 1 KiB Argon2 block costs a
+DRAM row activate, so the link does not achieve its headline bandwidth:
+
+| engines | link efficiency | hashes/s @ 1 GHz |
+|---:|---:|---:|
+| 59 | 100% (ideal) | 5,090 |
+| 59 | 75% (realistic) | **4,406** |
+| 59 | 50% (pessimistic) | 2,935 |
+
+So the honest range for a 59-engine, 1 GHz, single-HBM3 design is **4.4–5.1 k
+Argon2id hashes/s**.
+
+### Against the GPUs
+
+| machine | argon2id hashes/s | hashx hashes/s |
+|---|---:|---:|
+| 1 CPU thread (i7-1260P) | 73 | 8.8 M |
+| 2× Tesla T4 (measured) | 1,759 | 108.5 M |
+| 100 chip engines @ 1 GHz + HBM3 | **5,090** (59 engines) | 188 M |
+| RTX 4090 (estimate, bandwidth-bound) | ~7,000 | — |
+| H100 (estimate, bandwidth-bound) | ~20,000 | — |
+
+Argon2id: the 59-engine design beats the 2× T4 pair by **2.9×** and loses to a
+4090 by ~1.4× — it has become a pure DRAM-bandwidth contest at that point, and
+a single HBM3 stack (819 GB/s) buys less bandwidth than a 4090 (1,008 GB/s).
+HashX: 100 engines beat the T4 pair by 1.7×, which is the one place custom
+silicon genuinely wins, because the core has no memory to wait on.
+
+### Caveats
+
+- **The memory is the machine.** 59 engines are ~15 M generic yosys cells
+  (2–4 mm² at 12 nm); the HBM stack and its PHY that feed them cost far more
+  than the logic does. That is Argon2id working as designed.
+- **Area, not throughput, is where a core is big.** `argon2_fill` synthesises
+  to 261,685 generic cells against `sha256_core`'s 8,477 and `hashx_exec`'s
+  58,654 — roughly 10× a CUDA core, because it holds a 128 × 64-bit block and
+  its 4-read/4-write port network. Those are generic cells, not standard
+  cells; a real synthesis run would replace the mux network with a banked
+  memory and cut it substantially.
+- **Sweeps belong on the server.** Eight configurations, 8 × 12,000 blocks of
+  simulation, take 97 s wall / 10 min CPU on 56 cores versus roughly a quarter
+  of an hour on the 16-core laptop. `make -C chip remote-mpipe` and friends
+  rsync the tree and run there.
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

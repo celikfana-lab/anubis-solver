@@ -1,0 +1,100 @@
+{
+  "host": {
+    "what": "Verilog reference implementation in chip/, cycle-accurate simulation",
+    "machine": "56-core Xeon, Ubuntu 24.04, airobots@192.168.1.15",
+    "simulator": "Icarus Verilog 12.0",
+    "measured": "2026-11-12"
+  },
+  "one_engine_cycles_per_hash": {
+    "sha256_pow_2block": 128,
+    "hashx_512_instructions": 533,
+    "argon2id_m19456_t2": 10126531
+  },
+  "argon2id_scaling": {
+    "model": "chip/rtl/argon2/argon2_mpipe.v + chip/rtl/mem/hbm3_model.v",
+    "clock_hz": 1000000000,
+    "link_bytes_per_cycle": 819,
+    "link_latency_cycles": 350,
+    "contexts_per_engine": 2,
+    "bytes_per_block_pass0": 3072,
+    "bytes_per_block_pass1": 4096,
+    "cycles_per_block_ideal": 260.2,
+    "runs": [
+      {
+        "engines": 24,
+        "in_flight": 48,
+        "efficiency_pct": 100,
+        "hashes_per_s": 2074,
+        "link_GBps": 331,
+        "cycles_per_engine_block": 297.32
+      },
+      {
+        "engines": 48,
+        "in_flight": 96,
+        "efficiency_pct": 100,
+        "hashes_per_s": 4151,
+        "link_GBps": 662,
+        "cycles_per_engine_block": 297.2
+      },
+      {
+        "engines": 59,
+        "in_flight": 118,
+        "efficiency_pct": 100,
+        "hashes_per_s": 5090,
+        "link_GBps": 813,
+        "cycles_per_engine_block": 297.86
+      },
+      {
+        "engines": 64,
+        "in_flight": 128,
+        "efficiency_pct": 100,
+        "hashes_per_s": 5870,
+        "link_GBps": 819,
+        "cycles_per_engine_block": 280.18
+      },
+      {
+        "engines": 96,
+        "in_flight": 192,
+        "efficiency_pct": 100,
+        "hashes_per_s": 5881,
+        "link_GBps": 819,
+        "cycles_per_engine_block": 419.52
+      },
+      {
+        "engines": 48,
+        "in_flight": 96,
+        "efficiency_pct": 75,
+        "hashes_per_s": 4403,
+        "link_GBps": 614,
+        "cycles_per_engine_block": 280.16
+      },
+      {
+        "engines": 59,
+        "in_flight": 118,
+        "efficiency_pct": 75,
+        "hashes_per_s": 4406,
+        "link_GBps": 614,
+        "cycles_per_engine_block": 344.12
+      },
+      {
+        "engines": 59,
+        "in_flight": 118,
+        "efficiency_pct": 50,
+        "hashes_per_s": 2935,
+        "link_GBps": 409,
+        "cycles_per_engine_block": 516.6
+      }
+    ]
+  },
+  "reference_measured_elsewhere": {
+    "2x_tesla_t4_argon2id_hps": 1758.6,
+    "2x_tesla_t4_hashx_hps": 108500000,
+    "cpu_1_thread_argon2id_hps": 73
+  },
+  "caveats": [
+    "fill_block is a 260-cycle counter in the scaling model; the arbitration, occupancy and latency behaviour is real, the datapath is not",
+    "the clock is assumed, never closed in STA",
+    "efficiency_pct models the row-activate cost of random 1 KiB blocks; 75% is the realistic case",
+    "area figures elsewhere are generic yosys cells, not standard cells"
+  ]
+}

@@ -270,27 +270,33 @@ make mpipe        # 24 engines x 2 contexts vs HBM3, ~1 minute of Icarus
 ```
 
 ```
-engines 24, contexts/engine 2 (48 in flight), HBM3 819 B/cycle, 350 cyc latency
-  steady state: 4800 blocks in 52000 cycles (10.83 cycles/block, 260.00 per engine)
-  link: 5375 requests, 16512000 bytes, 285.7 B/cycle (286 GB/s) of 819
-  throughput: 92307692 blocks/s -> 2372 hashes/s at 1 GHz
+engines 59, contexts/engine 2 (118 in flight), HBM3 819 B/cycle, 350 cyc latency
+  steady state: 12000 blocks in 60582 cycles (5.05 cycles/block, 297.86 per engine)
+  link: 812.7 B/cycle (813 GB/s) of 819
+  throughput: 5090 hashes/s at 1 GHz
 ```
 
-**260.00 cycles per engine per block** is exactly the compute cost of a block,
-so the 48 contexts hide all 350 cycles of HBM latency - the design is
-compute-bound, not memory-bound. The link runs at 35%, so the next engines are
-free until ~68 engines saturate 819 GB/s.
+59 engines is where the link runs out (813 of 819 GB/s). 64 engines reach
+5,870 hashes/s and 96 reach 5,881 - no gain, 33 idle engines. At 75% link
+efficiency, which is what random 1 KiB blocks costing a row activate each
+actually deliver, the same 59 engines give 4,406 hashes/s.
+
+Two bugs this sweep caught in the model itself: the request arbiter advanced
+its ring pointer while idle and de-synchronised from demand (up to 38% loss at
+36 engines), and every context started at block 0 so the window only ever
+covered pass 0. Both are fixed; the curve is monotonic now.
 
 `tools/perf_model.py` predicts 2370 hashes/s for the same configuration, and
 says why the knobs behave as they do:
 
-| knob | 24 engines @ 1 GHz |
+| configuration @ 1 GHz | hashes/s |
 |---|---|
-| 1 hash per engine (24 in flight) | 1762 h/s, latency-bound |
-| **2 per engine (48 in flight)** | **2370 h/s, compute-bound** |
-| 21 per engine (504 in flight) | 2370 h/s, for 9.4 GiB instead of 0.89 |
-| LPDDR6 (86 GB/s) instead of HBM3 | 617 h/s, bandwidth-bound |
-| 48 engines on HBM3 | 4740 h/s (572 GB/s) |
+| 24 engines, HBM3 (331 GB/s) | 2,074 |
+| 48 engines, HBM3 (662 GB/s) | 4,151 |
+| **59 engines, HBM3 (813 GB/s)** | **5,090** |
+| 64 engines, HBM3 (saturated) | 5,870 |
+| 59 engines, HBM3 at 75% efficiency | 4,406 |
+| 24 engines on LPDDR6 (86 GB/s) | 617, bandwidth-bound |
 
 For scale: the 2x Tesla T4 measured elsewhere in this repo do 1759 Argon2id
 hashes/s, so this configuration is ~1.35x faster than the pair - and still

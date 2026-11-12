@@ -12,6 +12,13 @@ NPROC     ?= $(shell nproc)
 # model, so the build parallelism is capped separately from the machine size.
 VLJOBS    ?= 16
 
+# This checkout is a laptop. The heavy simulation, sweeps and Verilator builds
+# run on a 56-core box instead: `make remote-sim`, `make remote-mpipe`, ...
+HOST       ?= airobots@192.168.1.15
+REMOTE_DIR ?= ~/anubis-solver
+RSYNC      ?= rsync -a --delete --exclude build --exclude .git --exclude mascot
+REMOTE_JOBS ?= 16
+
 DIFF ?= 4      # `make solve` difficulty (argon2id)
 MAXN ?= 32     # `make solve` nonces to try
 HDIFF ?= 8     # `make solve-hashx` difficulty
@@ -39,14 +46,19 @@ TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
        tb_h_prime tb_h0 tb_argon2_addr tb_argon2_index tb_argon2_engine \
        tb_hashx
 
-.PHONY: all sim $(TBS) pow argon blake2b stream hprime h0 addr index engine \
-        hashx solve solve-hashx mpipe vectors vl64 vlreal synth area clean
+  .PHONY: all sim $(TBS) run-all pow argon blake2b stream hprime h0 addr index engine \
+        hashx solve solve-hashx mpipe vectors vl64 vlreal synth area clean \
+        sync
 .DEFAULT_GOAL := all
 
 all: sim
 
-sim: $(addprefix $(B)/,$(TBS))
-	@for t in $(TBS); do echo "== $$t"; $(V) $(B)/$$t || exit 1; done
+# one phony run target per testbench, so `make -jN sim` runs them concurrently
+sim: $(addprefix run-,$(TBS))
+
+run-%: $(B)/%
+	@echo "== $*"
+	@$(V) $(B)/$*
 
 $(B):
 	@mkdir -p $(B)
@@ -179,6 +191,15 @@ area:
 
 synth:
 	$(YOSYS) -p "read_verilog -sv $(SHA) rtl/sha256/anubis_pow.v; synth -top sha256_core; stat"
+
+# ---- run on the build server ----------------------------------------------
+# the repo root, not just chip/: the HashX vectors are generated against
+# ../src/hashx, so a chip-only copy cannot build on the far side
+sync:
+	$(RSYNC) $(CURDIR)/../ $(HOST):$(REMOTE_DIR)/
+
+remote-%: sync
+	ssh $(HOST) 'cd $(REMOTE_DIR)/chip && make -j$(REMOTE_JOBS) $*'
 
 clean:
 	rm -rf $(B) vectors/*.hex~ vectors/prev.hex vectors/ref.hex vectors/dst.hex \

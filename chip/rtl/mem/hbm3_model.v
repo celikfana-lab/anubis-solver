@@ -31,7 +31,9 @@ module hbm3_model #(
     // ceil(bytes / BW) cycles rounded a 3584-byte block up from 4.38 to 5 and
     // capped the link at 87% of its bandwidth.
     reg [31:0] credit;             // bytes of transfer the link can still take
-    wire [31:0] credit_after = credit + BW;
+    // the derate must apply on the accept path too, or a request is paid for
+    // with full-rate bytes while the recharge only trickles in
+    wire [31:0] credit_after = credit + (BW * EFF / 100);
 
     // latency pipeline: one request can start per cycle, so one slot per cycle
     reg              pv [0:LAT-1];

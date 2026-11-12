@@ -6,13 +6,13 @@ YOSYS    ?= yosys
 
 all: sim
 
-sim: tb_sha256 tb_pow tb_argon2_fill tb_lpddr6
+sim: tb_sha256 tb_pow tb_argon2_fill tb_lpddr6 tb_blake2b
 	$(VVP) tb_sha256
 	$(VVP) tb_pow
 	$(VVP) tb_argon2_fill
 	$(VVP) tb_lpddr6
+	$(VVP) tb_blake2b
 
-# BLAKE2b core is WIP (wrong digest, see README), run it explicitly.
 blake2b: tb_blake2b
 	$(VVP) tb_blake2b
 

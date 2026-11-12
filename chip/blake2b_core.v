@@ -8,6 +8,7 @@ module blake2b_core (
     input  wire [1023:0] block,    // 16 x 64-bit message words
     input  wire [63:0]   t,        // bytes processed so far (incl. this block)
     input  wire          last,     // final block flag
+    input  wire [31:0]   param_xor,// 0x01010000 ^ (kk<<8) ^ nn; Argon2 uses 0x01010040 or 0x01010020
     output reg  [511:0]  h_out,
     output reg           done,
     output reg           busy
@@ -76,16 +77,19 @@ module blake2b_core (
             rnd  <= 4'd0;
             stage<= 1'b0;
         end else if (start) begin
-            for (i = 0; i < 8; i = i + 1) hv[i] <= h_in[511 - 64*i -: 64];
-            v[0] <= h_in[511:448]; v[1] <= h_in[447:384];
+            // h[0] is pre-xored with the BLAKE2b parameter block; the same value
+            // must be used in the finalisation xor, so store it in hv[0].
+            hv[0] <= h_in[511:448] ^ param_xor;
+            for (i = 1; i < 8; i = i + 1) hv[i] <= h_in[511 - 64*i -: 64];
+            v[0] <= h_in[511:448] ^ param_xor;
+            v[1] <= h_in[447:384];
             v[2] <= h_in[383:320]; v[3] <= h_in[319:256];
             v[4] <= h_in[255:192]; v[5] <= h_in[191:128];
             v[6] <= h_in[127:64];  v[7] <= h_in[63:0];
             v[8]  <= IV0; v[9]  <= IV1; v[10] <= IV2; v[11] <= IV3;
             v[12] <= IV4 ^ t; v[13] <= IV5;
             v[14] <= last ? (IV6 ^ 64'hFFFFFFFFFFFFFFFF) : IV6; v[15] <= IV7;
-            v[0] <= h_in[511:448]; v[1] <= h_in[447:384];
-            for (i = 0; i < 16; i = i + 1) m[i] <= block[64*i +: 64];
+            for (i = 0; i < 16; i = i + 1) m[i] <= block[1023 - 64*i -: 64];
             rnd <= 4'd0;
             stage <= 1'b0;
             busy <= 1'b1;

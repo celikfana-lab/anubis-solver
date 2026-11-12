@@ -301,6 +301,27 @@ client = AnubisClient("https://example.com", impersonate="chrome")
 
 or bring your own `curl_cffi` session. `curl_cffi` is optional.
 
+## Hardware (Verilog)
+
+`chip/` contains a synthesizable reference implementation of the proof of work:
+a SHA-256 core with a nonce scanner for the `fast`/`slow`/`sha256` challenges,
+and a complete Argon2id datapath (BLAKE2b, H0, H′, `index_alpha`, the address
+generator and the two-pass fill loop, with the 1 KiB block memory inside the
+engine) for `argon2id`.
+
+It simulates under Icarus Verilog and it really solves a challenge: given a
+32-byte challenge at difficulty 4 it searched nonces on the die, found nonce 18
+with 7 leading zero bits, and `argon2-cffi` reproduces the tag byte for byte.
+
+```bash
+cd chip && make sim     # every testbench
+cd chip && make solve   # on-chip nonce search, M_COST = 64 blocks
+```
+
+The engine's memory is a flop array today, so it runs the real 19456-block
+parameters only in slow simulation (~10M cycles per hash); swapping it for the
+verified LPDDR6 model is the remaining work. See [`chip/README.md`](chip/README.md).
+
 ## CVE-2026-62314 (opt-in)
 
 Anubis v1.22.0 .. < v1.26.0-pre1 trusts the client-controlled `X-Original-URI`

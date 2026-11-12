@@ -67,6 +67,18 @@
 #include <unistd.h>
 #endif
 
+#if defined(__aarch64__) && defined(__linux__)
+#include <sys/auxv.h>
+#if defined(__has_include)
+#if __has_include(<asm/hwcap.h>)
+#include <asm/hwcap.h>
+#endif
+#endif
+#ifndef HWCAP_SHA2
+#define HWCAP_SHA2 (1UL << 6)
+#endif
+#endif
+
 #include "argon2.h"
 #include "hashx.h"
 
@@ -464,10 +476,33 @@ static int sha_ni_available(void) {
 }
 #endif
 
+#if defined(__aarch64__) && defined(ANUBIS_HAVE_NEON_ASM)
+extern void sha256_block_neon(uint32_t state[8], const uint8_t block[64]);
+
+static int arm_sha2_available(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *off = getenv("ANUBIS_NO_NEON");
+        if (off != NULL && off[0] != '\0' && off[0] != '0') {
+            cached = 0;
+        } else {
+            cached = (getauxval(AT_HWCAP) & HWCAP_SHA2) ? 1 : 0;
+        }
+    }
+    return cached;
+}
+#endif
+
 static void sha256_compress(uint32_t h[8], const uint8_t block[64]) {
 #ifdef ANUBIS_HAVE_SHANI_ASM
     if (sha_ni_available()) {
         sha256_block_shani(h, block);
+        return;
+    }
+#endif
+#if defined(__aarch64__) && defined(ANUBIS_HAVE_NEON_ASM)
+    if (arm_sha2_available()) {
+        sha256_block_neon(h, block);
         return;
     }
 #endif

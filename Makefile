@@ -19,13 +19,23 @@ CFLAGS  += -DANUBIS_HAVE_VULKAN
 LDFLAGS += -ldl
 endif
 endif
-# The assembly kernels are x86-64 only; the C fallbacks are always compiled.
+# Assembly kernels: x86-64 (AVX2 + SHA-NI) or AArch64 (NEON + SHA-2).
+# The portable C fallbacks are always compiled.
 ifeq ($(shell uname -m),x86_64)
 ASM_SRC  := src/avx2.s src/shani.s
+else ifeq ($(shell uname -m),aarch64)
+ASM_SRC  := src/neon.s
+CFLAGS   += -DANUBIS_HAVE_NEON_ASM
 else
 ASM_SRC  :=
 endif
-ARGON2_SRC := $(wildcard third_party/argon2/*.c third_party/argon2/blake2/*.c)
+ARGON2_ALL := $(wildcard third_party/argon2/*.c third_party/argon2/blake2/*.c)
+# opt.c needs x86 SSE/AVX intrinsics; ref.c is the portable implementation.
+ifeq ($(shell uname -m),x86_64)
+ARGON2_SRC := $(filter-out third_party/argon2/ref.c,$(ARGON2_ALL))
+else
+ARGON2_SRC := $(filter-out third_party/argon2/opt.c,$(ARGON2_ALL))
+endif
 
 OBJ := $(patsubst src/%.c,$(BUILD)/%.o,$(CORE_SRC)) \
        $(patsubst src/%.s,$(BUILD)/%.o,$(ASM_SRC)) \

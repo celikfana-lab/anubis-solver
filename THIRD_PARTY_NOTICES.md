@@ -35,3 +35,10 @@ This project targets the challenge protocol of
 [TecharoHQ/anubis](https://github.com/TecharoHQ/anubis), which is MIT licensed.
 No Anubis source is vendored here; the wire format was reimplemented from the
 documented behaviour and the project's Rust/Go sources.
+
+### Note on `third_party/argon2/ref.c`
+
+The vendored Argon2 package ships two interchangeable back ends: `opt.c`
+(x86 SSE/AVX intrinsics) and `ref.c` (portable C). The build uses `opt.c` on
+x86-64 and `ref.c` everywhere else. Both are part of the same Argon2 source
+package and carry the same CC0-1.0 / Apache-2.0 terms.

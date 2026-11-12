@@ -166,6 +166,22 @@ Single Argon2id hash on one core: 13.3 ms.
 
 Raw data: [`results/server-2026-11-12.json`](results/server-2026-11-12.json).
 
+
+## Raspberry Pi 5 (Cortex-A76)
+
+ARMv8 SHA-2 hardware path (`src/neon.s`), 4 cores at 2.4 GHz, 2 GB RAM,
+measured 2026-11-12:
+
+| threads | `fast` d6 | `sha256` bits20 | `argon2id` |
+|---:|---:|---:|---:|
+| 1 | 10.1 MH/s | 12.8 MH/s | 29.3 h/s |
+| 2 | 20.3 MH/s | 25.8 MH/s | 46.1 h/s |
+| 4 | 40.4 MH/s | 43.2 MH/s | 41.2 h/s |
+
+The NEON/SHA-2 kernel is ~5× faster than the portable C fallback
+(`fast` d6: 1.09 s vs 5.22 s). `ANUBIS_NO_NEON=1` reproduces the fallback.
+Argon2id is memory-bound and peaks at two threads on this board.
+
 ## Notes
 
 - **Thread scaling.** On this 20 W laptop, four pinned P-core threads are

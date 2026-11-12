@@ -17,6 +17,7 @@ src/                 C core and assembly kernels
   anubis_solver.c    hash backends, nonce search, verification, threading
   avx2.s             8-way AVX2 SHA-256 compression (hand-written asm)
   shani.s            SHA-NI single-block compression (hand-written asm)
+  neon.s             AArch64 NEON + ARMv8 SHA-2 single-block compression
   hashx.c/.h         C port of tevador/hashx (LGPL-3.0) — see notices
   vulkan.c           optional Vulkan compute backend (dlopen, SHA-256 only)
   sha256_comp.comp   GLSL compute shader for the GPU path
@@ -39,6 +40,11 @@ make test            # unit tests
 
 The Python module also builds the library on first import if `make` has not
 been run.
+
+On AArch64 (Raspberry Pi 5, Apple silicon under Linux, servers) the build
+uses `src/neon.s` — NEON plus the ARMv8 SHA-2 crypto instructions. Runtime
+dispatch checks `HWCAP_SHA2`; CPUs without it (e.g. Pi 4) fall back to the
+portable C compression. `ANUBIS_NO_NEON=1` forces the fallback for A/B tests.
 
 Vulkan support is auto-detected from `/usr/include/vulkan/vulkan.h`; the
 library `dlopen`s `libvulkan.so.1` at runtime, so a machine without Vulkan just
@@ -192,8 +198,10 @@ core of an i7-1260P:
   by macro arguments; the message schedule lives in a 2 KiB stack frame.
 - `shani.s`: Intel SHA extensions (`sha256rnds2`, `sha256msg1/2`) for
   single-block hashing; used when a batch cannot form and by `verify_*`.
-- Runtime dispatch: AVX2 batch → SHA-NI single → portable C. `ANUBIS_NO_AVX2=1`
-  and `ANUBIS_NO_SHANI=1` force the lower paths for A/B comparison.
+- Runtime dispatch: AVX2 batch → SHA-NI single → portable C on x86-64; on
+  AArch64: ARMv8 SHA-2 (NEON) single block → portable C. `ANUBIS_NO_AVX2=1`,
+  `ANUBIS_NO_SHANI=1` and `ANUBIS_NO_NEON=1` force the lower paths for A/B
+  comparison.
 
 Expected time by tier (one core): `fast`/`slow` light 0.1 ms, medium ~10 ms,
 hard ~2 s; `sha256` similar; `hashx` 0.2 ms / 15 ms / 294 ms; `argon2id`
@@ -202,6 +210,10 @@ v1.28.0+ adds the three WASM algorithms.
 
 With a Vulkan GPU, `fast`/`slow` hard drops to ~77 ms and `sha256` 24 bits to
 ~78 ms on an Iris Xe; see [SPEED.md](SPEED.md#gpu-vulkan).
+
+On a Raspberry Pi 5 (Cortex-A76, 2.4 GHz) the NEON/SHA-2 path reaches
+~10.1 MH/s (`fast`) and ~12.8 MH/s (`sha256`) per core, scaling to
+40.4 / 43.2 MH/s on four cores — about 5× faster than the portable C path.
 
 Threading and CPU affinity: on hybrid CPUs (Intel P/E cores) workers are pinned
 to the physical P-cores by default and the default thread count is the P-core

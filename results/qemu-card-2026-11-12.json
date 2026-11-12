@@ -1,0 +1,32 @@
+{
+  "what": "the card design driven by a real Linux driver in a QEMU VM",
+  "date": "2026-11-12",
+  "host": {
+    "machine": "56-core Xeon, Ubuntu 24.04",
+    "kernel": "6.8.0-90-generic",
+    "qemu": "v8.2.2, built with hw/misc/anubis_pci.c (x86_64-softmmu only)"
+  },
+  "setup": {
+    "device": "anubis-pci, vendor 0x1b36 device 0x0a0b, BAR0 256 bytes",
+    "register_map": "same as chip/rtl/periph/axil_regs.v",
+    "algorithm_in_model": "SHA-256(challenge || nonce_le), a stand-in for the card's Argon2id/HashX",
+    "driver": "card/linux/anubis_pci.c, polled (no MSI), self-test in probe",
+    "vm": "-M q35 -m 512 -no-reboot, host kernel, busybox initramfs, driver insmod'ed"
+  },
+  "run": {
+    "challenge": "hello anubis",
+    "nonce": "0x0123456789abcdef",
+    "bar0_id_read": "a0b15c01",
+    "status": "done=1 hit=0 lz=2",
+    "digest": "2793cb961005ddab986fb8cc103078be7e6ef02acd26623c1a9b601fd0962c44",
+    "expected": "2793cb961005ddab986fb8cc103078be7e6ef02acd26623c1a9b601fd0962c44",
+    "console_uart_lines": ["ANUBIS v1", "DONE NONCE 0x0123456789abcdef LZ 2"],
+    "result": "PASS"
+  },
+  "reproduce": "./card/tools/qemu_card_test.sh  (first run builds QEMU, ~10 min on 56 cores; later runs ~10 s)",
+  "caveats": [
+    "the device model runs SHA-256, not the card's Argon2id or HashX - this tests the register protocol",
+    "the driver polls; a real card would raise an MSI on done",
+    "a real FPGA still has to match bar size, enumeration timing and the PCIe IP's quirks"
+  ]
+}

@@ -40,7 +40,7 @@ TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
        tb_hashx
 
 .PHONY: all sim $(TBS) pow argon blake2b stream hprime h0 addr index engine \
-        hashx solve solve-hashx mpipe vectors vl64 vlreal synth clean
+        hashx solve solve-hashx mpipe vectors vl64 vlreal synth area clean
 .DEFAULT_GOAL := all
 
 all: sim
@@ -164,6 +164,19 @@ vlreal: $(ENGINE) sim/sim_top.v sim/sim_main.cpp | $(B)
 	$(B)/obj_vlreal/vlreal 25 1 32 0
 
 # ---- misc -----------------------------------------------------------------
+# Generic-cell counts from yosys, for comparing core sizes. These are not
+# standard cells: a wide mux maps to roughly 1.5 gates per cell, and a real
+# synthesis run would beat the mux network with a banked register file.
+AREA_TOPS := rtl/sha256/sha256_core.v rtl/argon2/argon2_fill.v \
+             rtl/hashx/hashx_exec.v rtl/mem/lpddr6_if.v
+
+area:
+	@for f in $(AREA_TOPS); do \
+	  t=$$(basename $$f .v); printf "%-16s " $$t; \
+	  $(YOSYS) -p "read_verilog -sv $$f; synth -top $$t -flatten; stat" 2>/dev/null \
+	    | awk '/Number of cells:/{c=$$NF} /Number of wire bits:/{w=$$NF} END{printf "cells=%-8s wires=%s\n", c, w}'; \
+	done
+
 synth:
 	$(YOSYS) -p "read_verilog -sv $(SHA) rtl/sha256/anubis_pow.v; synth -top sha256_core; stat"
 

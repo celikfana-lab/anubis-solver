@@ -142,7 +142,101 @@ reports a load failure separately from an overflow.
 
 ---
 
-## 7. A 1.02x faster Argon2id fill
+## 7. "She's working on a non-JavaScript version of Anubis, but it's not here yet"
+
+The claim, from
+[ZDNET, July 10 2025](https://www.zdnet.com/article/fed-up-with-ai-scraping-your-content-this-open-source-bot-blocker-can-help-heres-how/):
+
+> She is well aware that many people are hesitant to run JavaScript due to security
+> and privacy concerns. She's working on a non-JavaScript version of Anubis, but it's
+> not here yet. It will be a while.
+
+**Verdict: it shipped thirteen days before the article went up.**
+
+Receipts, in a checkout of `TecharoHQ/anubis`:
+
+```
+$ git log -1 --format='%ad %s' --date=short 4ac59c3a
+2025-06-06 feat(lib/challenge): HTTP meta refresh challenge method (#623)
+$ git tag --contains 4ac59c3a | sort -V | head -1
+v1.20.0                        # tagged 2025-06-27
+```
+
+`lib/challenge/metarefresh/metarefresh.go` registers the method
+(`challenge.Register("metarefresh", &Impl{})`), issues an HTTP `Refresh` header, and
+accepts the pass when `now >= IssuedAt + difficulty * 800ms`. There is no JavaScript
+in it, which is the whole point of the method. It is also not a footnote: the
+project's own demo site, `anubis.techaro.lol`, serves `metarefresh` about as often as
+it serves `sha256` (see [`dsh-plugin/README.md#the-metarefresh-discovery`](dsh-plugin/README.md)).
+
+The joke is what the JavaScript-free version turned out to be. It is not a puzzle, it
+is a **timer**: at difficulty 4 it means "wait 3.2 seconds, then try again". Every
+HTTP client follows a refresh header, so the version of Anubis that needs no
+JavaScript is also the version that needs no *work* — it is one branch in
+`tools/anubis_fetch.js`, and a scraper that is willing to sleep passes it.
+
+---
+
+## 8. "A computational puzzle, which is trivial for PCs but expensive for bots operating at scale"
+
+**Verdict: the first half is exactly right, and it is the second half that the
+product rests on.**
+
+Receipts in this repository, at difficulty 4, which is 65,536 expected hashes:
+
+| | hashes/s | one difficulty-4 challenge |
+|---|---:|---:|
+| one Xeon core, `fast` ([`results/speed-tiers.json`](results/speed-tiers.json)) | 6.69 M | 9.8 ms (the file's own `expected_ms`) |
+| 56 threads on one server ([`results/server-2026-11-12.json`](results/server-2026-11-12.json)) | 349.64 M | **0.19 ms**, about 5,300 per second |
+
+And against a live server ([`results/stress-anubis-2026-11-12.json`](results/stress-anubis-2026-11-12.json),
+Anubis v1.28.3, `fast`, difficulty 4): 64 concurrent workers solved 116 challenges per
+second, and the server used 3.1 of its 56 cores.
+
+None of this is a criticism of Anubis. It is a speed bump, its own documentation never
+claims otherwise, and a speed bump is still a speed bump. The claim that does not
+survive is the one the article makes on its behalf — that the work is *expensive for
+bots at scale* when it is 9.8 ms of one core per page, and cheaper on a GPU (entry 1:
+20.7x for Argon2id on a T4, and see [`results/hashx-cuda-t4.json`](results/hashx-cuda-t4.json)).
+
+---
+
+## 9. "Support is currently free"
+
+In full:
+
+> Support is currently free. You can access it via its GitHub issue page or, for live
+> chat, join Iaso's Patreon and ask in the Patreon Discord channel.
+
+**Verdict: free support, with the live half behind a monthly payment, in one sentence.**
+Two halves of a sentence that contradict each other, and the article does not notice.
+
+It also dismisses the thing that would pay for that support — the commercial edition
+"at this point just offers organizations more control over the program's branding" —
+which is a strange way to describe the revenue that keeps the free tier free.
+
+---
+
+## 10. The "here's how" that never says how
+
+The headline is "...this open-source bot blocker can help – here's how". The section
+titled "How to install and run Anubis" is four sentences, and it contains no command,
+no configuration file, no link to the documentation, and not even the name of the
+container image. It says that there are "several ways to install" and that Anubis "is
+meant to sit between your reverse proxy and your target service", then moves on to
+support.
+
+A reader who actually wants to do it gets further with
+[`web/beginner.html`](web/beginner.html) in this repository — six commands, and the
+output of each — or with Anubis's own README.
+
+To be fair: it gets the licence right (Anubis is MIT — `LICENSE`, Xe Iaso, 2025), which
+is more than most articles manage, and the Duke University figures it quotes are the
+kind of number that makes the case better than the prose does.
+
+---
+
+## 11. A 1.02x faster Argon2id fill
 
 **Ours, and it nearly shipped.** A rewrite that skipped one of the two 1 KiB
 scratch arrays on the first pass measured 1.02x faster and was wrong: with the

@@ -38,7 +38,11 @@ module anubis_tri_chip #(
     parameter integer MAXI      = 512,
     // ---- SHA-256 sub-chip -------------------------------------------------
     parameter integer NSHA      = 128,
-    parameter integer CHUNK     = 128
+    parameter integer CHUNK     = 128,
+    // ---- serial host interface + doctor ----------------------------------
+    parameter integer SPI_LANES = 8,        // 1 SPI, 4 QSPI, 8 OSPI
+    parameter integer CLK_HZ    = 1_000_000_000,
+    parameter integer BAUD      = 115_200
 ) (
     input  wire         clk,
     input  wire         rst_n,
@@ -79,37 +83,64 @@ module anubis_tri_chip #(
     output wire         sha_found,
     output wire [31:0]  sha_found_nonce,
     output wire [255:0] sha_found_digest,
-    output wire         sha_busy
+    output wire         sha_busy,
+
+    // ---- serial host interface: a Pi (SPI/QSPI) or an ESP32 (OSPI) --------
+    input  wire         spi_sclk,
+    input  wire         spi_cs_n,
+    input  wire [7:0]   spi_io_in,
+    output wire [7:0]   spi_io_out,
+    output wire [7:0]   spi_io_oe,
+    input  wire         uart_rx_pad,
+    output wire         uart_tx_pad,
+
+    // ---- doctor: one command byte (0x01) over either interface ------------
+    input  wire         doc_start_ext,
+    output wire         doc_busy,
+    output wire         doc_done,
+    output wire         doc_pass,
+    output wire [3:0]   doc_fail_mask
 );
     localparam integer NCTX = NENG * KCTX;
     localparam integer IDW  = (NCTX < 2) ? 1 : $clog2(NCTX);
     localparam integer NRESP = NPORT;
 
     // ======================= A2I: engines + eight HBM3e stacks =============
-    wire [NPORT-1:0]     req_valid, req_ready;
-    wire [NPORT*16-1:0]  req_bytes;
-    wire [NPORT*32-1:0]  req_blk;
-    wire [NPORT*IDW-1:0] req_id;
+    wire [NPORT-1:0]     eng_req_valid, eng_req_ready;
+    wire [NPORT-1:0]     mem_req_valid, mem_req_ready;
+    wire [NPORT*16-1:0]  eng_req_bytes, mem_req_bytes;
+    wire [NPORT*32-1:0]  eng_req_blk,   mem_req_blk;
+    wire [NPORT*IDW-1:0] eng_req_id,    mem_req_id;
     wire [NRESP-1:0]     resp_valid;
     wire [NRESP*IDW-1:0] resp_id;
+    wire                 doc_mem_en, doc_req_valid, doc_req_ready;
+    wire [31:0]          doc_req_blk;
+    wire [15:0]          doc_req_bytes;
+    wire [IDW-1:0]       doc_req_id;
     wire [NSTACK*64-1:0] st_bytes, st_reqs;
     wire [63:0]          req_served;
     wire [31:0]          collisions, overflow;
 
+    // "stop what you are doing" is a hard reset of the array: it loses its
+    // work, which is the point of a doctor request
+    wire a2i_rst_n = rst_n && !doc_mem_en;
+
     argon2_mpipe #(.NENG(NENG), .KCTX(KCTX), .CYC_BLOCK(CYC_BLOCK),
                    .BPH(BPH), .SEG(SEG), .IDW(IDW),
                    .NPORT(NPORT), .NRESP(NRESP)) a2i (
-        .clk(clk), .rst_n(rst_n), .start(a2i_start),
+        .clk(clk), .rst_n(a2i_rst_n), .start(a2i_start),
         .blocks_done(a2i_blocks_done),
-        .mem_req_valid(req_valid), .mem_req_bytes(req_bytes),
-        .mem_req_blk(req_blk), .mem_req_id(req_id), .mem_req_ready(req_ready),
+        .mem_req_valid(eng_req_valid), .mem_req_bytes(eng_req_bytes),
+        .mem_req_blk(eng_req_blk), .mem_req_id(eng_req_id),
+        .mem_req_ready(eng_req_ready),
         .mem_resp_valid(resp_valid), .mem_resp_id(resp_id));
 
     hbm3e_mem #(.NSTACK(NSTACK), .BW(BW), .LAT(LAT), .EFF(EFF), .IDW(IDW),
                 .NPORT(NPORT), .NRESP(NRESP)) a2i_mem (
         .clk(clk), .rst_n(rst_n),
-        .req_valid(req_valid), .req_blk(req_blk), .req_bytes(req_bytes),
-        .req_id(req_id), .req_ready(req_ready),
+        .req_valid(mem_req_valid), .req_blk(mem_req_blk),
+        .req_bytes(mem_req_bytes), .req_id(mem_req_id),
+        .req_ready(mem_req_ready),
         .resp_valid(resp_valid), .resp_id(resp_id),
         .bytes_served(a2i_bytes_served), .req_served(req_served),
         .st_bytes_served(st_bytes), .st_req_served(st_reqs),
@@ -124,6 +155,68 @@ module anubis_tri_chip #(
         else if (a2i_blocks_done >= BPH) a2i_done_r <= 1'b1;
     end
     assign a2i_busy = (a2i_blocks_done != 32'd0) && !a2i_done_r;
+
+    // The doctor gets lane 0 of the live memory while it runs; the array is
+    // held in reset, so nothing else can drive it.
+    genvar gl;
+    generate
+        for (gl = 0; gl < NPORT; gl = gl + 1) begin : mem_mux
+            wire sel = doc_mem_en && (gl == 0);
+            assign mem_req_valid[gl]         = sel ? doc_req_valid : eng_req_valid[gl];
+            assign mem_req_bytes[gl*16 +: 16] = sel ? doc_req_bytes
+                                                    : eng_req_bytes[gl*16 +: 16];
+            assign mem_req_blk[gl*32 +: 32]   = sel ? doc_req_blk
+                                                    : eng_req_blk[gl*32 +: 32];
+            assign mem_req_id[gl*IDW +: IDW]  = sel ? doc_req_id
+                                                    : eng_req_id[gl*IDW +: IDW];
+            assign eng_req_ready[gl] = mem_req_ready[gl];
+        end
+    endgenerate
+    assign doc_req_ready = mem_req_ready[0];
+
+    // ======================= serial host interface =========================
+    wire        spi_rx_valid, spi_rx_ready, uart_rx_valid;
+    wire [7:0]  spi_rx_byte, uart_rx_byte;
+    wire [7:0]  status_byte = {doc_pass, doc_done, doc_busy, doc_fail_mask, 1'b0};
+
+    wire [SPI_LANES-1:0] spi_do, spi_oe;
+
+    spi_slave #(.LANES(SPI_LANES)) spi (
+        .clk(clk), .rst_n(rst_n),
+        .sclk(spi_sclk), .cs_n(spi_cs_n),
+        .io_in(spi_io_in[SPI_LANES-1:0]),
+        .io_out(spi_do), .io_oe(spi_oe),
+        .rx_valid(spi_rx_valid), .rx_byte(spi_rx_byte),
+        .tx_valid(1'b1), .tx_byte(status_byte), .tx_ready(spi_rx_ready),
+        .frame_done());
+    assign spi_io_out = {{(8-SPI_LANES){1'b0}}, spi_do};
+    assign spi_io_oe  = {{(8-SPI_LANES){1'b0}}, spi_oe};
+
+    uart_rx #(.CLK_HZ(CLK_HZ), .BAUD(BAUD)) serial_in (
+        .clk(clk), .rst_n(rst_n), .rx(uart_rx_pad),
+        .rx_valid(uart_rx_valid), .rx_byte(uart_rx_byte), .frame_err());
+    // command out goes over SPI and the status pins; the UART log transmitter
+    // lives in anubis_argon2_card, so this pad idles high
+    assign uart_tx_pad = 1'b1;
+
+    // ---- command decode: 0x01 = DOCTOR ------------------------------------
+    wire cmd_doctor = doc_start_ext
+                   || (spi_rx_valid  && (spi_rx_byte  == 8'h01))
+                   || (uart_rx_valid && (uart_rx_byte == 8'h01));
+
+    wire [63:0] doc_argon_fold, doc_mem_seen;
+    wire [7:0]  doc_live;
+
+    doctor #(.IDW(IDW), .NSTACK(NSTACK), .LAT(LAT)) doc (
+        .clk(clk), .rst_n(rst_n), .start(cmd_doctor), .fault_inject(1'b0),
+        .busy(doc_busy), .done(doc_done), .pass(doc_pass),
+        .fail_mask(doc_fail_mask),
+        .argon_fold_seen(doc_argon_fold), .mem_seen_bitmap(doc_mem_seen),
+        .live_count(doc_live), .mem_en(doc_mem_en),
+        .mem_req_valid(doc_req_valid), .mem_req_blk(doc_req_blk),
+        .mem_req_bytes(doc_req_bytes), .mem_req_id(doc_req_id),
+        .mem_req_ready(doc_req_ready),
+        .mem_resp_valid(resp_valid[0]), .mem_resp_id(resp_id[IDW-1:0]));
 
     // ======================= HX: lane pool over a shared program ===========
     hashx_pool #(.NLANE(NHX), .MAXI(MAXI)) hx (

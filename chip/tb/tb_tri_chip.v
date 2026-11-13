@@ -79,7 +79,13 @@ module tb_tri_chip;
         .sha_nonce_le(sha_le), .sha_difficulty(sha_diff),
         .sha_nonce_base(sha_nbase),
         .sha_found(sha_found), .sha_found_nonce(sha_found_nonce),
-        .sha_found_digest(sha_found_digest), .sha_busy(sha_busy));
+        .sha_found_digest(sha_found_digest), .sha_busy(sha_busy),
+        // serial host + doctor unused here; tb_tri_chip_cmd drives those
+        .spi_sclk(1'b0), .spi_cs_n(1'b1), .spi_io_in(8'd0),
+        .spi_io_out(), .spi_io_oe(),
+        .uart_rx_pad(1'b1), .uart_tx_pad(),
+        .doc_start_ext(1'b0), .doc_busy(), .doc_done(), .doc_pass(),
+        .doc_fail_mask());
 
     // ---- HashX program vectors -------------------------------------------
     reg [63:0] hxmem [0:10289];   // 5 cases x 2058 words, as tb_hashx sizes it

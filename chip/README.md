@@ -34,8 +34,11 @@ rtl/
                                     lane pool, SHA-256 pool (each as fast as its
                                     algorithm allows)
   periph/     uart_tx.v           8N1 serial transmitter
+              uart_rx.v           8N1 receiver (commands over a console)
               uart_log.v          console: banner, and a HIT line per solve
               axil_regs.v         BAR0 register file on AXI4-Lite (the PCIe side)
+              spi_slave.v         SPI / QSPI / OSPI slave, LANES = 1,2,4,8
+              doctor.v            self-test: halt, test every datapath and the HBM
 
 tb/           one testbench per unit; tb_anubis_solve.v is the end-to-end search
 sim/          sim_top.v + sim_main.cpp, the Verilator harness
@@ -460,6 +463,41 @@ thing genuinely shared: it is fixed per challenge, so all lanes read one copy.
 The SHA-256 block has a known better form: a 64-stage pipeline does 1 hash/cycle
 for ~100k cells where 128 replicated scanners need ~1.1M for the same rate. It is
 not written yet; what is here is built from the already-verified iterative core.
+
+## Talking to it, and the doctor
+
+A Pi or an ESP32 talks to the chip over **SPI, QSPI or OSPI** — one block,
+`spi_slave`, with `LANES = 1, 2, 4 or 8`:
+
+```bash
+make spi-all       # the same byte over 1, 4 and 8 data lines
+```
+
+Sending the command byte **0x01** over SPI *or* UART (both decode to the same
+signal) makes the chip stop and test itself:
+
+```bash
+make doctor        # healthy -> PASS; fault_inject -> FAIL with a mask
+make tri-chip-cmd  # a QSPI request and a UART request, end to end
+```
+
+```
+cmd: 4-lane SPI sent 0x01 -> doctor ran, PASS
+cmd: UART sent 0x01 -> doctor ran, PASS
+doctor: healthy -> PASS (argon fold a156e4fdfec07f87, 64/64 memory responses)
+doctor: injected fault -> FAIL, fail_mask=0111 (ARGON,x SHA,x SIP,x MEM,x)
+```
+
+The doctor runs one real `argon2_fill`, one real `sha256_core`, one real
+`SipRound`, and a 64-request sweep over all eight HBM3e stacks. It resets the
+Argon2 array first, so the work in flight is lost — that is what "stop what you
+are doing" means.
+
+Two limits worth stating: it tests **one instance of each datapath**, not all
+365 Argon2 engines (identical layout catches systematic faults, not a single
+defective engine), and the HBM test covers the **controller and id path**, not
+DRAM cells — the memory model has no data path, so a stuck bit inside a DRAM
+cell is outside what it can see.
 
 ## Notes / next steps
 

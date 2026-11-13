@@ -618,6 +618,38 @@ reference: HashX must find nonce 228 (9 leading zero bits, the C reference's
 first hit), SHA-256 must find nonce 83 with digest `008fa7f1...`, and the
 Argon2id array's traffic must match its engine count and block cost.
 
+### Talking to it, and asking it to check itself
+
+A Raspberry Pi or an ESP32 reaches the chip over **SPI, QSPI or OSPI**: one
+`spi_slave` block with `LANES = 1, 2, 4 or 8`, so the same RTL covers a Pi's
+plain SPI, a Pi's QSPI and an ESP32-S3's OSPI. Measured: a byte in and a byte
+out in 8, 2 or 1 SCLK cycles respectively, all three checked by `tb_spi`.
+
+Writing the command byte **0x01** — over SPI or over UART, both decode into the
+same signal — makes the chip test itself. It resets the Argon2 array first (it
+loses its work, which is the point of a doctor request) and then runs:
+
+| test | what it proves |
+|---|---|
+| **ARGON** | one real `argon2_fill` on a fixed block, XOR-folded over all 128 output words |
+| **SHA** | one real `sha256_core` on a fixed block against a digest computed offline |
+| **SIP** | one real `SipRound` on a fixed state, the HashX ALU's core operation |
+| **MEM** | 64 requests spread over all 8 HBM3e stacks: every response must arrive exactly once with a valid id |
+| **LIVE** | a counter the host polls — a dead clock cannot be detected by logic running on that clock |
+
+The result comes back as a status byte on the SPI pads and on the status pins:
+`{pass, done, busy, fail[3:0], 0}`.
+
+**The checker is proven able to fail.** With `fault_inject` set the doctor
+reports `fail_mask = 4'b0111`, and `tb_doctor` requires exactly that — a checker
+that cannot fail proves nothing.
+
+Two limits, so a PASS is not over-read: it tests one instance of each datapath
+rather than all 365 Argon2 engines (they have identical layout, so a systematic
+fault is caught but a single defective engine is not), and **MEM tests the
+controller and id path, not DRAM cells** — the memory model here has no data
+path, so a stuck bit inside a DRAM cell is outside what it can see.
+
 ### Against the GPUs
 
 | machine | argon2id hashes/s | hashx hashes/s |

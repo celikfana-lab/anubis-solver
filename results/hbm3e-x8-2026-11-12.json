@@ -737,5 +737,58 @@
       "HashX: pipelining across nonces needs the full 512-bit register state per stage (~256 Kbit for 512 stages), which costs more than replicating lanes, so replication is the right shape",
       "Argon2id: 365 engines is the measured saturation point of eight HBM3e stacks; a 366th buys nothing"
     ]
+  },
+  "serial_host_interface_and_doctor": {
+    "spi": {
+      "rtl": "chip/rtl/periph/spi_slave.v",
+      "modes": "LANES = 1 (SPI), 2 (dual), 4 (QSPI), 8 (OSPI); mode 0",
+      "measured": {
+        "lanes": 1,
+        "sclk_cycles_per_byte": 8,
+        "result": "PASS"
+      },
+      "measured_qspi": {
+        "lanes": 4,
+        "sclk_cycles_per_byte": 2,
+        "result": "PASS"
+      },
+      "measured_ospi": {
+        "lanes": 8,
+        "sclk_cycles_per_byte": 1,
+        "result": "PASS"
+      },
+      "constraint": "SCLK is synchronised into clk, so SCLK must stay below clk/4 (250 MHz at a 1 GHz core)",
+      "bug_found": "the last data group re-sent the byte's low bits on QSPI: A5 came back as 55. One shift formula for every group fixed it"
+    },
+    "uart_rx": {
+      "rtl": "chip/rtl/periph/uart_rx.v",
+      "note": "8N1 receiver with mid-bit sampling; the console could transmit but not listen"
+    },
+    "doctor": {
+      "rtl": "chip/rtl/periph/doctor.v",
+      "trigger": "command byte 0x01 over SPI or UART (both decode into one signal), or doc_start_ext",
+      "halts": "resets the Argon2 array; in-flight work is lost, which is the point of the request",
+      "tests": {
+        "ARGON": "one real argon2_fill on the block-A vector, XOR fold over all 128 words, expected A156E4FDFEC07F87",
+        "SHA": "one real sha256_core over one padded block of 55 'a' bytes, expected 9F4390F8D30C2DD9...",
+        "SIP": "one real SipRound on a fixed state, expected 701E344BE987ADD5...",
+        "MEM": "64 requests over all 8 HBM3e stacks; every response exactly once with a valid id",
+        "LIVE": "a counter the host polls; a dead clock cannot be detected by logic running on it"
+      },
+      "result_byte": "{pass, done, busy, fail[3:0], 0} on the SPI pads and status pins",
+      "proven_able_to_fail": "fault_inject corrupts the expected values and the doctor reports fail_mask = 4'b0111; tb_doctor requires that, so the checker is not vacuous",
+      "limits": [
+        "tests one instance of each datapath, not all 365 Argon2 engines: identical layout catches a systematic fault, not a single defective engine",
+        "MEM tests the controller and id-routing path, not DRAM cells: the memory model has no data path, so a stuck bit inside a DRAM cell is outside what it can see"
+      ]
+    },
+    "integration": {
+      "rtl": "chip/rtl/top/anubis_tri_chip.v gained SPI pads, a UART receiver and the doctor, with a mux that hands memory lane 0 to the doctor while it runs",
+      "verified": "tb_tri_chip_cmd: a 4-lane SPI request and a UART request each start the doctor and each report PASS"
+    },
+    "known_gaps": [
+      "uart_tx_pad is tied idle on anubis_tri_chip: the UART path is command-in and status-out over SPI. The console log transmitter lives in anubis_argon2_card",
+      "the doctor's report is a status byte plus the status pins; a human-readable console line is not wired yet"
+    ]
   }
 }

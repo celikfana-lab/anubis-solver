@@ -120,6 +120,33 @@ verification, and each ships with tests that run against the real library:
 (cd bindings/asm    && make run && make run-arm)                 # both arches
 ```
 
+### HashX compiled to WebAssembly
+
+A HashX program is fixed for a whole challenge, so it does not need to be
+interpreted. `tools/gen_hashx_wat.py` emits the 512-instruction program as
+straight-line WAT, `wat2wasm` assembles it, and the result beats the module
+Anubis itself ships:
+
+| module | size | hashes/s | |
+|---|---:|---:|---|
+| **`wasm/hashx_jit.wasm`** (compiled WAT) | **10,232 B** | **2,060,938** | |
+| `baseline/hashx.wasm` (official Anubis) | 35,983 B | 329,083 | **6.26× slower** |
+| `simd128/hashx.wasm` (official Anubis) | 35,863 B | 350,914 | **5.87× slower** |
+
+Same 2 M hashes, same challenge, Node 26. And the three implementations — our C
+engine, our compiled WAT, Anubis's Rust module — agree on the nonce *and* the
+digest for the same work, which is what `wasm/verify.mjs` checks:
+
+```bash
+cd wasm
+make && make bench        # the benchmark above
+node verify.mjs           # cross-implementation agreement
+make serve                # http://127.0.0.1:8933/demo/ — the browser demo
+```
+
+The demo solves the challenge with each engine, reports hashes/s, and shows
+whether the official module finds the same nonce and digest as ours.
+
 ### Configuration: `make config`
 
 Before building, ask the machine what it is:
@@ -188,6 +215,7 @@ bindings/csharp/         C# bindings (P/Invoke, no NuGet)
 bindings/r/              R bindings (.Call shim)
 bindings/java/           Java bindings (JNI, no jars)
 bindings/rust/           Rust bindings (hand-written FFI, no deps)
+wasm/                   HashX compiled to WAT, benchmarked against Anubis
 bindings/asm/            assembly macros + demos (x86-64 and AArch64)
 dsh-plugin/              DSH tool: anubis_fetch, a web_fetch for Anubis pages
 tools/anubis_fetch.js    the fetch driver the plugin uses (pure Node)

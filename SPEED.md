@@ -685,6 +685,29 @@ Against the 2x Tesla T4 pair measured earlier: Argon2id **40x** (70,122 vs
 1,759) and HashX **2.1x** (224 M vs 108.5 M). A Pi 5 reaches ~10.1 MH/s of
 SHA-256 on its NEON/SHA-2 path, so 128 lanes are ~190x that.
 
+### WebAssembly: HashX compiled to WAT
+
+The HashX verifier is a 512-instruction VM, and its program is fixed for a whole
+challenge — so it does not have to be interpreted. `tools/gen_hashx_wat.py` emits
+the program as straight-line WAT (`wasm/hashx_jit.wat`, 1,171 lines, 10,232-byte
+module) and `wat2wasm` assembles it. Same challenge, 2,000,000 hashes, Node 26:
+
+| module | size | hashes/s | vs compiled WAT |
+|---|---:|---:|---:|
+| **hashx_jit.wasm** (compiled WAT) | **10,232 B** | **2,060,938** | — |
+| baseline/hashx.wasm (official Anubis) | 35,983 B | 329,083 | 6.26x slower |
+| simd128/hashx.wasm (official Anubis) | 35,863 B | 350,914 | 5.87x slower |
+
+For scale, the C engine is ~571 cycles/hash: ~1.75 M hashes/s per core lane at
+1 GHz. The compiled-WAT module lands in the same range as native C per lane,
+which is the interesting result — hand-emitted WAT with no optimiser behind it,
+against a Rust-compiled interpreter.
+
+Correctness is not assumed: `wasm/verify.mjs` makes both engines solve the same
+difficulty-16 challenge, and they return the **same nonce (180078) and the same
+digest** — the official module is 7-9x slower on the same work. Three
+implementations (our C engine, our WAT, Anubis's Rust) agreeing is the evidence.
+
 ### Tesla T4 (sm_75): the SHA-256 kernel and its SASS
 
 `src/sass/nvidiaT4_sha256.sass` is the shipped `src/cuda/cuda_sha256.cu` kernel

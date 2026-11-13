@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Anubis HashX: compiled WAT vs the official WASM</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #12141a; --panel: #1a1d26; --line: #2b3040; --fg: #e6e9f0;
+    --dim: #98a0b3; --accent: #4d6bfe; --good: #35c07a; --bad: #e5534b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem 4rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 60rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  h1 span { color: var(--accent); }
+  p.lede { color: var(--dim); margin: 0 0 2rem; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: .75rem;
+    padding: 1.25rem; margin-bottom: 1rem;
+  }
+  .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; }
+  label { display: block; font-size: .8rem; color: var(--dim); margin-bottom: .3rem; }
+  input, select, button {
+    font: inherit; color: var(--fg); background: #11131a;
+    border: 1px solid var(--line); border-radius: .4rem; padding: .45rem .6rem;
+  }
+  input[type=number] { width: 7rem; }
+  button { cursor: pointer; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; border-color: var(--line); font-weight: 500; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { text-align: left; padding: .5rem .4rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
+  .pill { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .78rem; font-weight: 600; }
+  .pill.good { background: rgba(53,192,122,.15); color: var(--good); }
+  .pill.bad { background: rgba(229,83,75,.15); color: var(--bad); }
+  .pill.dim { background: rgba(152,160,179,.12); color: var(--dim); }
+  code, .mono { font-family: var(--mono); font-size: .85em; }
+  .digest { font-family: var(--mono); font-size: .78rem; color: var(--dim); word-break: break-all; }
+  progress { width: 100%; height: .5rem; }
+  .note { color: var(--dim); font-size: .82rem; }
+  footer { color: var(--dim); font-size: .82rem; margin-top: 2rem; line-height: 1.7; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Anubis HashX in WebAssembly: <span>compiled WAT</span> vs the official module</h1>
+  <p class="lede">
+    A HashX program is fixed for a whole challenge, so it does not have to be
+    interpreted. The left-hand module is the 512-instruction program emitted as
+    straight-line WAT (<code>tools/gen_hashx_wat.py</code>); the right-hand ones are
+    the modules Anubis actually ships. Same challenge, same nonces, same work —
+    only the execution strategy differs.
+  </p>
+
+  <div class="panel">
+    <div class="row">
+      <div>
+        <label for="difficulty">difficulty (leading zero bits)</label>
+        <input id="difficulty" type="number" min="1" max="32" value="16">
+      </div>
+      <div>
+        <label for="window">throughput window (hashes)</label>
+        <input id="window" type="number" min="10000" max="50000000" step="10000" value="1000000">
+      </div>
+      <button id="run">Run</button>
+      <button id="cancel" class="ghost" disabled>Cancel</button>
+    </div>
+    <p class="note" id="status">idle</p>
+    <progress id="progress" value="0" max="1" hidden></progress>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>engine</th>
+          <th>module</th>
+          <th class="num">hashes/s</th>
+          <th class="num">solve time</th>
+          <th class="num">nonce</th>
+        </tr>
+      </thead>
+      <tbody id="engines">
+        <tr><td colspan="5" class="note">not run yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead>
+        <tr><th>check</th><th>result</th></tr>
+      </thead>
+      <tbody id="checks">
+        <tr><td colspan="2" class="note">not run yet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    <p>
+      Reference: our C engine does ~571 cycles/hash (<code>SPEED.md</code>). The
+      official modules are the ones shipped by
+      <a href="https://github.com/TecharoHQ/anubis">TecharoHQ/anubis</a> v1.28.3,
+      copied verbatim into <code>official/</code> for comparison (MIT, © Xe Iaso).
+      This page is a static demo; run <code>make serve</code> from <code>wasm/</code>.
+    </p>
+    <p>
+      Everything runs locally. Nothing here solves a real Anubis challenge on
+      someone else's site — the challenge is a fixed test vector so the two
+      engines can be compared on identical work.
+    </p>
+  </footer>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

@@ -45,3 +45,11 @@ The vendored Argon2 package ships two interchangeable back ends: `opt.c`
 (x86 SSE/AVX intrinsics) and `ref.c` (portable C). The build uses `opt.c` on
 x86-64 and `ref.c` everywhere else. Both are part of the same Argon2 source
 package and carry the same CC0-1.0 / Apache-2.0 terms.
+
+## Anubis HashX WebAssembly modules (`wasm/demo/official/`)
+
+`hashx-baseline.wasm` and `hashx-simd128.wasm` are copied verbatim from
+**TecharoHQ/anubis** v1.28.3 (`web/static/wasm/`), MIT licensed, © 2025 Xe Iaso.
+They are used only as the comparison baseline in `wasm/bench.mjs`,
+`wasm/verify.mjs` and the demo page. The attribution condition in `LICENSE`
+section 3 applies to this repository's own work, not to them.

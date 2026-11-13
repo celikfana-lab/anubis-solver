@@ -36,6 +36,7 @@ cd wasm && make verify-module              # our wasm kernels vs Anubis's own mo
 cd wasm && make verify-jit                 # the runtime HashX compiler, 63 checks
 cd web  && make check                      # the site: links, anchors, layout
 webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see webgpu/README.md)
+gcc -O2 -o /tmp/clrun tools/xe-sha256-opencl.c -lOpenCL && /tmp/clrun   # SHA-256 on Intel Xe, needs intel-opencl-icd
 ```
 
 ## Layout
@@ -46,7 +47,7 @@ webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see 
 | `src/hashx/hashx.c/.h` | HashX generator, interpreter, x86-64/AArch64 JITs (LGPL-3.0) |
 | `src/cpu/*.s` | hand-written SHA-256 kernels (AVX2, SHA-NI, AVX-512, NEON) |
 | `src/cuda/*.cu` | CUDA backends (SHA-256, Argon2id, HashX) |
-| `src/intel/xe/` | Intel Xe (gen12lp) assembly for the SHA-256 kernel, generated and checked by `tools/gen_xe_sha256.py` |
+| `src/intel/xe/` | Intel Xe (gen12lp) assembly for the SHA-256 kernel: a hand-written listing from `tools/gen_xe_sha256.py`, and IGC's own code extracted from a Zebin that ran on the GPU |
 | `src/levelzero/*.c` | Level Zero backends; kernels in `src/levelzero/*.cl` |
 | `src/vulkan/vulkan.c` | Vulkan backends; kernels in `src/vulkan/*.comp` |
 | `src/opencl/` | portable OpenCL host (not wired yet) |
@@ -97,6 +98,7 @@ webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see 
 | `src/opencl/opencl_kernels.h` | re-embed the three `.cl` files |
 | `src/cpu/avx2.s`, `src/cpu/avx512.s` | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` |
 | `src/intel/xe/intelXe_sha256.xe` | `tools/gen_xe_sha256.py` (needs `IGA64` to assemble) |
+| `src/intel/xe/intelXe_sha256.igc.xe` | run `tools/xe-sha256-opencl.c`, `dd` the `.text.sha256_pow` section out of the Zebin, `iga64 -p 12p1 -d` |
 
 ## Pitfalls we hit
 

@@ -1,0 +1,1815 @@
+// ===========================================================================
+//  INTEL XE (gen12lp) ASSEMBLY - sha256_pow_kernel, compiled by IGC (vendor)
+//
+//  This is not hand-written. It is what Intel's own compiler produced for the
+//  SHA-256 kernel, extracted from a real run on the GPU:
+//
+//    device    : Intel(R) Iris(R) Xe Graphics (gen12lp, 96 EUs)
+//    runtime   : OpenCL 3.0 NEO, Intel graphics compute runtime 25.31.34666.3
+//    compiler  : IGC 2.16.0 / libigc2 (Ubuntu libigc2 2.16.0-2ubuntu1)
+//    source    : tools/xe-sha256-opencl.c (one work-item per nonce, nonce in
+//                W[0], K in a __constant array, clz() hit test, atomic slot)
+//    binary    : Zebin ELF, section .text.sha256_pow at file offset 0x40,
+//                0x5040 bytes (20,544) = 1,284 instructions; the K table lives
+//                separately in .data.const (256 bytes, 64 words)
+//    extracted : dd if=igc-sha256.bin of=igc-text.bin bs=1 skip=64 count=20544
+//                iga64 -p 12p1 -d igc-text.bin
+//    disasm    : Intel Graphics Assembler 1.1.0-71af4e2 (also shipped as
+//                /usr/bin/iga64 by libigc2-tools)
+//
+//  Verified on the GPU: this kernel returns digest
+//     f2bf82167d41fe1701711273d69d05f17793d6adb5bc30d290b448d1f5585f71
+//  for nonce 0, which is hashlib.sha256 of the same 48-byte message, and it
+//  measures 195.2 M hashes/s at difficulty 32 (4,194,304 nonces, best of 5).
+//
+//  Read this next to intelXe_sha256.xe, the hand-written listing: same
+//  algorithm, same digest, very different code. IGC keeps K in constant data
+//  and loops the rounds, so it is 1,711 instructions against 2,844 unrolled.
+// ===========================================================================
+
+L0:
+(W)     mov (8|M0)               r87.0<1>:ud   r0.0<1;1,0>:ud
+(W)     or (1|M0)                cr0.0<1>:ud   cr0.0<0;1,0>:ud   0x4C0:uw              {@1}
+(W)     mul (1|M0)               acc0.0<1>:d   r8.0<0;1,0>:d     r87.2<0;1,0>:uw  {Compacted,@1}
+(W)     mach (1|M0)              r3.0<1>:d     r8.0<0;1,0>:d     r87.1<0;1,0>:d   {Compacted}
+        add (16|M0)              r4.0<1>:d     r3.0<0;1,0>:d     r1.0<16;16,1>:uw {@1}
+        add (16|M16)             r10.0<1>:d    r3.0<0;1,0>:d     r2.0<16;16,1>:uw
+        add (16|M0)              r14.0<1>:d    r4.0<8;8,1>:d     r7.0<0;1,0>:d    {Compacted,@2}
+        add (16|M16)             r16.0<1>:d    r10.0<8;8,1>:d    r7.0<0;1,0>:d    {Compacted,@2}
+        cmp (16|M0)   (lt)f0.0   null<1>:d     r14.0<8;8,1>:ud   r9.2<0;1,0>:ud   {@2}
+        cmp (16|M16)  (lt)f0.0   null<1>:d     r16.0<8;8,1>:ud   r9.2<0;1,0>:ud   {@2}
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(f0.0)  if (32|M0)                           L20256                  L20256
+L160:
+(W)     mov (8|M0)               r3.0<1>:w     0x76543210:v
+(W)     mov (8|M0)               r4.0<1>:w     0x76543210:v
+(W)     add (8|M0)               r3.8<1>:w     r3.0<8;8,1>:w     8:w               {@2}
+(W)     add (8|M0)               r4.8<1>:w     r4.0<8;8,1>:w     8:w               {@2}
+(W)     add (16|M0)              r3.0<1>:w     r3.0<16;16,1>:w   16:w               {@2}
+        shl (16|M0)              r10.0<1>:d    r4.0<16;16,1>:uw  2:w               {@2}
+        shl (16|M16)             r12.0<1>:d    r3.0<16;16,1>:uw  2:w               {@2}
+(W)     and (1|M0)               r5.0<1>:d     r87.5<0;1,0>:d    -1024:w               {Compacted}
+        add (16|M0)              r114.0<1>:d   r14.0<8;8,1>:d    r9.0<0;1,0>:d    {Compacted}
+        add (16|M16)             r112.0<1>:d   r16.0<8;8,1>:d    r9.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r92.0<1>:d    r5.0<0;1,0>:d     r10.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r90.0<1>:d    r5.0<0;1,0>:d     r12.0<8;8,1>:d   {Compacted,@5}
+        mov (16|M0)              r102.3<4>:ub  r114.0<4;1,0>:ub                 {@4}
+        mov (16|M16)             r100.3<4>:ub  r112.0<4;1,0>:ub                 {@4}
+        mov (16|M0)              r102.0<4>:ub  r114.3<4;1,0>:ub
+        mov (16|M16)             r100.0<4>:ub  r112.3<4;1,0>:ub
+        mov (16|M0)              r102.2<4>:ub  r114.1<4;1,0>:ub
+        mov (16|M16)             r100.2<4>:ub  r112.1<4;1,0>:ub
+        mov (16|M0)              r102.1<4>:ub  r114.2<4;1,0>:ub
+        mov (16|M16)             r100.1<4>:ub  r112.2<4;1,0>:ub
+        send.dc1 (16|M0)         null     r92     r102    0x80            0x04025EFF           {@2,$0} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r90     r100    0x80            0x04025EFF           {@1,$1} // wr:2+2, rd:0; untyped surface write with x
+(W)     mov (2|M0)               r3.0<1>:f     r8.4<2;2,1>:f                    {Compacted}
+(W)     mov (1|M0)               r6.0<1>:hf    0x20:hf
+(W)     mov (1|M0)               r4.0<1>:f     r3.0<0;1,0>:f                    {Compacted,@2}
+(W)     mov (1|M0)               r4.1<1>:f     r3.1<0;1,0>:f                    {Compacted}
+        mul (16|M0)              r10.0<1>:d    r6.0<0;1,0>:w     12:w               {@3}
+        mul (16|M16)             r12.0<1>:d    r6.0<0;1,0>:w     12:w
+        mul (16|M0)              r14.0<1>:d    r6.0<0;1,0>:w     20:w
+        add (16|M0)              r26.0<1>:d    r92.0<8;8,1>:d    128:w               {Compacted}
+        add (16|M16)             r28.0<1>:d    r90.0<8;8,1>:d    128:w               {Compacted}
+        mul (16|M16)             r16.0<1>:d    r6.0<0;1,0>:w     20:w
+        mul (16|M0)              r18.0<1>:d    r6.0<0;1,0>:w     24:w
+        mul (16|M16)             r20.0<1>:d    r6.0<0;1,0>:w     24:w
+        mul (16|M0)              r22.0<1>:d    r6.0<0;1,0>:w     28:w
+        mul (16|M16)             r24.0<1>:d    r6.0<0;1,0>:w     28:w
+        add (16|M0)              r34.0<1>:d    r10.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r36.0<1>:d    r12.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r30.0<1>:d    r92.0<8;8,1>:d    256:w               {Compacted}
+        add (16|M0)              r38.0<1>:d    r92.0<8;8,1>:d    512:w               {Compacted}
+        add (16|M16)             r32.0<1>:d    r90.0<8;8,1>:d    256:w               {Compacted}
+        add (16|M16)             r40.0<1>:d    r90.0<8;8,1>:d    512:w               {Compacted}
+        add (16|M0)              r42.0<1>:d    r14.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r44.0<1>:d    r16.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted}
+(W)     send.dc1 (8|M0)          r5       r4      null    0x0            0x021D0AFF           {$2} // wr:1h+0, rd:1; a64 aligned oword block read x2
+        add (16|M0)              r46.0<1>:d    r18.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r48.0<1>:d    r20.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r50.0<1>:d    r22.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r54.0<1>:d    r92.0<8;8,1>:d    1024:w               {Compacted}
+        add (16|M16)             r56.0<1>:d    r90.0<8;8,1>:d    1024:w               {Compacted}
+        add (16|M16)             r52.0<1>:d    r24.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted}
+(W)     mov (1|M0)               r3.0<1>:hf    0x20:hf
+        mul (16|M16)             r24.0<1>:d    r6.0<0;1,0>:w     40:w
+        sync.nop                             null                             {Compacted,$2.src}
+(W)     add (4|M0)               r4.0<1>:ud    r3.0<0;1,0>:uw    0x8080400:uv              {@2}
+        mov (16|M0)              r72.0<1>:f    0.0:f                               {Compacted}
+        mov (16|M16)             r94.0<1>:f    0.0:f                               {Compacted}
+(W)     mov (1|M0)               r86.2<1>:f    2.24208e-44:f
+        mov (16|M0)              r10.0<1>:f    r5.0<0;1,0>:f                    {Compacted,$2.dst}
+        mov (16|M16)             r12.0<1>:f    r5.0<0;1,0>:f                    {Compacted}
+        send.dc1 (16|M0)         null     r26     r10     0x80            0x04025EFF           {@2,$3} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r28     r12     0x80            0x04025EFF           {@1,$4} // wr:2+2, rd:0; untyped surface write with x
+        mov (16|M0)              r14.0<1>:f    r5.1<0;1,0>:f                    {Compacted}
+        mov (16|M16)             r16.0<1>:f    r5.1<0;1,0>:f                    {Compacted}
+        mov (16|M0)              r18.0<1>:f    r5.2<0;1,0>:f                    {Compacted}
+        mov (16|M16)             r20.0<1>:f    r5.2<0;1,0>:f                    {Compacted}
+        mov (16|M0)              r22.0<1>:f    r5.3<0;1,0>:f                    {Compacted}
+        mov (16|M16)             r10.0<1>:f    r5.3<0;1,0>:f                    {Compacted,$3.src}
+        mov (16|M0)              r12.0<1>:f    r5.4<0;1,0>:f                    {Compacted,$4.src}
+        send.dc1 (16|M0)         null     r30     r14     0x80            0x04025EFF           {@7,$5} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r32     r16     0x80            0x04025EFF           {@6,$6} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r34     r18     0x80            0x04025EFF           {@5,$7} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r36     r20     0x80            0x04025EFF           {@4,$8} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r38     r22     0x80            0x04025EFF           {@3,$9} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r40     r10     0x80            0x04025EFF           {@2,$10} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r42     r12     0x80            0x04025EFF           {@1,$11} // wr:2+2, rd:0; untyped surface write with x
+        mov (16|M16)             r14.0<1>:f    r5.4<0;1,0>:f                    {Compacted,$5.src}
+        mov (16|M0)              r16.0<1>:f    r5.5<0;1,0>:f                    {Compacted,$6.src}
+        mov (16|M16)             r18.0<1>:f    r5.5<0;1,0>:f                    {Compacted,$7.src}
+        mov (16|M0)              r20.0<1>:f    r5.6<0;1,0>:f                    {Compacted,$8.src}
+        mov (16|M16)             r22.0<1>:f    r5.6<0;1,0>:f                    {Compacted,$9.src}
+        mov (16|M0)              r10.0<1>:f    r5.7<0;1,0>:f                    {Compacted,$10.src}
+        mov (16|M16)             r12.0<1>:f    r5.7<0;1,0>:f                    {Compacted,$11.src}
+        send.dc1 (16|M16)        null     r44     r14     0x80            0x04025EFF           {@7,$12} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r46     r16     0x80            0x04025EFF           {@6,$13} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r48     r18     0x80            0x04025EFF           {@5,$14} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r50     r20     0x80            0x04025EFF           {@4,$15} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r52     r22     0x80            0x04025EFF           {@3,$2} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r54     r10     0x80            0x04025EFF           {@2,$0} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r56     r12     0x80            0x04025EFF           {@1,$1} // wr:2+2, rd:0; untyped surface write with x
+        mul (16|M0)              r16.0<1>:d    r6.0<0;1,0>:w     36:w               {$13.src}
+        mul (16|M16)             r18.0<1>:d    r6.0<0;1,0>:w     36:w               {$14.src}
+        mul (16|M0)              r20.0<1>:d    r6.0<0;1,0>:w     40:w               {$15.src}
+        mul (16|M16)             r26.0<1>:d    r6.0<0;1,0>:w     44:w
+        mul (16|M0)              r22.0<1>:d    r6.0<0;1,0>:w     44:w               {$2.src}
+        add (16|M0)              r28.0<1>:d    r16.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted,@5}
+        sync.nop                             null                             {Compacted,$1.src}
+        add (16|M16)             r12.0<1>:d    r18.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r30.0<1>:d    r20.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r32.0<1>:d    r24.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r34.0<1>:d    r26.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted,@6}
+        mul (16|M0)              r20.0<1>:d    r6.0<0;1,0>:w     48:w
+        mul (16|M0)              r24.0<1>:d    r6.0<0;1,0>:w     52:w
+        mul (16|M16)             r26.0<1>:d    r6.0<0;1,0>:w     52:w
+        mov (16|M0)              r46.0<1>:f    -0.0:f                               {Compacted}
+        sync.nop                             null                             {Compacted,$12.src}
+(W)     send.dc0 (4|M0)          r14      r4      null    0x0            0x02110800           {$3} // wr:1+0, rd:1; byte gathering read 32b
+        sync.nop                             null                             {Compacted,$3.src}
+        add (16|M0)              r4.0<1>:d     r22.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted,@7}
+        mul (16|M16)             r22.0<1>:d    r6.0<0;1,0>:w     48:w
+        sync.nop                             null                             {Compacted,$3.dst}
+(W)     mov (2|M0)               r10.0<1>:f    r14.0<2;2,1>:f                   {Compacted,$0.src}
+        mov (16|M0)              r18.0<1>:f    r14.2<0;1,0>:f                   {Compacted}
+        mov (16|M0)              r36.0<1>:f    r10.0<0;1,0>:f                   {Compacted,@2}
+        mov (16|M16)             r38.0<1>:f    r10.0<0;1,0>:f                   {Compacted}
+        mov (16|M0)              r40.0<1>:f    r10.1<0;1,0>:f                   {Compacted}
+        send.dc1 (16|M0)         null     r28     r36     0x80            0x04025EFF           {@3,$4} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r12     r38     0x80            0x04025EFF           {@2,$5} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r30     r40     0x80            0x04025EFF           {@1,$6} // wr:2+2, rd:0; untyped surface write with x
+        mul (16|M0)              r28.0<1>:d    r6.0<0;1,0>:w     56:w               {$4.src}
+        mul (16|M0)              r36.0<1>:d    r6.0<0;1,0>:w     60:w
+        mul (16|M16)             r12.0<1>:d    r6.0<0;1,0>:w     56:w               {$5.src}
+        mul (16|M16)             r30.0<1>:d    r6.0<0;1,0>:w     60:w               {$6.src}
+        mov (16|M16)             r16.0<1>:f    r10.1<0;1,0>:f                   {Compacted}
+        send.dc1 (16|M16)        null     r32     r16     0x80            0x04025EFF           {@1,$7} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r4      r18     0x80            0x04025EFF           {@7,$8} // wr:2+2, rd:0; untyped surface write with x
+        add (16|M0)              r38.0<1>:d    r20.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r40.0<1>:d    r36.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r42.0<1>:d    r30.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r10.0<1>:d    r22.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r16.0<1>:d    r24.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted,$7.src}
+        add (16|M16)             r32.0<1>:d    r12.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r4.0<1>:d     r26.0<8;8,1>:d    r90.0<8;8,1>:d   {Compacted,$8.src}
+        add (16|M0)              r18.0<1>:d    r28.0<8;8,1>:d    r92.0<8;8,1>:d   {Compacted}
+        mov (16|M16)             r44.0<1>:f    r14.2<0;1,0>:f                   {Compacted}
+        mov (16|M16)             r20.0<1>:f    -0.0:f                               {Compacted}
+        mov (16|M0)              r22.0<1>:f    0.0:f                               {Compacted}
+        mov (16|M16)             r24.0<1>:f    0.0:f                               {Compacted}
+        mov (16|M0)              r12.0<1>:f    5.38099e-43:f
+        mov (16|M16)             r14.0<1>:f    5.38099e-43:f
+        send.dc1 (16|M16)        null     r34     r44     0x80            0x04025EFF           {@6,$9} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r38     r46     0x80            0x04025EFF           {$10} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r10     r20     0x80            0x04025EFF           {@5,$11} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r16     r22     0x80            0x04025EFF           {@4,$12} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r4      r24     0x80            0x04025EFF           {@3,$13} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r18     r22     0x80            0x04025EFF           {@7,$14} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r32     r24     0x80            0x04025EFF           {@7,$15} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r40     r12     0x80            0x04025EFF           {@2,$2} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r42     r14     0x80            0x04025EFF           {@1,$3} // wr:2+2, rd:0; untyped surface write with x
+L1968:
+(W)     mov (1|M0)               r86.0<1>:ud   f0.0<0;1,0>:ud                   {Compacted}
+(W)     mov (1|M0)               f0.0<1>:ud    0x0:ud
+        cmp (32|M0)   (eq)f0.0   null<1>:uw    r2.0<0;1,0>:uw    r2.0<0;1,0>:uw
+(W&f0.0.any32h) mov (1|M0)       f0.0<1>:ud    0xFFFFFFFF:ud
+        rol (16|M0)              r36.0<1>:ud   r72.0<8;8,1>:ud   0xF:uw              {$5.dst}
+        sync.nop                             null                             {Compacted,$1.dst}
+        rol (16|M16)             r38.0<1>:ud   r94.0<8;8,1>:ud   0xF:uw              {$10.src}
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    -15:w
+(W&f0.0) add (1|M0)              r5.0<1>:d     r86.2<0;1,0>:d    -7:w               {$13.src}
+(W&f0.0) mul (1|M0)              r4.0<1>:d     r3.0<0;1,0>:d     128:w               {@2}
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r5.0<0;1,0>:d     128:w               {@2}
+        sync.allrd                           ($6,$11)
+        add (16|M0)              r10.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@2}
+        add (16|M16)             r12.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,$2.src}
+        sync.nop                             null                             {Compacted,$3.src}
+        send.dc1 (16|M0)         r14      r10     null    0x0            0x04205EFF           {@2,$8} // wr:2+0, rd:2; untyped surface read with x
+        sync.nop                             null                             {Compacted,$12.src}
+        send.dc1 (16|M16)        r16      r12     null    0x0            0x04205EFF           {@1,$9} // wr:2+0, rd:2; untyped surface read with x
+        sync.nop                             null                             {Compacted,$14.src}
+        add (16|M0)              r18.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@3}
+        add (16|M16)             r20.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        send.dc1 (16|M0)         r22      r18     null    0x0            0x04205EFF           {@2,$10} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r24      r20     null    0x0            0x04205EFF           {@1,$11} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r40.0<1>:ud   r72.0<8;8,1>:ud   0xD:uw
+        rol (16|M16)             r42.0<1>:ud   r94.0<8;8,1>:ud   0xD:uw
+        shr (16|M0)              r48.0<1>:ud   r72.0<8;8,1>:ud   10:w
+        shr (16|M16)             r50.0<1>:ud   r94.0<8;8,1>:ud   10:w
+        xor (16|M0)              r36.0<1>:d    r36.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r38.0<1>:d    r38.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@4}
+(W&f0.0) mul (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    128:w
+(W&f0.0) add (1|M0)              r6.0<1>:d     r86.2<0;1,0>:d    -14:w
+(W&f0.0) add (1|M0)              r9.3<1>:d     r86.2<0;1,0>:d    -1:w
+(W&f0.0) mul (1|M0)              r8.3<1>:d     r6.0<0;1,0>:d     128:w               {@2}
+(W&f0.0) or (1|M0)               r9.4<1>:d     r86.2<0;1,0>:d    2:w
+(W&f0.0) add (1|M0)              r3.1<1>:d     r86.2<0;1,0>:d    -4:w
+(W)     mov (1|M0)               r88.0<1>:ud   f1.0<0;1,0>:ud                   {Compacted}
+(W)     cmp (16|M0)   (lt)f1.0   null<1>:d     r86.2<0;1,0>:ud   0x34:uw
+(W&~f0.0) mov (1|M0)             f1.0<1>:ud    r88.0<0;1,0>:ud                  {@2}
+(W)     mov (1|M0)               r88.0<1>:ud   f1.0<0;1,0>:ud                   {Compacted}
+(W)     cmp (16|M16)  (lt)f1.0   null<1>:d     r86.2<0;1,0>:ud   0x34:uw
+(W&~f0.0) mov (1|M0)             f1.0<1>:ud    r88.0<0;1,0>:ud                  {@2}
+        sync.nop                             null                             {Compacted,$0.src}
+        rol (16|M0)              r26.0<1>:ud   r14.0<8;8,1>:ud   0x19:uw              {$8.dst}
+        rol (16|M0)              r30.0<1>:ud   r14.0<8;8,1>:ud   0xE:uw
+        rol (16|M16)             r28.0<1>:ud   r16.0<8;8,1>:ud   0x19:uw              {$9.dst}
+        rol (16|M16)             r32.0<1>:ud   r16.0<8;8,1>:ud   0xE:uw              {$15.src}
+        shr (16|M0)              r14.0<1>:ud   r14.0<8;8,1>:ud   3:w
+        shr (16|M16)             r16.0<1>:ud   r16.0<8;8,1>:ud   3:w
+        xor (16|M0)              r26.0<1>:d    r26.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M0)              r4.0<1>:d     r26.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$9.src}
+        xor (16|M16)             r34.0<1>:d    r28.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r44.0<1>:d    r102.0<8;8,1>:d   r4.0<8;8,1>:d    {Compacted,@2,$7.dst}
+        add (16|M16)             r46.0<1>:d    r100.0<8;8,1>:d   r34.0<8;8,1>:d   {Compacted,@2,$4.dst}
+        add (16|M0)              r22.0<1>:d    r44.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@2,$10.dst}
+        add (16|M16)             r24.0<1>:d    r46.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@2,$11.dst}
+        xor (16|M0)              r14.0<1>:d    r36.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r16.0<1>:d    r38.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r26.0<1>:d    r90.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r4.0<1>:d     r92.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r22.0<1>:d    r22.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         null     r4      r22     0x80            0x04025EFF           {@2,$12} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r26     r24     0x80            0x04025EFF           {@1,$13} // wr:2+2, rd:0; untyped surface write with x
+        add (16|M16)             r30.0<1>:d    r90.0<8;8,1>:d    r8.3<0;1,0>:d    {Compacted}
+        add (16|M0)              r28.0<1>:d    r92.0<8;8,1>:d    r8.3<0;1,0>:d    {Compacted}
+(W&f0.0) mul (1|M0)              r16.0<1>:d    r9.3<0;1,0>:d     128:w
+(W&f0.0) add (1|M0)              r17.0<1>:d    r86.2<0;1,0>:d    -6:w
+        add (16|M0)              r34.0<1>:d    r92.0<8;8,1>:d    r16.0<0;1,0>:d   {Compacted,@2}
+        add (16|M16)             r22.0<1>:d    r90.0<8;8,1>:d    r16.0<0;1,0>:d   {Compacted,$12.src}
+(W&f0.0) mul (1|M0)              r3.0<1>:d     r17.0<0;1,0>:d    128:w               {@3}
+(W&f0.0) add (1|M0)              r8.3<1>:d     r86.2<0;1,0>:d    -13:w
+        add (16|M0)              r42.0<1>:d    r92.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted,@2}
+        add (16|M16)             r44.0<1>:d    r90.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted}
+(W&f0.0) or (1|M0)               r3.0<1>:d     r86.2<0;1,0>:d    1:w
+(W&f0.0) mul (1|M0)              r9.3<1>:d     r8.3<0;1,0>:d     128:w               {@4}
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r3.0<0;1,0>:d     128:w               {@2}
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    -5:w
+        send.dc1 (16|M0)         r32      r28     null    0x0            0x04205EFF           {$2} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r14      r30     null    0x0            0x04205EFF           {$3} // wr:2+0, rd:2; untyped surface read with x
+        sync.nop                             null                             {Compacted,$13.src}
+        send.dc1 (16|M0)         r24      r34     null    0x0            0x04205EFF           {@7,$9} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r36      r22     null    0x0            0x04205EFF           {@7,$10} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r38      r10     null    0x0            0x04205EFF           {$11} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r40      r12     null    0x0            0x04205EFF           {$14} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r46      r42     null    0x0            0x04205EFF           {@6,$15} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r48      r44     null    0x0            0x04205EFF           {@5,$6} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r50.0<1>:ud   r32.0<8;8,1>:ud   0x19:uw              {$2.dst}
+        rol (16|M0)              r54.0<1>:ud   r32.0<8;8,1>:ud   0xE:uw
+        rol (16|M16)             r52.0<1>:ud   r14.0<8;8,1>:ud   0x19:uw              {$3.dst}
+        rol (16|M16)             r16.0<1>:ud   r14.0<8;8,1>:ud   0xE:uw
+        shr (16|M0)              r32.0<1>:ud   r32.0<8;8,1>:ud   3:w
+        shr (16|M16)             r14.0<1>:ud   r14.0<8;8,1>:ud   3:w
+        xor (16|M0)              r50.0<1>:d    r50.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r52.0<1>:d    r52.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@4}
+        sync.nop                             null                             {Compacted,$11.src}
+        xor (16|M0)              r10.0<1>:d    r50.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$14.src}
+        xor (16|M16)             r12.0<1>:d    r52.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M0)              r56.0<1>:ud   r24.0<8;8,1>:ud   0xF:uw              {$9.dst}
+        rol (16|M0)              r60.0<1>:ud   r24.0<8;8,1>:ud   0xD:uw
+        rol (16|M16)             r58.0<1>:ud   r36.0<8;8,1>:ud   0xF:uw              {$10.dst}
+        rol (16|M16)             r62.0<1>:ud   r36.0<8;8,1>:ud   0xD:uw              {$8.src}
+        add (16|M0)              r64.0<1>:d    r38.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@6,$11.dst}
+        add (16|M16)             r66.0<1>:d    r40.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@6,$14.dst}
+        shr (16|M0)              r24.0<1>:ud   r24.0<8;8,1>:ud   10:w
+        shr (16|M16)             r36.0<1>:ud   r36.0<8;8,1>:ud   10:w
+        xor (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r58.0<1>:d    r58.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r46.0<1>:d    r64.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@6,$15.dst}
+        add (16|M16)             r48.0<1>:d    r66.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@6,$6.dst}
+        xor (16|M0)              r14.0<1>:d    r56.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r16.0<1>:d    r58.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r10.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        add (16|M16)             r12.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         null     r10     r46     0x80            0x04025EFF           {@2,$0} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r12     r48     0x80            0x04025EFF           {@1,$5} // wr:2+2, rd:0; untyped surface write with x
+        add (16|M16)             r32.0<1>:d    r90.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted}
+        add (16|M0)              r24.0<1>:d    r92.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted}
+(W&f0.0) mul (1|M0)              r16.0<1>:d    r3.0<0;1,0>:d     128:w
+(W&f0.0) mul (1|M0)              r3.0<1>:d     r9.4<0;1,0>:d     128:w
+        add (16|M0)              r50.0<1>:d    r92.0<8;8,1>:d    r16.0<0;1,0>:d   {Compacted,@2}
+        add (16|M16)             r52.0<1>:d    r90.0<8;8,1>:d    r16.0<0;1,0>:d   {Compacted}
+(W&f0.0) add (1|M0)              r6.0<1>:d     r86.2<0;1,0>:d    -12:w
+(W&f0.0) mul (1|M0)              r8.3<1>:d     r6.0<0;1,0>:d     128:w               {@1}
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r3.1<0;1,0>:d     128:w
+(W&f0.0) add (1|M0)              r3.1<1>:d     r86.2<0;1,0>:d    -3:w
+        add (16|M0)              r98.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@2}
+        add (16|M16)             r96.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        send.dc1 (16|M0)         r36      r24     null    0x0            0x04205EFF           {@7,$12} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r14      r32     null    0x0            0x04205EFF           {$13} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r38      r4      null    0x0            0x04205EFF           {$14} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r40      r26     null    0x0            0x04205EFF           {$15} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r46      r28     null    0x0            0x04205EFF           {$2} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r48      r30     null    0x0            0x04205EFF           {$3} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r54      r50     null    0x0            0x04205EFF           {@7,$9} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r56      r52     null    0x0            0x04205EFF           {@7,$10} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r58.0<1>:ud   r36.0<8;8,1>:ud   0x19:uw              {$12.dst}
+        rol (16|M0)              r62.0<1>:ud   r36.0<8;8,1>:ud   0xE:uw
+        rol (16|M16)             r60.0<1>:ud   r14.0<8;8,1>:ud   0x19:uw              {$13.dst}
+        rol (16|M16)             r64.0<1>:ud   r14.0<8;8,1>:ud   0xE:uw
+        shr (16|M0)              r36.0<1>:ud   r36.0<8;8,1>:ud   3:w
+        shr (16|M16)             r14.0<1>:ud   r14.0<8;8,1>:ud   3:w
+        xor (16|M0)              r58.0<1>:d    r58.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r60.0<1>:d    r60.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@4}
+        sync.nop                             null                             {Compacted,$2.src}
+        xor (16|M0)              r28.0<1>:d    r58.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$3.src}
+        xor (16|M16)             r30.0<1>:d    r60.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M0)              r16.0<1>:ud   r38.0<8;8,1>:ud   0xF:uw              {$14.dst}
+        rol (16|M0)              r68.0<1>:ud   r38.0<8;8,1>:ud   0xD:uw
+        rol (16|M16)             r66.0<1>:ud   r40.0<8;8,1>:ud   0xF:uw              {$15.dst}
+        rol (16|M16)             r70.0<1>:ud   r40.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r72.0<1>:d    r46.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@6,$2.dst}
+        add (16|M16)             r74.0<1>:d    r48.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@6,$3.dst}
+        shr (16|M0)              r38.0<1>:ud   r38.0<8;8,1>:ud   10:w
+        shr (16|M16)             r40.0<1>:ud   r40.0<8;8,1>:ud   10:w
+        xor (16|M0)              r16.0<1>:d    r16.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r66.0<1>:d    r66.0<8;8,1>:d    r70.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r54.0<1>:d    r72.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@6,$9.dst}
+        add (16|M16)             r56.0<1>:d    r74.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@6,$10.dst}
+        xor (16|M0)              r14.0<1>:d    r16.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r36.0<1>:d    r66.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r28.0<1>:d    r92.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted}
+        add (16|M16)             r30.0<1>:d    r90.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r54.0<1>:d    r54.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r56.0<1>:d    r56.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         null     r28     r54     0x80            0x04025EFF           {@2,$11} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r30     r56     0x80            0x04025EFF           {@1,$12} // wr:2+2, rd:0; untyped surface write with x
+        add (16|M0)              r46.0<1>:d    r92.0<8;8,1>:d    r8.3<0;1,0>:d    {Compacted}
+        add (16|M16)             r16.0<1>:d    r90.0<8;8,1>:d    r8.3<0;1,0>:d    {Compacted}
+(W&f0.0) or (1|M0)               r3.0<1>:d     r86.2<0;1,0>:d    3:w
+(W&f0.0) add (1|M0)              r8.3<1>:d     r86.2<0;1,0>:d    -11:w
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r3.0<0;1,0>:d     128:w               {@2}
+(W&f0.0) mul (1|M0)              r9.3<1>:d     r8.3<0;1,0>:d     128:w               {@2}
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    4:w
+(W&f0.0) add (1|M0)              r8.3<1>:d     r86.2<0;1,0>:d    -10:w
+        send.dc1 (16|M0)         r38      r46     null    0x0            0x04205EFF           {@7,$13} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r40      r16     null    0x0            0x04205EFF           {@7,$14} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r60      r10     null    0x0            0x04205EFF           {$15} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r62      r12     null    0x0            0x04205EFF           {$2} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r64      r24     null    0x0            0x04205EFF           {$3} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r66      r32     null    0x0            0x04205EFF           {$9} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r14.0<1>:ud   r38.0<8;8,1>:ud   0x19:uw              {$13.dst}
+        rol (16|M0)              r48.0<1>:ud   r38.0<8;8,1>:ud   0xE:uw
+        shr (16|M0)              r38.0<1>:ud   r38.0<8;8,1>:ud   3:w
+        xor (16|M0)              r14.0<1>:d    r14.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@2}
+        send.dc1 (16|M0)         r48      r98     null    0x0            0x04205EFF           {@1,$10} // wr:2+0, rd:2; untyped surface read with x
+        sync.nop                             null                             {Compacted,$12.src}
+        xor (16|M0)              r56.0<1>:d    r14.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@1}
+        send.dc1 (16|M16)        r14      r96     null    0x0            0x04205EFF           {@1,$13} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M16)             r36.0<1>:ud   r40.0<8;8,1>:ud   0x19:uw              {$14.dst}
+        rol (16|M16)             r54.0<1>:ud   r40.0<8;8,1>:ud   0xE:uw              {$11.src}
+        shr (16|M16)             r40.0<1>:ud   r40.0<8;8,1>:ud   3:w
+        xor (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@2}
+        xor (16|M16)             r58.0<1>:d    r36.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@1}
+        rol (16|M16)             r38.0<1>:ud   r62.0<8;8,1>:ud   0xF:uw              {$2.dst}
+        rol (16|M16)             r54.0<1>:ud   r62.0<8;8,1>:ud   0xD:uw
+        rol (16|M0)              r36.0<1>:ud   r60.0<8;8,1>:ud   0xF:uw              {$15.dst}
+        rol (16|M0)              r40.0<1>:ud   r60.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r68.0<1>:d    r64.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@7,$3.dst}
+        add (16|M16)             r70.0<1>:d    r66.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@6,$9.dst}
+        shr (16|M16)             r62.0<1>:ud   r62.0<8;8,1>:ud   10:w
+        shr (16|M0)              r60.0<1>:ud   r60.0<8;8,1>:ud   10:w
+        xor (16|M16)             r38.0<1>:d    r38.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r36.0<1>:d    r36.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M16)             r32.0<1>:d    r38.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@2}
+        xor (16|M0)              r24.0<1>:d    r36.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r56.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r48.0<1>:d    r68.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@7,$10.dst}
+        add (16|M16)             r58.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        add (16|M16)             r14.0<1>:d    r70.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@7,$13.dst}
+        add (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r14.0<1>:d    r14.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@2}
+        send.dc1 (16|M0)         null     r56     r48     0x80            0x04025EFF           {@2,$1} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r58     r14     0x80            0x04025EFF           {@1,$7} // wr:2+2, rd:0; untyped surface write with x
+        add (16|M0)              r40.0<1>:d    r92.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted}
+        add (16|M16)             r36.0<1>:d    r90.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted}
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r3.1<0;1,0>:d     128:w
+(W&f0.0) mul (1|M0)              r9.3<1>:d     r8.3<0;1,0>:d     128:w
+        add (16|M0)              r72.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@2}
+(W&f0.0) add (1|M0)              r3.1<1>:d     r86.2<0;1,0>:d    -2:w
+(W&f0.0) add (1|M0)              r8.3<1>:d     r86.2<0;1,0>:d    -9:w
+        send.dc1 (16|M0)         r38      r40     null    0x0            0x04205EFF           {@7,$4} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r54      r36     null    0x0            0x04205EFF           {@6,$8} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r64      r28     null    0x0            0x04205EFF           {$6} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r66      r30     null    0x0            0x04205EFF           {$0} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r68      r46     null    0x0            0x04205EFF           {$5} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r70      r16     null    0x0            0x04205EFF           {$11} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r24.0<1>:ud   r38.0<8;8,1>:ud   0x19:uw              {$4.dst}
+        rol (16|M0)              r60.0<1>:ud   r38.0<8;8,1>:ud   0xE:uw
+        rol (16|M16)             r32.0<1>:ud   r54.0<8;8,1>:ud   0x19:uw              {$8.dst}
+        rol (16|M16)             r48.0<1>:ud   r54.0<8;8,1>:ud   0xE:uw              {$1.src}
+        shr (16|M0)              r38.0<1>:ud   r38.0<8;8,1>:ud   3:w
+        xor (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r60.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        xor (16|M16)             r32.0<1>:d    r32.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         r48      r72     null    0x0            0x04205EFF           {@1,$12} // wr:2+0, rd:2; untyped surface read with x
+        sync.nop                             null                             {Compacted,$7.src}
+        xor (16|M0)              r14.0<1>:d    r24.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@3}
+        send.dc1 (16|M16)        r24      r60     null    0x0            0x04205EFF           {@1,$13} // wr:2+0, rd:2; untyped surface read with x
+        shr (16|M16)             r54.0<1>:ud   r54.0<8;8,1>:ud   3:w
+        rol (16|M16)             r74.0<1>:ud   r66.0<8;8,1>:ud   0xD:uw              {$0.dst}
+        xor (16|M16)             r62.0<1>:d    r32.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M16)             r38.0<1>:ud   r66.0<8;8,1>:ud   0xF:uw
+        rol (16|M0)              r32.0<1>:ud   r64.0<8;8,1>:ud   0xF:uw              {$6.dst}
+        rol (16|M0)              r54.0<1>:ud   r64.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r76.0<1>:d    r68.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@7,$5.dst}
+        add (16|M16)             r78.0<1>:d    r70.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@5,$11.dst}
+        shr (16|M16)             r66.0<1>:ud   r66.0<8;8,1>:ud   10:w
+        shr (16|M0)              r64.0<1>:ud   r64.0<8;8,1>:ud   10:w
+        xor (16|M16)             r38.0<1>:d    r38.0<8;8,1>:d    r74.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@6}
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r3.0<0;1,0>:d     128:w
+        xor (16|M16)             r46.0<1>:d    r38.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M0)              r16.0<1>:d    r32.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r14.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@3}
+        add (16|M16)             r60.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,$13.src}
+        add (16|M0)              r54.0<1>:d    r92.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted}
+        add (16|M0)              r48.0<1>:d    r76.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,$12.dst}
+        add (16|M16)             r32.0<1>:d    r90.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted}
+        add (16|M16)             r24.0<1>:d    r78.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,$13.dst}
+        add (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@2}
+        send.dc1 (16|M0)         null     r14     r48     0x80            0x04025EFF           {@2,$14} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r60     r24     0x80            0x04025EFF           {@1,$15} // wr:2+2, rd:0; untyped surface write with x
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r3.1<0;1,0>:d     128:w
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    5:w
+        add (16|M0)              r76.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@2}
+(W&f0.0) mul (1|M0)              r9.3<1>:d     r8.3<0;1,0>:d     128:w
+(W&f0.0) add (1|M0)              r8.3<1>:d     r86.2<0;1,0>:d    -8:w
+        send.dc1 (16|M0)         r38      r54     null    0x0            0x04205EFF           {@7,$2} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r62      r32     null    0x0            0x04205EFF           {@7,$3} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r68      r56     null    0x0            0x04205EFF           {$9} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r70      r58     null    0x0            0x04205EFF           {$10} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r72      r40     null    0x0            0x04205EFF           {$11} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r74      r36     null    0x0            0x04205EFF           {$12} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r16.0<1>:ud   r38.0<8;8,1>:ud   0x19:uw              {$2.dst}
+        rol (16|M0)              r64.0<1>:ud   r38.0<8;8,1>:ud   0xE:uw
+        rol (16|M16)             r46.0<1>:ud   r62.0<8;8,1>:ud   0x19:uw              {$3.dst}
+        rol (16|M16)             r48.0<1>:ud   r62.0<8;8,1>:ud   0xE:uw              {$14.src}
+        shr (16|M0)              r38.0<1>:ud   r38.0<8;8,1>:ud   3:w
+        xor (16|M0)              r16.0<1>:d    r16.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r64.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        xor (16|M16)             r46.0<1>:d    r46.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         r48      r76     null    0x0            0x04205EFF           {@1,$13} // wr:2+0, rd:2; untyped surface read with x
+        sync.nop                             null                             {Compacted,$15.src}
+        xor (16|M0)              r24.0<1>:d    r16.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@3}
+        send.dc1 (16|M16)        r16      r64     null    0x0            0x04205EFF           {@1,$2} // wr:2+0, rd:2; untyped surface read with x
+        shr (16|M16)             r62.0<1>:ud   r62.0<8;8,1>:ud   3:w
+        rol (16|M16)             r78.0<1>:ud   r70.0<8;8,1>:ud   0xD:uw              {$10.dst}
+        xor (16|M16)             r66.0<1>:d    r46.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M0)              r38.0<1>:ud   r68.0<8;8,1>:ud   0xF:uw              {$9.dst}
+        rol (16|M16)             r46.0<1>:ud   r70.0<8;8,1>:ud   0xF:uw
+        rol (16|M0)              r62.0<1>:ud   r68.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r80.0<1>:d    r72.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@7,$11.dst}
+        add (16|M16)             r82.0<1>:d    r74.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@5,$12.dst}
+        shr (16|M16)             r70.0<1>:ud   r70.0<8;8,1>:ud   10:w
+        shr (16|M0)              r68.0<1>:ud   r68.0<8;8,1>:ud   10:w
+        xor (16|M16)             r46.0<1>:d    r46.0<8;8,1>:d    r78.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@6}
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r3.0<0;1,0>:d     128:w
+        xor (16|M16)             r40.0<1>:d    r46.0<8;8,1>:d    r70.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M0)              r36.0<1>:d    r38.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r24.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@3}
+        add (16|M16)             r64.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,$2.src}
+        add (16|M0)              r62.0<1>:d    r92.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted}
+        add (16|M0)              r48.0<1>:d    r80.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,$13.dst}
+        add (16|M16)             r38.0<1>:d    r90.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted}
+        add (16|M16)             r16.0<1>:d    r82.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,$2.dst}
+        add (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r16.0<1>:d    r16.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@2}
+        send.dc1 (16|M0)         null     r24     r48     0x80            0x04025EFF           {@2,$3} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r64     r16     0x80            0x04025EFF           {@1,$1} // wr:2+2, rd:0; untyped surface write with x
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    6:w
+(W&f0.0) mul (1|M0)              r9.3<1>:d     r8.3<0;1,0>:d     128:w
+(W&f0.0) mul (1|M0)              r6.0<1>:d     r3.0<0;1,0>:d     128:w               {@2}
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    7:w
+        send.dc1 (16|M0)         r46      r62     null    0x0            0x04205EFF           {@7,$7} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r66      r38     null    0x0            0x04205EFF           {@7,$4} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r72      r14     null    0x0            0x04205EFF           {$8} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r74      r60     null    0x0            0x04205EFF           {$6} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r76      r54     null    0x0            0x04205EFF           {$0} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r78      r32     null    0x0            0x04205EFF           {$5} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r80      r34     null    0x0            0x04205EFF           {$14} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r82      r22     null    0x0            0x04205EFF           {$15} // wr:2+0, rd:2; untyped surface read with x
+        sync.nop                             null                             {Compacted,$15.src}
+        add (16|M16)             r22.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@2}
+        sync.nop                             null                             {Compacted,$5.src}
+        add (16|M0)              r32.0<1>:d    r92.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted,@4}
+        add (16|M16)             r34.0<1>:d    r90.0<8;8,1>:d    r9.3<0;1,0>:d    {Compacted,$14.src}
+        rol (16|M0)              r36.0<1>:ud   r46.0<8;8,1>:ud   0x19:uw              {$7.dst}
+        rol (16|M0)              r68.0<1>:ud   r46.0<8;8,1>:ud   0xE:uw
+        rol (16|M16)             r40.0<1>:ud   r66.0<8;8,1>:ud   0x19:uw              {$4.dst}
+        rol (16|M16)             r48.0<1>:ud   r66.0<8;8,1>:ud   0xE:uw              {$3.src}
+        shr (16|M0)              r46.0<1>:ud   r46.0<8;8,1>:ud   3:w
+        shr (16|M16)             r66.0<1>:ud   r66.0<8;8,1>:ud   3:w
+        xor (16|M0)              r36.0<1>:d    r36.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@4}
+        sync.nop                             null                             {Compacted,$1.src}
+        xor (16|M0)              r16.0<1>:d    r36.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@2}
+        xor (16|M16)             r70.0<1>:d    r40.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M0)              r84.0<1>:ud   r72.0<8;8,1>:ud   0xF:uw              {$8.dst}
+        rol (16|M16)             r68.0<1>:ud   r74.0<8;8,1>:ud   0xF:uw              {$6.dst}
+        rol (16|M0)              r48.0<1>:ud   r72.0<8;8,1>:ud   0xD:uw
+        rol (16|M16)             r36.0<1>:ud   r74.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r76.0<1>:d    r76.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@6,$0.dst}
+        add (16|M16)             r78.0<1>:d    r78.0<8;8,1>:d    r70.0<8;8,1>:d   {Compacted,@6,$5.dst}
+        shr (16|M0)              r72.0<1>:ud   r72.0<8;8,1>:ud   10:w
+        shr (16|M16)             r74.0<1>:ud   r74.0<8;8,1>:ud   10:w
+        xor (16|M0)              r84.0<1>:d    r84.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M16)             r68.0<1>:d    r68.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r76.0<1>:d    r76.0<8;8,1>:d    r80.0<8;8,1>:d   {Compacted,@6,$14.dst}
+        add (16|M16)             r78.0<1>:d    r78.0<8;8,1>:d    r82.0<8;8,1>:d   {Compacted,@6,$15.dst}
+        xor (16|M0)              r84.0<1>:d    r84.0<8;8,1>:d    r72.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r68.0<1>:d    r68.0<8;8,1>:d    r74.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r16.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r76.0<1>:d    r76.0<8;8,1>:d    r84.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r78.0<1>:d    r78.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@3}
+        send.dc1 (16|M0)         null     r16     r76     0x80            0x04025EFF           {@2,$10} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r22     r78     0x80            0x04025EFF           {@1,$11} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         r36      r32     null    0x0            0x04205EFF           {$12} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r40      r34     null    0x0            0x04205EFF           {$13} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r46      r24     null    0x0            0x04205EFF           {$2} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r48      r64     null    0x0            0x04205EFF           {$9} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r24      r62     null    0x0            0x04205EFF           {$3} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r64      r38     null    0x0            0x04205EFF           {$14} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r76      r4      null    0x0            0x04205EFF           {$15} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r78      r26     null    0x0            0x04205EFF           {$1} // wr:2+0, rd:2; untyped surface read with x
+(W&f0.0) mul (1|M0)              r4.0<1>:d     r3.0<0;1,0>:d     128:w               {$15.src}
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    8:w
+        sync.nop                             null                             {Compacted,$1.src}
+        add (16|M0)              r26.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@2}
+        rol (16|M0)              r54.0<1>:ud   r36.0<8;8,1>:ud   0x19:uw              {$12.dst}
+        rol (16|M0)              r68.0<1>:ud   r36.0<8;8,1>:ud   0xE:uw
+        rol (16|M16)             r66.0<1>:ud   r40.0<8;8,1>:ud   0x19:uw              {$13.dst}
+        rol (16|M16)             r70.0<1>:ud   r40.0<8;8,1>:ud   0xE:uw
+        shr (16|M0)              r36.0<1>:ud   r36.0<8;8,1>:ud   3:w
+        shr (16|M16)             r40.0<1>:ud   r40.0<8;8,1>:ud   3:w
+        xor (16|M0)              r54.0<1>:d    r54.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r66.0<1>:d    r66.0<8;8,1>:d    r70.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M0)              r72.0<1>:d    r54.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@2}
+        xor (16|M16)             r74.0<1>:d    r66.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M0)              r80.0<1>:ud   r46.0<8;8,1>:ud   0xF:uw              {$2.dst}
+        rol (16|M0)              r84.0<1>:ud   r46.0<8;8,1>:ud   0xD:uw
+        rol (16|M16)             r82.0<1>:ud   r48.0<8;8,1>:ud   0xF:uw              {$9.dst}
+        rol (16|M16)             r68.0<1>:ud   r48.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r72.0<8;8,1>:d   {Compacted,@6,$3.dst}
+        add (16|M16)             r64.0<1>:d    r64.0<8;8,1>:d    r74.0<8;8,1>:d   {Compacted,@6,$14.dst}
+        shr (16|M0)              r46.0<1>:ud   r46.0<8;8,1>:ud   10:w
+        shr (16|M16)             r48.0<1>:ud   r48.0<8;8,1>:ud   10:w
+        xor (16|M0)              r80.0<1>:d    r80.0<8;8,1>:d    r84.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r82.0<1>:d    r82.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r76.0<8;8,1>:d   {Compacted,@6,$15.dst}
+        add (16|M16)             r64.0<1>:d    r64.0<8;8,1>:d    r78.0<8;8,1>:d   {Compacted,@6,$1.dst}
+        xor (16|M0)              r80.0<1>:d    r80.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r82.0<1>:d    r82.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r36.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r80.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r64.0<1>:d    r64.0<8;8,1>:d    r82.0<8;8,1>:d   {Compacted,@3}
+        send.dc1 (16|M0)         null     r26     r24     0x80            0x04025EFF           {@2,$7} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r36     r64     0x80            0x04025EFF           {@1,$4} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         r38      r18     null    0x0            0x04205EFF           {$6} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r40      r20     null    0x0            0x04205EFF           {$0} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r54      r16     null    0x0            0x04205EFF           {$5} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r46      r22     null    0x0            0x04205EFF           {$10} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r48      r32     null    0x0            0x04205EFF           {$11} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r62      r34     null    0x0            0x04205EFF           {$12} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r66      r10     null    0x0            0x04205EFF           {$13} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r68      r12     null    0x0            0x04205EFF           {$14} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r70.0<1>:ud   r38.0<8;8,1>:ud   0x19:uw              {$6.dst}
+        rol (16|M0)              r72.0<1>:ud   r38.0<8;8,1>:ud   0xE:uw
+        sync.nop                             null                             {Compacted,$0.dst}
+        rol (16|M16)             r24.0<1>:ud   r40.0<8;8,1>:ud   0x19:uw              {$7.src}
+        rol (16|M16)             r4.0<1>:ud    r40.0<8;8,1>:ud   0xE:uw
+        shr (16|M0)              r38.0<1>:ud   r38.0<8;8,1>:ud   3:w
+        shr (16|M16)             r40.0<1>:ud   r40.0<8;8,1>:ud   3:w
+        xor (16|M0)              r70.0<1>:d    r70.0<8;8,1>:d    r72.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@4}
+        sync.nop                             null                             {Compacted,$5.src}
+        xor (16|M0)              r16.0<1>:d    r70.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$10.src}
+        xor (16|M16)             r22.0<1>:d    r24.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$13.src}
+        rol (16|M0)              r10.0<1>:ud   r54.0<8;8,1>:ud   0xF:uw              {$5.dst}
+        rol (16|M0)              r32.0<1>:ud   r54.0<8;8,1>:ud   0xD:uw              {$11.src}
+        sync.nop                             null                             {Compacted,$14.src}
+        rol (16|M16)             r12.0<1>:ud   r46.0<8;8,1>:ud   0xF:uw              {$10.dst}
+        rol (16|M16)             r34.0<1>:ud   r46.0<8;8,1>:ud   0xD:uw              {$12.src}
+        add (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@6,$11.dst}
+        add (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@6,$12.dst}
+        shr (16|M0)              r54.0<1>:ud   r54.0<8;8,1>:ud   10:w
+        shr (16|M16)             r46.0<1>:ud   r46.0<8;8,1>:ud   10:w
+        xor (16|M0)              r10.0<1>:d    r10.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r12.0<1>:d    r12.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@6,$13.dst}
+        add (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@6,$14.dst}
+(W&f0.0) mul (1|M0)              r4.0<1>:d     r3.0<0;1,0>:d     128:w
+        xor (16|M0)              r10.0<1>:d    r10.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r12.0<1>:d    r12.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r16.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@3}
+        add (16|M16)             r22.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         null     r16     r48     0x80            0x04025EFF           {@2,$15} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r22     r62     0x80            0x04025EFF           {@1,$8} // wr:2+2, rd:0; untyped surface write with x
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    9:w
+        send.dc1 (16|M0)         r24      r42     null    0x0            0x04205EFF           {$2} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r32      r44     null    0x0            0x04205EFF           {$3} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r34      r26     null    0x0            0x04205EFF           {$9} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r38      r36     null    0x0            0x04205EFF           {$10} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r40      r18     null    0x0            0x04205EFF           {$11} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r46      r20     null    0x0            0x04205EFF           {$12} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r10      r28     null    0x0            0x04205EFF           {$13} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r12      r30     null    0x0            0x04205EFF           {$14} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r54.0<1>:ud   r24.0<8;8,1>:ud   0x19:uw              {$2.dst}
+        rol (16|M0)              r64.0<1>:ud   r24.0<8;8,1>:ud   0xE:uw              {$4.src}
+        sync.nop                             null                             {Compacted,$3.dst}
+        rol (16|M16)             r48.0<1>:ud   r32.0<8;8,1>:ud   0x19:uw              {$15.src}
+        rol (16|M16)             r4.0<1>:ud    r32.0<8;8,1>:ud   0xE:uw
+        shr (16|M0)              r24.0<1>:ud   r24.0<8;8,1>:ud   3:w
+        shr (16|M16)             r32.0<1>:ud   r32.0<8;8,1>:ud   3:w
+        xor (16|M0)              r54.0<1>:d    r54.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@4}
+        sync.nop                             null                             {Compacted,$11.src}
+        xor (16|M0)              r18.0<1>:d    r54.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$12.src}
+        xor (16|M16)             r20.0<1>:d    r48.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M0)              r26.0<1>:ud   r34.0<8;8,1>:ud   0xF:uw              {$9.dst}
+        rol (16|M0)              r30.0<1>:ud   r34.0<8;8,1>:ud   0xD:uw              {$14.src}
+        sync.nop                             null                             {Compacted,$13.src}
+        rol (16|M16)             r28.0<1>:ud   r38.0<8;8,1>:ud   0xF:uw              {$10.dst}
+        rol (16|M16)             r36.0<1>:ud   r38.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r40.0<1>:d    r40.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@6,$11.dst}
+        add (16|M16)             r46.0<1>:d    r46.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@6,$12.dst}
+        shr (16|M0)              r34.0<1>:ud   r34.0<8;8,1>:ud   10:w
+        shr (16|M16)             r38.0<1>:ud   r38.0<8;8,1>:ud   10:w
+        xor (16|M0)              r26.0<1>:d    r26.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r40.0<1>:d    r40.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@6,$13.dst}
+        add (16|M16)             r46.0<1>:d    r46.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@6,$14.dst}
+(W&f0.0) mul (1|M0)              r4.0<1>:d     r3.0<0;1,0>:d     128:w
+        xor (16|M0)              r26.0<1>:d    r26.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r18.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@3}
+        add (16|M16)             r20.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r40.0<1>:d    r40.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r46.0<1>:d    r46.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         null     r18     r40     0x80            0x04025EFF           {@2,$2} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r20     r46     0x80            0x04025EFF           {@1,$1} // wr:2+2, rd:0; untyped surface write with x
+(W&f0.0) add (1|M0)              r3.0<1>:d     r86.2<0;1,0>:d    10:w
+        send.dc1 (16|M0)         r24      r50     null    0x0            0x04205EFF           {$7} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r10      r52     null    0x0            0x04205EFF           {$4} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r12      r16     null    0x0            0x04205EFF           {$5} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r30      r22     null    0x0            0x04205EFF           {$0} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r32      r42     null    0x0            0x04205EFF           {$6} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r34      r44     null    0x0            0x04205EFF           {$15} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r26      r56     null    0x0            0x04205EFF           {$3} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r28      r58     null    0x0            0x04205EFF           {$9} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r36.0<1>:ud   r24.0<8;8,1>:ud   0x19:uw              {$7.dst}
+        rol (16|M0)              r40.0<1>:ud   r24.0<8;8,1>:ud   0xE:uw              {$2.src}
+        rol (16|M16)             r38.0<1>:ud   r10.0<8;8,1>:ud   0x19:uw              {$4.dst}
+        rol (16|M16)             r4.0<1>:ud    r10.0<8;8,1>:ud   0xE:uw
+        shr (16|M0)              r24.0<1>:ud   r24.0<8;8,1>:ud   3:w
+        shr (16|M16)             r10.0<1>:ud   r10.0<8;8,1>:ud   3:w
+        xor (16|M0)              r36.0<1>:d    r36.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r38.0<1>:d    r38.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@4}
+        sync.nop                             null                             {Compacted,$5.src}
+        xor (16|M0)              r16.0<1>:d    r36.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$0.src}
+        xor (16|M16)             r22.0<1>:d    r38.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$6.src}
+        rol (16|M0)              r42.0<1>:ud   r12.0<8;8,1>:ud   0xF:uw              {$5.dst}
+        rol (16|M0)              r46.0<1>:ud   r12.0<8;8,1>:ud   0xD:uw              {$1.src}
+        sync.nop                             null                             {Compacted,$15.src}
+        rol (16|M16)             r44.0<1>:ud   r30.0<8;8,1>:ud   0xF:uw              {$0.dst}
+        rol (16|M16)             r48.0<1>:ud   r30.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@6,$6.dst}
+        add (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@6,$15.dst}
+        shr (16|M0)              r12.0<1>:ud   r12.0<8;8,1>:ud   10:w
+        shr (16|M16)             r30.0<1>:ud   r30.0<8;8,1>:ud   10:w
+        xor (16|M0)              r42.0<1>:d    r42.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r44.0<1>:d    r44.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@6,$3.dst}
+        add (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@6,$9.dst}
+(W&f0.0) mul (1|M0)              r4.0<1>:d     r3.0<0;1,0>:d     128:w
+        xor (16|M0)              r42.0<1>:d    r42.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r44.0<1>:d    r44.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r6.0<1>:d     r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@3}
+        add (16|M16)             r46.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         null     r6      r32     0x80            0x04025EFF           {@2,$10} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r46     r34     0x80            0x04025EFF           {@1,$11} // wr:2+2, rd:0; untyped surface write with x
+(W&f0.0) add (1|M0)              r5.0<1>:d     r86.2<0;1,0>:d    11:w
+(W&f0.0) mul (1|M0)              r3.0<1>:d     r5.0<0;1,0>:d     128:w               {@1}
+(W)     mov (1|M0)               f0.0<1>:ud    r86.0<0;1,0>:ud
+        send.dc1 (16|M0)         r10      r98     null    0x0            0x04205EFF           {$12} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r16      r96     null    0x0            0x04205EFF           {$13} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r12      r18     null    0x0            0x04205EFF           {$14} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r22      r20     null    0x0            0x04205EFF           {$8} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r24      r50     null    0x0            0x04205EFF           {$2} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r26      r52     null    0x0            0x04205EFF           {$15} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r28      r14     null    0x0            0x04205EFF           {$3} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r30      r60     null    0x0            0x04205EFF           {$9} // wr:2+0, rd:2; untyped surface read with x
+        sync.nop                             null                             {Compacted,$12.dst}
+        rol (16|M0)              r32.0<1>:ud   r10.0<8;8,1>:ud   0x19:uw              {$10.src}
+        rol (16|M0)              r34.0<1>:ud   r10.0<8;8,1>:ud   0xE:uw              {$11.src}
+        rol (16|M16)             r36.0<1>:ud   r16.0<8;8,1>:ud   0x19:uw              {$13.dst}
+        rol (16|M16)             r38.0<1>:ud   r16.0<8;8,1>:ud   0xE:uw
+        shr (16|M0)              r10.0<1>:ud   r10.0<8;8,1>:ud   3:w
+        shr (16|M16)             r16.0<1>:ud   r16.0<8;8,1>:ud   3:w
+        xor (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@4}
+        sync.nop                             null                             {Compacted,$14.src}
+        xor (16|M0)              r18.0<1>:d    r32.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$8.src}
+        xor (16|M16)             r20.0<1>:d    r36.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$3.src}
+        rol (16|M0)              r14.0<1>:ud   r12.0<8;8,1>:ud   0xF:uw              {$14.dst}
+        rol (16|M0)              r42.0<1>:ud   r12.0<8;8,1>:ud   0xD:uw
+        rol (16|M16)             r40.0<1>:ud   r22.0<8;8,1>:ud   0xF:uw              {$8.dst}
+        rol (16|M16)             r44.0<1>:ud   r22.0<8;8,1>:ud   0xD:uw
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@6,$2.dst}
+        add (16|M16)             r26.0<1>:d    r26.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@6,$15.dst}
+        shr (16|M0)              r12.0<1>:ud   r12.0<8;8,1>:ud   10:w
+        shr (16|M16)             r22.0<1>:ud   r22.0<8;8,1>:ud   10:w
+        xor (16|M0)              r14.0<1>:d    r14.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@6,$3.dst}
+        add (16|M16)             r26.0<1>:d    r26.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@6,$9.dst}
+        xor (16|M0)              r14.0<1>:d    r14.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r10.0<1>:d    r92.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted}
+        add (16|M16)             r16.0<1>:d    r90.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r26.0<1>:d    r26.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         null     r10     r24     0x80            0x04025EFF           {@2,$6} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r16     r26     0x80            0x04025EFF           {@1,$0} // wr:2+2, rd:0; untyped surface write with x
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(~f1.0) break (32|M0)                        L9368                  L9368
+L9232:
+(W)     mov (1|M0)               r86.0<1>:ud   f0.0<0;1,0>:ud                   {Compacted}
+(W)     mov (1|M0)               f0.0<1>:ud    0x0:ud
+        cmp (32|M0)   (eq)f0.0   null<1>:uw    r2.0<0;1,0>:uw    r2.0<0;1,0>:uw
+        send.dc1 (16|M0)         r72      r6      null    0x0            0x04205EFF           {$5} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r94      r46     null    0x0            0x04205EFF           {$1} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r102     r98     null    0x0            0x04205EFF           {$7} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r100     r96     null    0x0            0x04205EFF           {$4} // wr:2+0, rd:2; untyped surface read with x
+(W&f0.0.any32h) add (1|M0)       r86.2<1>:d    r86.2<0;1,0>:d    12:w
+(W)     mov (1|M0)               f0.0<1>:ud    r86.0<0;1,0>:ud                  {@4}
+L9368:
+        while (32|M0)                        L1968
+L9384:
+(W)     mov (1|M0)               r86.0<1>:ud   f0.0<0;1,0>:ud                   {Compacted}
+(W)     mov (1|M0)               f0.0<1>:ud    0x0:ud
+        cmp (32|M0)   (eq)f0.0   null<1>:uw    r2.0<0;1,0>:uw    r2.0<0;1,0>:uw
+        mov (16|M0)              r110.0<1>:f   1.265518e+17:f
+        mov (16|M16)             r108.0<1>:f   1.265518e+17:f
+        mov (16|M0)              r106.0<1>:f   5.584076e-20:f
+        mov (16|M16)             r104.0<1>:f   5.584076e-20:f
+        sync.nop                             null                             {Compacted,$7.dst}
+        mov (16|M0)              r102.0<1>:f   0x9B05688C:f                               {$0.src}
+        sync.nop                             null                             {Compacted,$4.dst}
+        mov (16|M16)             r100.0<1>:f   0x9B05688C:f                               {$1.src}
+        mov (16|M0)              r98.0<1>:f    3.820434e+10:f
+        mov (16|M16)             r96.0<1>:f    3.820434e+10:f
+        mov (16|M0)              r94.0<1>:f    0xA54FF53A:f                               {$1.dst}
+        mov (16|M16)             r84.0<1>:f    0xA54FF53A:f
+        mov (16|M0)              r82.0<1>:f    0x3C6EF372:f
+        mov (16|M16)             r80.0<1>:f    0x3C6EF372:f
+        mov (16|M0)              r78.0<1>:f    0xBB67AE85:f
+        mov (16|M16)             r76.0<1>:f    0xBB67AE85:f
+        mov (16|M0)              r72.0<1>:f    4.167772e+25:f                               {$5.dst}
+        mov (16|M16)             r74.0<1>:f    4.167772e+25:f
+(W&f0.0.any32h) mov (1|M0)       r9.0<1>:f     0.0:f
+(W)     mov (1|M0)               f0.0<1>:ud    r86.0<0;1,0>:ud
+L9728:
+(W)     mov (1|M0)               r86.0<1>:ud   f1.0<0;1,0>:ud                   {Compacted}
+(W)     mov (1|M0)               f1.0<1>:ud    0x0:ud
+        cmp (32|M0)   (eq)f1.0   null<1>:uw    r2.0<0;1,0>:uw    r2.0<0;1,0>:uw
+(W&f1.0.any32h) mov (1|M0)       f1.0<1>:ud    0xFFFFFFFF:ud
+        rol (16|M16)             r20.0<1>:ud   r96.0<8;8,1>:ud   0x1A:uw
+        rol (16|M16)             r24.0<1>:ud   r96.0<8;8,1>:ud   0x15:uw              {$6.src}
+(W&f1.0) shl (1|M0)              r3.0<1>:d     r9.0<0;1,0>:d     2:w               {@7}
+(W&f1.0) mul (1|M0)              r3.1<1>:d     r9.0<0;1,0>:d     128:w
+(W&f1.0) mov (1|M0)              r4.2<1>:f     r3.0<0;1,0>:f                    {@2}
+        add (16|M16)             r12.0<1>:d    r90.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted,@2}
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(W&f1.0) send.dc0 (4|M0)         r5       r4      null    0x0            0x02184002           {@3,$10} // wr:1h+0, rd:1; oword aligned block read x1
+        send.dc1 (16|M16)        r16      r12     null    0x0            0x04205EFF           {@2,$11} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M0)              r10.0<1>:d    r92.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted}
+        rol (16|M16)             r28.0<1>:ud   r96.0<8;8,1>:ud   0x7:uw
+        send.dc1 (16|M0)         r14      r10     null    0x0            0x04205EFF           {@2,$12} // wr:2+0, rd:2; untyped surface read with x
+        xor (16|M16)             r20.0<1>:d    r20.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r20.0<1>:d    r20.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@1}
+        and (16|M16)             r32.0<1>:d    r104.0<8;8,1>:d   ~r96.0<8;8,1>:d  {Compacted}
+        and (16|M16)             r12.0<1>:d    r96.0<8;8,1>:d    r100.0<8;8,1>:d  {Compacted,$11.src}
+        rol (16|M0)              r18.0<1>:ud   r98.0<8;8,1>:ud   0x1A:uw
+        rol (16|M0)              r22.0<1>:ud   r98.0<8;8,1>:ud   0x15:uw
+        add (16|M16)             r20.0<1>:d    r108.0<8;8,1>:d   r20.0<8;8,1>:d   {Compacted,@5}
+        or (16|M16)              r12.0<1>:d    r12.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@4}
+        rol (16|M0)              r26.0<1>:ud   r98.0<8;8,1>:ud   0x7:uw              {$0.src}
+        xor (16|M0)              r18.0<1>:d    r18.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r20.0<1>:d    r20.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M0)              r18.0<1>:d    r18.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@2}
+        and (16|M0)              r30.0<1>:d    r106.0<8;8,1>:d   ~r98.0<8;8,1>:d  {Compacted}
+        and (16|M0)              r10.0<1>:d    r98.0<8;8,1>:d    r102.0<8;8,1>:d  {Compacted,$12.src}
+        add (16|M0)              r18.0<1>:d    r110.0<8;8,1>:d   r18.0<8;8,1>:d   {Compacted,@3}
+        or (16|M0)               r10.0<1>:d    r10.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r24.0<1>:d    r20.0<8;8,1>:d    r5.0<0;1,0>:d    {Compacted,@6,$10.dst}
+        add (16|M0)              r18.0<1>:d    r18.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r28.0<1>:d    r24.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@2,$11.dst}
+        add (16|M0)              r22.0<1>:d    r18.0<8;8,1>:d    r5.0<0;1,0>:d    {Compacted,@2}
+        add (16|M16)             r36.0<1>:d    r84.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@2}
+(W&f1.0) or (1|M0)               r5.4<1>:d     r9.0<0;1,0>:d     1:w
+        rol (16|M16)             r40.0<1>:ud   r36.0<8;8,1>:ud   0x1A:uw              {@2}
+        rol (16|M16)             r32.0<1>:ud   r36.0<8;8,1>:ud   0x15:uw
+        rol (16|M0)              r18.0<1>:ud   r72.0<8;8,1>:ud   0x13:uw
+        add (16|M0)              r26.0<1>:d    r22.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@6,$12.dst}
+(W&f1.0) mul (1|M0)              r3.1<1>:d     r5.4<0;1,0>:d     128:w               {@5}
+        rol (16|M0)              r14.0<1>:ud   r72.0<8;8,1>:ud   0x1E:uw
+        rol (16|M0)              r42.0<1>:ud   r72.0<8;8,1>:ud   0xA:uw
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@6}
+        add (16|M16)             r32.0<1>:d    r90.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted,@4}
+        add (16|M0)              r34.0<1>:d    r94.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M0)              r14.0<1>:d    r14.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r14.0<1>:d    r14.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@1}
+        send.dc1 (16|M16)        r42      r32     null    0x0            0x04205EFF           {@1,$13} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r38.0<1>:ud   r34.0<8;8,1>:ud   0x1A:uw              {@3}
+        rol (16|M0)              r30.0<1>:ud   r34.0<8;8,1>:ud   0x15:uw
+        rol (16|M0)              r10.0<1>:ud   r34.0<8;8,1>:ud   0x7:uw
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r30.0<1>:d    r92.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted}
+        xor (16|M0)              r22.0<1>:d    r78.0<8;8,1>:d    r82.0<8;8,1>:d   {Compacted}
+        sync.nop                             null                             {Compacted,$1.src}
+        send.dc1 (16|M0)         r46      r30     null    0x0            0x04205EFF           {@2,$14} // wr:2+0, rd:2; untyped surface read with x
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@3}
+        and (16|M0)              r22.0<1>:d    r72.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@2}
+        and (16|M0)              r10.0<1>:d    r78.0<8;8,1>:d    r82.0<8;8,1>:d   {Compacted}
+        rol (16|M16)             r12.0<1>:ud   r36.0<8;8,1>:ud   0x7:uw
+        xor (16|M0)              r22.0<1>:d    r22.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        xor (16|M16)             r24.0<1>:d    r76.0<8;8,1>:d    r80.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r14.0<1>:d    r14.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@2}
+(W&f1.0) or (1|M0)               r4.0<1>:d     r9.0<0;1,0>:d     2:w
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@5}
+        and (16|M16)             r24.0<1>:d    r74.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r12.0<1>:d    r76.0<8;8,1>:d    r80.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r18.0<1>:d    r26.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@5}
+        sync.nop                             null                             {Compacted,$5.src}
+(W&f1.0) mul (1|M0)              r6.0<1>:d     r4.0<0;1,0>:d     128:w               {@5}
+        xor (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@3}
+        and (16|M16)             r14.0<1>:d    r100.0<8;8,1>:d   ~r36.0<8;8,1>:d  {Compacted}
+        and (16|M16)             r12.0<1>:d    r36.0<8;8,1>:d    r96.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r40.0<1>:d    r104.0<8;8,1>:d   r40.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r50.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@5}
+        add (16|M16)             r52.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        or (16|M16)              r12.0<1>:d    r12.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@4}
+        rol (16|M16)             r20.0<1>:ud   r74.0<8;8,1>:ud   0x13:uw
+        rol (16|M16)             r16.0<1>:ud   r74.0<8;8,1>:ud   0x1E:uw
+        add (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@3}
+        send.dc1 (16|M0)         r54      r50     null    0x0            0x04205EFF           {@6,$15} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r56      r52     null    0x0            0x04205EFF           {@5,$0} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M16)             r44.0<1>:ud   r74.0<8;8,1>:ud   0xA:uw
+        xor (16|M16)             r16.0<1>:d    r16.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@3}
+        and (16|M0)              r10.0<1>:d    r34.0<8;8,1>:d    r98.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r22.0<1>:d    r102.0<8;8,1>:d   ~r34.0<8;8,1>:d  {Compacted}
+        add (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r5.1<0;1,0>:d    {Compacted,@5}
+        add (16|M0)              r38.0<1>:d    r106.0<8;8,1>:d   r38.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r16.0<1>:d    r16.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@5}
+        or (16|M0)               r10.0<1>:d    r10.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r16.0<1>:d    r16.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r24.0<1>:d    r40.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@5,$13.dst}
+        add (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r20.0<1>:d    r28.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r28.0<1>:d    r80.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r5.1<0;1,0>:d    {Compacted,@3}
+        rol (16|M16)             r32.0<1>:ud   r28.0<8;8,1>:ud   0x1A:uw              {@2}
+        rol (16|M16)             r14.0<1>:ud   r28.0<8;8,1>:ud   0x15:uw
+        add (16|M0)              r16.0<1>:d    r38.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@3,$14.dst}
+        rol (16|M16)             r12.0<1>:ud   r28.0<8;8,1>:ud   0x7:uw
+        xor (16|M16)             r32.0<1>:d    r32.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r26.0<1>:d    r82.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M16)             r32.0<1>:d    r32.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@2}
+        and (16|M16)             r40.0<1>:d    r28.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r44.0<1>:d    r96.0<8;8,1>:d    ~r28.0<8;8,1>:d  {Compacted}
+        rol (16|M0)              r30.0<1>:ud   r26.0<8;8,1>:ud   0x1A:uw              {@4}
+        rol (16|M0)              r22.0<1>:ud   r26.0<8;8,1>:ud   0x15:uw
+        add (16|M16)             r32.0<1>:d    r100.0<8;8,1>:d   r32.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r48.0<1>:d    r74.0<8;8,1>:d    r76.0<8;8,1>:d   {Compacted}
+(W&f1.0) or (1|M0)               r3.1<1>:d     r9.0<0;1,0>:d     3:w
+        or (16|M16)              r40.0<1>:d    r40.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M16)             r12.0<1>:ud   r20.0<8;8,1>:ud   0x1E:uw
+        xor (16|M0)              r30.0<1>:d    r30.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@6}
+        and (16|M16)             r48.0<1>:d    r20.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@5}
+(W&f1.0) mul (1|M0)              r4.0<1>:d     r3.1<0;1,0>:d     128:w               {@5}
+        add (16|M16)             r32.0<1>:d    r32.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@5}
+        rol (16|M16)             r22.0<1>:ud   r20.0<8;8,1>:ud   0x13:uw
+        and (16|M16)             r40.0<1>:d    r74.0<8;8,1>:d    r76.0<8;8,1>:d   {Compacted}
+        rol (16|M16)             r44.0<1>:ud   r20.0<8;8,1>:ud   0xA:uw
+        xor (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r40.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@6}
+        rol (16|M0)              r10.0<1>:ud   r26.0<8;8,1>:ud   0x7:uw
+        xor (16|M16)             r12.0<1>:d    r12.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M16)             r12.0<1>:d    r12.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@1}
+        send.dc1 (16|M16)        r44      r40     null    0x0            0x04205EFF           {@1,$1} // wr:2+0, rd:2; untyped surface read with x
+        xor (16|M0)              r30.0<1>:d    r30.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@3}
+        and (16|M0)              r38.0<1>:d    r26.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r42.0<1>:d    r98.0<8;8,1>:d    ~r26.0<8;8,1>:d  {Compacted}
+        add (16|M0)              r30.0<1>:d    r102.0<8;8,1>:d   r30.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M0)              r46.0<1>:d    r72.0<8;8,1>:d    r78.0<8;8,1>:d   {Compacted}
+        or (16|M0)               r38.0<1>:d    r38.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M0)              r14.0<1>:ud   r18.0<8;8,1>:ud   0x13:uw
+        rol (16|M0)              r10.0<1>:ud   r18.0<8;8,1>:ud   0x1E:uw
+        and (16|M0)              r46.0<1>:d    r18.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r30.0<1>:d    r30.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@4}
+        and (16|M0)              r38.0<1>:d    r72.0<8;8,1>:d    r78.0<8;8,1>:d   {Compacted}
+        rol (16|M0)              r42.0<1>:ud   r18.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r10.0<1>:d    r10.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r38.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        xor (16|M0)              r10.0<1>:d    r10.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@3}
+        send.dc1 (16|M0)         r42      r38     null    0x0            0x04205EFF           {@1,$2} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M16)             r32.0<1>:d    r32.0<8;8,1>:d    r5.2<0;1,0>:d    {Compacted}
+        add (16|M16)             r12.0<1>:d    r12.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r30.0<1>:d    r30.0<8;8,1>:d    r5.2<0;1,0>:d    {Compacted,@7}
+        add (16|M0)              r10.0<1>:d    r10.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r22.0<1>:d    r24.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r14.0<1>:d    r16.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r12.0<1>:d    r32.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@6,$0.dst}
+        add (16|M0)              r10.0<1>:d    r30.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@5,$15.dst}
+        add (16|M16)             r24.0<1>:d    r76.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r16.0<1>:d    r78.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M16)             r48.0<1>:ud   r24.0<8;8,1>:ud   0x1A:uw              {@2}
+        rol (16|M16)             r52.0<1>:ud   r24.0<8;8,1>:ud   0x15:uw
+        rol (16|M0)              r46.0<1>:ud   r16.0<8;8,1>:ud   0x1A:uw              {@3}
+        rol (16|M0)              r50.0<1>:ud   r16.0<8;8,1>:ud   0x15:uw
+        rol (16|M16)             r60.0<1>:ud   r24.0<8;8,1>:ud   0x7:uw
+        rol (16|M0)              r58.0<1>:ud   r16.0<8;8,1>:ud   0x7:uw
+        xor (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@2}
+        xor (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@2}
+        and (16|M16)             r32.0<1>:d    r24.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r40.0<1>:d    r36.0<8;8,1>:d    ~r24.0<8;8,1>:d  {Compacted,$1.src}
+        and (16|M0)              r30.0<1>:d    r16.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r38.0<1>:d    r34.0<8;8,1>:d    ~r16.0<8;8,1>:d  {Compacted,$2.src}
+        add (16|M16)             r48.0<1>:d    r96.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r46.0<1>:d    r98.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@6}
+        or (16|M16)              r32.0<1>:d    r32.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@5}
+        or (16|M0)               r30.0<1>:d    r30.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@4}
+        rol (16|M0)              r54.0<1>:ud   r14.0<8;8,1>:ud   0x1E:uw
+        rol (16|M0)              r58.0<1>:ud   r14.0<8;8,1>:ud   0x13:uw
+        add (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M0)              r38.0<1>:d    r18.0<8;8,1>:d    r72.0<8;8,1>:d   {Compacted}
+        rol (16|M0)              r30.0<1>:ud   r14.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r54.0<1>:d    r54.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r5.3<0;1,0>:d    {Compacted,@5}
+        add (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r5.3<0;1,0>:d    {Compacted,@5}
+        and (16|M0)              r38.0<1>:d    r14.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@5}
+        and (16|M0)              r4.0<1>:d     r18.0<8;8,1>:d    r72.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r54.0<1>:d    r54.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@2}
+(W&f1.0) or (1|M0)               r3.1<1>:d     r9.0<0;1,0>:d     4:w
+        add (16|M0)              r54.0<1>:d    r54.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@2}
+(W&f1.0) or (1|M0)               r4.2<1>:d     r3.0<0;1,0>:d     16:w
+(W&f1.0) mul (1|M0)              r5.0<1>:d     r3.1<0;1,0>:d     128:w               {@3}
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(W&f1.0) send.dc0 (4|M0)         r6       r4      null    0x0            0x02184002           {@3,$3} // wr:1h+0, rd:1; oword aligned block read x1
+        add (16|M16)             r52.0<1>:d    r48.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@7,$1.dst}
+        add (16|M0)              r44.0<1>:d    r10.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r10.0<1>:d    r92.0<8;8,1>:d    r5.0<0;1,0>:d    {Compacted,@4}
+        rol (16|M16)             r56.0<1>:ud   r22.0<8;8,1>:ud   0x1E:uw
+        send.dc1 (16|M0)         r30      r10     null    0x0            0x04205EFF           {@2,$4} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M16)             r60.0<1>:ud   r22.0<8;8,1>:ud   0x13:uw
+        xor (16|M16)             r40.0<1>:d    r20.0<8;8,1>:d    r74.0<8;8,1>:d   {Compacted}
+        rol (16|M16)             r32.0<1>:ud   r22.0<8;8,1>:ud   0xA:uw
+        add (16|M0)              r50.0<1>:d    r46.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,$2.dst}
+        xor (16|M16)             r56.0<1>:d    r56.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r40.0<1>:d    r22.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r42.0<1>:d    r20.0<8;8,1>:d    r74.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r56.0<1>:d    r56.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r56.0<1>:d    r56.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@1}
+        add (16|M0)              r38.0<1>:d    r72.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r46.0<1>:d    r12.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r12.0<1>:d    r90.0<8;8,1>:d    r5.0<0;1,0>:d    {Compacted}
+        rol (16|M16)             r58.0<1>:ud   r46.0<8;8,1>:ud   0x1E:uw              {@2}
+        send.dc1 (16|M16)        r32      r12     null    0x0            0x04205EFF           {@2,$5} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M16)             r62.0<1>:ud   r46.0<8;8,1>:ud   0x13:uw              {$8.src}
+        rol (16|M0)              r48.0<1>:ud   r44.0<8;8,1>:ud   0x1E:uw
+        rol (16|M0)              r60.0<1>:ud   r44.0<8;8,1>:ud   0x13:uw
+        add (16|M16)             r40.0<1>:d    r74.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted}
+        rol (16|M0)              r42.0<1>:ud   r38.0<8;8,1>:ud   0x1A:uw              {@7}
+        rol (16|M0)              r56.0<1>:ud   r38.0<8;8,1>:ud   0x15:uw
+        xor (16|M16)             r58.0<1>:d    r58.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M0)              r62.0<1>:ud   r38.0<8;8,1>:ud   0x7:uw
+        xor (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M16)             r54.0<1>:ud   r40.0<8;8,1>:ud   0x1A:uw              {@6}
+        xor (16|M0)              r42.0<1>:d    r42.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@5}
+        rol (16|M16)             r60.0<1>:ud   r40.0<8;8,1>:ud   0x15:uw
+        rol (16|M16)             r64.0<1>:ud   r40.0<8;8,1>:ud   0x7:uw
+        xor (16|M0)              r42.0<1>:d    r42.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@3}
+        and (16|M0)              r4.0<1>:d     r38.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,$3.src}
+        and (16|M0)              r12.0<1>:d    r26.0<8;8,1>:d    ~r38.0<8;8,1>:d  {Compacted,$5.src}
+        xor (16|M16)             r54.0<1>:d    r54.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r42.0<1>:d    r34.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M0)              r68.0<1>:d    r14.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted}
+        or (16|M0)               r4.0<1>:d     r4.0<8;8,1>:d     r12.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r54.0<1>:d    r54.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r10.0<1>:d    r40.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,$4.src}
+        and (16|M16)             r66.0<1>:d    r28.0<8;8,1>:d    ~r40.0<8;8,1>:d  {Compacted}
+        rol (16|M0)              r34.0<1>:ud   r44.0<8;8,1>:ud   0xA:uw
+        and (16|M0)              r68.0<1>:d    r44.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r42.0<1>:d    r42.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@6}
+        add (16|M16)             r54.0<1>:d    r36.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@6}
+        and (16|M0)              r4.0<1>:d     r14.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r70.0<1>:d    r22.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted}
+        or (16|M16)              r10.0<1>:d    r10.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M16)             r36.0<1>:ud   r46.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r68.0<1>:d    r68.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@5}
+(W&f1.0) or (1|M0)               r3.1<1>:d     r9.0<0;1,0>:d     5:w
+        and (16|M16)             r70.0<1>:d    r46.0<8;8,1>:d    r70.0<8;8,1>:d   {Compacted,@6}
+        add (16|M16)             r54.0<1>:d    r54.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@6}
+        and (16|M16)             r10.0<1>:d    r22.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r58.0<1>:d    r58.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@7}
+(W&f1.0) mul (1|M0)              r4.0<1>:d     r3.1<0;1,0>:d     128:w               {@6}
+        xor (16|M16)             r70.0<1>:d    r70.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r56.0<1>:d    r42.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,$3.dst}
+        add (16|M0)              r12.0<1>:d    r50.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r58.0<1>:d    r58.0<8;8,1>:d    r70.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r48.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@5}
+        add (16|M0)              r10.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r62.0<1>:d    r56.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@5,$4.dst}
+        add (16|M16)             r30.0<1>:d    r52.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M16)        r52      r48     null    0x0            0x04205EFF           {@1,$6} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r50      r10     null    0x0            0x04205EFF           {@3,$7} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M16)             r60.0<1>:d    r54.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        rol (16|M0)              r54.0<1>:ud   r12.0<8;8,1>:ud   0x13:uw              {@7}
+        add (16|M16)             r64.0<1>:d    r60.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@2,$5.dst}
+        rol (16|M0)              r32.0<1>:ud   r12.0<8;8,1>:ud   0x1E:uw
+        rol (16|M16)             r42.0<1>:ud   r30.0<8;8,1>:ud   0x1E:uw              {@5}
+        rol (16|M16)             r56.0<1>:ud   r30.0<8;8,1>:ud   0x13:uw
+        rol (16|M0)              r34.0<1>:ud   r12.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r54.0<1>:d    r20.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r58.0<1>:d    r18.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M16)             r36.0<1>:ud   r30.0<8;8,1>:ud   0xA:uw
+        xor (16|M16)             r42.0<1>:d    r42.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@5}
+        rol (16|M16)             r60.0<1>:ud   r54.0<8;8,1>:ud   0x15:uw              {@5}
+        rol (16|M16)             r34.0<1>:ud   r54.0<8;8,1>:ud   0x1A:uw
+        xor (16|M16)             r42.0<1>:d    r42.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@4}
+        rol (16|M0)              r56.0<1>:ud   r58.0<8;8,1>:ud   0x1A:uw              {@7}
+        rol (16|M0)              r36.0<1>:ud   r58.0<8;8,1>:ud   0x15:uw
+        rol (16|M16)             r68.0<1>:ud   r54.0<8;8,1>:ud   0x7:uw
+        rol (16|M0)              r66.0<1>:ud   r58.0<8;8,1>:ud   0x7:uw
+        xor (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@2}
+        and (16|M16)             r48.0<1>:d    r24.0<8;8,1>:d    ~r54.0<8;8,1>:d  {Compacted,$6.src}
+        and (16|M16)             r18.0<1>:d    r54.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@4}
+        and (16|M0)              r10.0<1>:d    r58.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,$7.src}
+        and (16|M0)              r20.0<1>:d    r16.0<8;8,1>:d    ~r58.0<8;8,1>:d  {Compacted}
+        add (16|M16)             r34.0<1>:d    r28.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@6}
+        or (16|M16)              r18.0<1>:d    r18.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r56.0<1>:d    r26.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r28.0<1>:d    r46.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted}
+        or (16|M0)               r10.0<1>:d    r10.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r26.0<1>:d    r44.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@5}
+        and (16|M16)             r28.0<1>:d    r30.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r18.0<1>:d    r46.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@5}
+        and (16|M0)              r26.0<1>:d    r12.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@5}
+        and (16|M0)              r10.0<1>:d    r44.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M0)              r26.0<1>:d    r26.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r6.1<0;1,0>:d    {Compacted,@7}
+        add (16|M16)             r42.0<1>:d    r42.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r6.1<0;1,0>:d    {Compacted,@7}
+        add (16|M16)             r60.0<1>:d    r34.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@4,$6.dst}
+        add (16|M16)             r34.0<1>:d    r64.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r20.0<1>:d    r62.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@4}
+(W&f1.0) or (1|M0)               r5.0<1>:d     r9.0<0;1,0>:d     6:w
+        add (16|M0)              r36.0<1>:d    r56.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@5,$7.dst}
+        rol (16|M16)             r50.0<1>:ud   r34.0<8;8,1>:ud   0x1E:uw              {@4}
+        rol (16|M16)             r56.0<1>:ud   r34.0<8;8,1>:ud   0x13:uw
+        rol (16|M0)              r48.0<1>:ud   r20.0<8;8,1>:ud   0x1E:uw              {@5}
+        rol (16|M0)              r52.0<1>:ud   r20.0<8;8,1>:ud   0x13:uw
+(W&f1.0) mul (1|M0)              r3.1<1>:d     r5.0<0;1,0>:d     128:w               {@6}
+        rol (16|M0)              r10.0<1>:ud   r20.0<8;8,1>:ud   0xA:uw
+        xor (16|M16)             r50.0<1>:d    r50.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r56.0<1>:d    r90.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted,@3}
+        xor (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r52.0<1>:d    r92.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted}
+        xor (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        send.dc1 (16|M16)        r10      r56     null    0x0            0x04205EFF           {@1,$8} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r62      r52     null    0x0            0x04205EFF           {@2,$9} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M0)              r66.0<1>:d    r14.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r14.0<1>:d    r12.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r68.0<1>:d    r22.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r22.0<1>:d    r30.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r26.0<1>:d    r12.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted}
+        rol (16|M16)             r18.0<1>:ud   r34.0<8;8,1>:ud   0xA:uw
+        and (16|M0)              r14.0<1>:d    r20.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@5}
+        and (16|M16)             r28.0<1>:d    r30.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r22.0<1>:d    r34.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r14.0<1>:d    r14.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M16)             r50.0<1>:d    r50.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r22.0<1>:d    r22.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r48.0<1>:d    r48.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M16)             r26.0<1>:ud   r68.0<8;8,1>:ud   0x1A:uw              {@7}
+        add (16|M16)             r50.0<1>:d    r50.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M16)             r22.0<1>:ud   r68.0<8;8,1>:ud   0x15:uw
+        rol (16|M0)              r18.0<1>:ud   r66.0<8;8,1>:ud   0x1A:uw
+        rol (16|M0)              r14.0<1>:ud   r66.0<8;8,1>:ud   0x15:uw
+        add (16|M0)              r32.0<1>:d    r36.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M16)             r36.0<1>:ud   r68.0<8;8,1>:ud   0x7:uw
+        rol (16|M0)              r28.0<1>:ud   r66.0<8;8,1>:ud   0x7:uw
+        xor (16|M16)             r26.0<1>:d    r26.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M0)              r18.0<1>:d    r18.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r26.0<1>:d    r26.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@2}
+        and (16|M16)             r56.0<1>:d    r40.0<8;8,1>:d    ~r68.0<8;8,1>:d  {Compacted,$8.src}
+        add (16|M16)             r42.0<1>:d    r60.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r18.0<1>:d    r18.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r50.0<1>:d    r68.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r52.0<1>:d    r38.0<8;8,1>:d    ~r66.0<8;8,1>:d  {Compacted,$9.src}
+        and (16|M0)              r48.0<1>:d    r66.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r26.0<1>:d    r24.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r18.0<1>:d    r16.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@5}
+        or (16|M16)              r50.0<1>:d    r50.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@5}
+        or (16|M0)               r48.0<1>:d    r48.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r26.0<1>:d    r26.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r18.0<1>:d    r18.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r26.0<1>:d    r26.0<8;8,1>:d    r6.2<0;1,0>:d    {Compacted,@2}
+        add (16|M0)              r18.0<1>:d    r18.0<8;8,1>:d    r6.2<0;1,0>:d    {Compacted,@2}
+        add (16|M16)             r22.0<1>:d    r26.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2,$8.dst}
+        add (16|M0)              r14.0<1>:d    r18.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@2,$9.dst}
+        add (16|M16)             r36.0<1>:d    r46.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r28.0<1>:d    r44.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@2}
+(W&f1.0) or (1|M0)               r4.0<1>:d     r9.0<0;1,0>:d     7:w
+        rol (16|M16)             r24.0<1>:ud   r36.0<8;8,1>:ud   0x1A:uw              {@3}
+        rol (16|M16)             r56.0<1>:ud   r36.0<8;8,1>:ud   0x15:uw
+        rol (16|M0)              r10.0<1>:ud   r32.0<8;8,1>:ud   0x1E:uw
+        rol (16|M0)              r26.0<1>:ud   r32.0<8;8,1>:ud   0x13:uw
+        rol (16|M0)              r16.0<1>:ud   r28.0<8;8,1>:ud   0x1A:uw              {@6}
+        rol (16|M0)              r52.0<1>:ud   r28.0<8;8,1>:ud   0x15:uw
+(W&f1.0) mul (1|M0)              r3.1<1>:d     r4.0<0;1,0>:d     128:w               {@7}
+        rol (16|M0)              r62.0<1>:ud   r32.0<8;8,1>:ud   0xA:uw
+        xor (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r56.0<1>:d    r90.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted,@3}
+        xor (16|M0)              r10.0<1>:d    r10.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r16.0<1>:d    r16.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r52.0<1>:d    r92.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted}
+        xor (16|M0)              r10.0<1>:d    r10.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@3}
+        send.dc1 (16|M16)        r62      r56     null    0x0            0x04205EFF           {@1,$10} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M0)         r70      r52     null    0x0            0x04205EFF           {@2,$11} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M16)             r18.0<1>:ud   r42.0<8;8,1>:ud   0x1E:uw
+        rol (16|M16)             r50.0<1>:ud   r36.0<8;8,1>:ud   0x7:uw
+        rol (16|M16)             r44.0<1>:ud   r42.0<8;8,1>:ud   0x13:uw
+        xor (16|M16)             r60.0<1>:d    r34.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted}
+        rol (16|M0)              r48.0<1>:ud   r28.0<8;8,1>:ud   0x7:uw
+        rol (16|M16)             r64.0<1>:ud   r42.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r46.0<1>:d    r20.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M16)             r18.0<1>:d    r18.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@6}
+        and (16|M16)             r60.0<1>:d    r42.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@6}
+        and (16|M16)             r50.0<1>:d    r34.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r16.0<1>:d    r16.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@7}
+        and (16|M0)              r46.0<1>:d    r32.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@6}
+        and (16|M0)              r48.0<1>:d    r20.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r18.0<1>:d    r18.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M16)             r60.0<1>:d    r60.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r18.0<1>:d    r18.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@2}
+        and (16|M16)             r50.0<1>:d    r36.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r60.0<1>:d    r54.0<8;8,1>:d    ~r36.0<8;8,1>:d  {Compacted}
+        add (16|M16)             r24.0<1>:d    r40.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r10.0<1>:d    r10.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@5}
+        and (16|M0)              r48.0<1>:d    r28.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r46.0<1>:d    r58.0<8;8,1>:d    ~r28.0<8;8,1>:d  {Compacted}
+        add (16|M0)              r16.0<1>:d    r38.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted}
+        or (16|M16)              r50.0<1>:d    r50.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@6}
+        or (16|M0)               r48.0<1>:d    r48.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r16.0<1>:d    r16.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r6.3<0;1,0>:d    {Compacted,@2}
+        add (16|M0)              r16.0<1>:d    r16.0<8;8,1>:d    r6.3<0;1,0>:d    {Compacted,@2}
+        add (16|M0)              r26.0<1>:d    r14.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r14.0<1>:d    r24.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@3,$10.dst}
+        add (16|M0)              r10.0<1>:d    r16.0<8;8,1>:d    r70.0<8;8,1>:d   {Compacted,@3,$11.dst}
+        add (16|M16)             r44.0<1>:d    r22.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r22.0<1>:d    r30.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r18.0<1>:d    r12.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M16)             r40.0<1>:ud   r22.0<8;8,1>:ud   0x1A:uw              {@2}
+        rol (16|M16)             r52.0<1>:ud   r22.0<8;8,1>:ud   0x15:uw
+        rol (16|M0)              r38.0<1>:ud   r18.0<8;8,1>:ud   0x1A:uw              {@3}
+        rol (16|M0)              r46.0<1>:ud   r18.0<8;8,1>:ud   0x15:uw
+        rol (16|M16)             r50.0<1>:ud   r22.0<8;8,1>:ud   0x7:uw
+        rol (16|M0)              r48.0<1>:ud   r18.0<8;8,1>:ud   0x7:uw
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@5}
+(W&f1.0) or (1|M0)               r5.0<1>:d     r9.0<0;1,0>:d     8:w
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M0)              r46.0<1>:ud   r26.0<8;8,1>:ud   0x1E:uw
+        rol (16|M0)              r50.0<1>:ud   r26.0<8;8,1>:ud   0x13:uw
+(W&f1.0) or (1|M0)               r4.2<1>:d     r3.0<0;1,0>:d     32:w
+        rol (16|M16)             r52.0<1>:ud   r44.0<8;8,1>:ud   0x13:uw
+(W&f1.0) mul (1|M0)              r3.1<1>:d     r5.0<0;1,0>:d     128:w               {@7}
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M16)             r48.0<1>:ud   r44.0<8;8,1>:ud   0x1E:uw
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(W&f1.0) send.dc0 (4|M0)         r6       r4      null    0x0            0x02184002           {@6,$12} // wr:1h+0, rd:1; oword aligned block read x1
+        add (16|M16)             r40.0<1>:d    r54.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M16)             r54.0<1>:ud   r44.0<8;8,1>:ud   0xA:uw
+        add (16|M0)              r50.0<1>:d    r92.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted,@7}
+        and (16|M0)              r12.0<1>:d    r18.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r24.0<1>:d    r66.0<8;8,1>:d    ~r18.0<8;8,1>:d  {Compacted}
+        xor (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r38.0<1>:d    r58.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r56.0<1>:d    r32.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted}
+        or (16|M0)               r12.0<1>:d    r12.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         r54      r50     null    0x0            0x04205EFF           {@1,$13} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M16)             r52.0<1>:d    r90.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted}
+        and (16|M0)              r56.0<1>:d    r26.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@4}
+        and (16|M0)              r12.0<1>:d    r32.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@1}
+        send.dc1 (16|M16)        r12      r52     null    0x0            0x04205EFF           {@1,$14} // wr:2+0, rd:2; untyped surface read with x
+        and (16|M16)             r16.0<1>:d    r22.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r30.0<1>:d    r68.0<8;8,1>:d    ~r22.0<8;8,1>:d  {Compacted}
+        xor (16|M16)             r60.0<1>:d    r42.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted}
+        or (16|M16)              r16.0<1>:d    r16.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@2}
+(W&f1.0) or (1|M0)               r6.4<1>:d     r9.0<0;1,0>:d     9:w               {$12.dst}
+        and (16|M16)             r60.0<1>:d    r44.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@3}
+        and (16|M16)             r16.0<1>:d    r42.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted}
+(W&f1.0) mul (1|M0)              r8.3<1>:d     r6.4<0;1,0>:d     128:w               {@4}
+        xor (16|M16)             r60.0<1>:d    r60.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@1}
+        add (16|M0)              r16.0<1>:d    r92.0<8;8,1>:d    r8.3<0;1,0>:d    {Compacted,@3}
+        add (16|M16)             r30.0<1>:d    r14.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@2}
+        send.dc1 (16|M0)         r14      r16     null    0x0            0x04205EFF           {@1,$15} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M0)              r58.0<1>:ud   r26.0<8;8,1>:ud   0xA:uw
+        add (16|M0)              r48.0<1>:d    r38.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        xor (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@1}
+        add (16|M0)              r56.0<1>:d    r48.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@3,$13.dst}
+        add (16|M0)              r24.0<1>:d    r10.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r10.0<1>:d    r90.0<8;8,1>:d    r8.3<0;1,0>:d    {Compacted}
+        add (16|M16)             r4.0<1>:d     r40.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        send.dc1 (16|M16)        r46      r10     null    0x0            0x04205EFF           {@2,$0} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M0)              r50.0<1>:d    r20.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r58.0<1>:d    r4.0<8;8,1>:d     r12.0<8;8,1>:d   {Compacted,@2,$14.dst}
+        rol (16|M0)              r60.0<1>:ud   r50.0<8;8,1>:ud   0x1A:uw              {@2}
+        rol (16|M0)              r64.0<1>:ud   r50.0<8;8,1>:ud   0x15:uw
+        add (16|M16)             r52.0<1>:d    r34.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M0)              r16.0<1>:ud   r50.0<8;8,1>:ud   0x7:uw              {$15.src}
+        xor (16|M0)              r60.0<1>:d    r60.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M16)             r62.0<1>:ud   r52.0<8;8,1>:ud   0x1A:uw              {@3}
+        rol (16|M16)             r70.0<1>:ud   r52.0<8;8,1>:ud   0x15:uw
+        xor (16|M0)              r60.0<1>:d    r60.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@3}
+        and (16|M0)              r20.0<1>:d    r28.0<8;8,1>:d    ~r50.0<8;8,1>:d  {Compacted}
+        and (16|M0)              r4.0<1>:d     r50.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted}
+        rol (16|M16)             r10.0<1>:ud   r52.0<8;8,1>:ud   0x7:uw              {$0.src}
+        xor (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r70.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r60.0<1>:d    r66.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@5}
+        or (16|M0)               r4.0<1>:d     r4.0<8;8,1>:d     r20.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M0)              r38.0<1>:ud   r24.0<8;8,1>:ud   0x1E:uw
+        rol (16|M0)              r48.0<1>:ud   r24.0<8;8,1>:ud   0x13:uw
+        and (16|M16)             r12.0<1>:d    r52.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r34.0<1>:d    r36.0<8;8,1>:d    ~r52.0<8;8,1>:d  {Compacted}
+        add (16|M0)              r60.0<1>:d    r60.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@6}
+        add (16|M16)             r62.0<1>:d    r68.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M16)             r54.0<1>:ud   r30.0<8;8,1>:ud   0x13:uw
+        rol (16|M16)             r40.0<1>:ud   r30.0<8;8,1>:ud   0x1E:uw
+        or (16|M16)              r12.0<1>:d    r12.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@5}
+        rol (16|M0)              r4.0<1>:ud    r24.0<8;8,1>:ud   0xA:uw
+(W&f1.0) or (1|M0)               r3.1<1>:d     r9.0<0;1,0>:d     10:w
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r60.0<1>:d    r60.0<8;8,1>:d    r6.1<0;1,0>:d    {Compacted,@7}
+        xor (16|M0)              r20.0<1>:d    r26.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M16)             r12.0<1>:ud   r30.0<8;8,1>:ud   0xA:uw
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@6}
+(W&f1.0) mul (1|M0)              r4.0<1>:d     r3.1<0;1,0>:d     128:w               {@7}
+        add (16|M0)              r10.0<1>:d    r60.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@7,$15.dst}
+        and (16|M0)              r20.0<1>:d    r24.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@7}
+        and (16|M0)              r14.0<1>:d    r26.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@6}
+        add (16|M0)              r12.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@5}
+        xor (16|M0)              r20.0<1>:d    r20.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@1}
+        send.dc1 (16|M0)         r20      r12     null    0x0            0x04205EFF           {@1,$1} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r6.1<0;1,0>:d    {Compacted}
+        xor (16|M16)             r34.0<1>:d    r44.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r16.0<1>:d    r62.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@2,$0.dst}
+        and (16|M16)             r34.0<1>:d    r30.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@2}
+        and (16|M16)             r46.0<1>:d    r44.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@1}
+        add (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@1}
+        add (16|M16)             r14.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        add (16|M16)             r54.0<1>:d    r58.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r48.0<1>:d    r56.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r38.0<1>:d    r32.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted}
+        send.dc1 (16|M16)        r34      r14     null    0x0            0x04205EFF           {@4,$2} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M16)             r62.0<1>:ud   r54.0<8;8,1>:ud   0x1E:uw              {@3}
+        rol (16|M16)             r66.0<1>:ud   r54.0<8;8,1>:ud   0x13:uw
+        add (16|M16)             r40.0<1>:d    r42.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M0)              r60.0<1>:ud   r48.0<8;8,1>:ud   0x1E:uw              {@5}
+        rol (16|M0)              r64.0<1>:ud   r48.0<8;8,1>:ud   0x13:uw
+        rol (16|M0)              r46.0<1>:ud   r38.0<8;8,1>:ud   0x1A:uw              {@6}
+        rol (16|M0)              r58.0<1>:ud   r38.0<8;8,1>:ud   0x15:uw
+        xor (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M0)              r66.0<1>:ud   r38.0<8;8,1>:ud   0x7:uw
+        rol (16|M16)             r56.0<1>:ud   r40.0<8;8,1>:ud   0x1A:uw              {@7}
+        xor (16|M0)              r60.0<1>:d    r60.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@5}
+        rol (16|M16)             r64.0<1>:ud   r40.0<8;8,1>:ud   0x15:uw
+        rol (16|M16)             r68.0<1>:ud   r40.0<8;8,1>:ud   0x7:uw
+        xor (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@3}
+        and (16|M0)              r4.0<1>:d     r38.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r14.0<1>:d    r18.0<8;8,1>:d    ~r38.0<8;8,1>:d  {Compacted,$2.src}
+        xor (16|M16)             r56.0<1>:d    r56.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r46.0<1>:d    r28.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@4}
+        or (16|M0)               r4.0<1>:d     r4.0<8;8,1>:d     r14.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M16)             r56.0<1>:d    r56.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M0)              r64.0<1>:d    r24.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r12.0<1>:d    r40.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,$1.src}
+        and (16|M16)             r32.0<1>:d    r22.0<8;8,1>:d    ~r40.0<8;8,1>:d  {Compacted}
+        rol (16|M0)              r28.0<1>:ud   r48.0<8;8,1>:ud   0xA:uw
+        add (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@6}
+        add (16|M16)             r56.0<1>:d    r36.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@6}
+        and (16|M0)              r64.0<1>:d    r48.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@6}
+        and (16|M0)              r4.0<1>:d     r24.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r66.0<1>:d    r30.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted}
+        or (16|M16)              r12.0<1>:d    r12.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r60.0<1>:d    r60.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M16)             r36.0<1>:ud   r54.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r64.0<1>:d    r64.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@5}
+(W&f1.0) or (1|M0)               r3.1<1>:d     r9.0<0;1,0>:d     11:w
+        and (16|M16)             r66.0<1>:d    r54.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@6}
+        add (16|M16)             r56.0<1>:d    r56.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@6}
+        and (16|M16)             r12.0<1>:d    r30.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r60.0<1>:d    r60.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@7}
+(W&f1.0) mul (1|M0)              r4.0<1>:d     r3.1<0;1,0>:d     128:w               {@6}
+        xor (16|M16)             r66.0<1>:d    r66.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r46.0<1>:d    r46.0<8;8,1>:d    r6.2<0;1,0>:d    {Compacted}
+        add (16|M0)              r14.0<1>:d    r10.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r62.0<1>:d    r62.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r10.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@5}
+        add (16|M16)             r12.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        add (16|M0)              r42.0<1>:d    r46.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@5,$1.dst}
+        add (16|M16)             r20.0<1>:d    r16.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M0)         r16      r10     null    0x0            0x04205EFF           {@1,$3} // wr:2+0, rd:2; untyped surface read with x
+        send.dc1 (16|M16)        r60      r12     null    0x0            0x04205EFF           {@3,$4} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M16)             r56.0<1>:d    r56.0<8;8,1>:d    r6.2<0;1,0>:d    {Compacted}
+        rol (16|M0)              r32.0<1>:ud   r14.0<8;8,1>:ud   0x1E:uw              {@7}
+        rol (16|M0)              r46.0<1>:ud   r14.0<8;8,1>:ud   0x13:uw
+        add (16|M16)             r58.0<1>:d    r56.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@3,$2.dst}
+        rol (16|M16)             r34.0<1>:ud   r20.0<8;8,1>:ud   0x1E:uw              {@5}
+        rol (16|M16)             r56.0<1>:ud   r20.0<8;8,1>:ud   0x13:uw
+        add (16|M0)              r62.0<1>:d    r26.0<8;8,1>:d    r42.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M16)             r36.0<1>:ud   r20.0<8;8,1>:ud   0xA:uw
+        rol (16|M0)              r28.0<1>:ud   r14.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r46.0<1>:d    r44.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M0)              r56.0<1>:ud   r62.0<8;8,1>:ud   0x1A:uw              {@7}
+        rol (16|M0)              r36.0<1>:ud   r62.0<8;8,1>:ud   0x15:uw
+        xor (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M16)             r64.0<1>:ud   r46.0<8;8,1>:ud   0x15:uw              {@5}
+        rol (16|M16)             r28.0<1>:ud   r46.0<8;8,1>:ud   0x1A:uw
+        rol (16|M0)              r66.0<1>:ud   r62.0<8;8,1>:ud   0x7:uw
+        rol (16|M16)             r68.0<1>:ud   r46.0<8;8,1>:ud   0x7:uw
+        xor (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r66.0<8;8,1>:d   {Compacted,@2}
+        and (16|M0)              r10.0<1>:d    r62.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,$3.src}
+        and (16|M0)              r26.0<1>:d    r50.0<8;8,1>:d    ~r62.0<8;8,1>:d  {Compacted}
+        xor (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r68.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r12.0<1>:d    r46.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,$4.src}
+        and (16|M16)             r44.0<1>:d    r52.0<8;8,1>:d    ~r46.0<8;8,1>:d  {Compacted}
+        add (16|M0)              r56.0<1>:d    r18.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@6}
+        or (16|M0)               r10.0<1>:d    r10.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r28.0<1>:d    r22.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r18.0<1>:d    r48.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted}
+        or (16|M16)              r12.0<1>:d    r12.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r22.0<1>:d    r54.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@5}
+        and (16|M0)              r18.0<1>:d    r14.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@4}
+        and (16|M0)              r10.0<1>:d    r48.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@5}
+        and (16|M16)             r22.0<1>:d    r20.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@5}
+        and (16|M16)             r12.0<1>:d    r54.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r18.0<1>:d    r18.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r22.0<1>:d    r22.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r56.0<1>:d    r56.0<8;8,1>:d    r6.3<0;1,0>:d    {Compacted,@7}
+        add (16|M0)              r32.0<1>:d    r32.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r34.0<1>:d    r34.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r6.3<0;1,0>:d    {Compacted,@7}
+        add (16|M0)              r36.0<1>:d    r56.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@4,$3.dst}
+        add (16|M0)              r16.0<1>:d    r42.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted,@4}
+        add (16|M16)             r26.0<1>:d    r58.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted,@4}
+(W&f1.0) or (1|M0)               r5.0<1>:d     r9.0<0;1,0>:d     12:w
+        add (16|M16)             r64.0<1>:d    r28.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@5,$4.dst}
+        rol (16|M0)              r56.0<1>:ud   r16.0<8;8,1>:ud   0x13:uw              {@4}
+        rol (16|M0)              r28.0<1>:ud   r16.0<8;8,1>:ud   0x1E:uw
+(W&f1.0) or (1|M0)               r4.2<1>:d     r3.0<0;1,0>:d     48:w
+        rol (16|M16)             r44.0<1>:ud   r26.0<8;8,1>:ud   0x1E:uw              {@6}
+(W&f1.0) mul (1|M0)              r6.0<1>:d     r5.0<0;1,0>:d     128:w               {@6}
+        rol (16|M16)             r60.0<1>:ud   r26.0<8;8,1>:ud   0x13:uw
+        rol (16|M0)              r10.0<1>:ud   r16.0<8;8,1>:ud   0xA:uw
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(W&f1.0) send.dc0 (4|M0)         r42      r4      null    0x0            0x02184002           {@6,$5} // wr:1h+0, rd:1; oword aligned block read x1
+        rol (16|M16)             r12.0<1>:ud   r26.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r28.0<1>:d    r28.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r56.0<1>:d    r92.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted,@6}
+        add (16|M0)              r66.0<1>:d    r24.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r44.0<1>:d    r44.0<8;8,1>:d    r60.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r24.0<1>:d    r14.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r28.0<1>:d    r28.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r10.0<1>:d    r90.0<8;8,1>:d    r6.0<0;1,0>:d    {Compacted}
+        and (16|M0)              r18.0<1>:d    r14.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r44.0<1>:d    r44.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@5}
+        send.dc1 (16|M0)         r12      r56     null    0x0            0x04205EFF           {@1,$6} // wr:2+0, rd:2; untyped surface read with x
+        and (16|M0)              r24.0<1>:d    r16.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@1}
+        send.dc1 (16|M16)        r18      r10     null    0x0            0x04205EFF           {@1,$7} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M16)             r68.0<1>:d    r30.0<8;8,1>:d    r64.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r30.0<1>:d    r20.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r22.0<1>:d    r20.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r28.0<1>:d    r28.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r30.0<1>:d    r26.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@3}
+        xor (16|M16)             r30.0<1>:d    r30.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@1}
+        add (16|M0)              r32.0<1>:d    r36.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@3}
+        rol (16|M0)              r22.0<1>:ud   r66.0<8;8,1>:ud   0x1A:uw
+        rol (16|M0)              r28.0<1>:ud   r66.0<8;8,1>:ud   0x15:uw
+        add (16|M16)             r44.0<1>:d    r44.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@4}
+        rol (16|M16)             r24.0<1>:ud   r68.0<8;8,1>:ud   0x1A:uw              {@7}
+        rol (16|M0)              r36.0<1>:ud   r66.0<8;8,1>:ud   0x7:uw
+        rol (16|M16)             r30.0<1>:ud   r68.0<8;8,1>:ud   0x15:uw
+        xor (16|M0)              r22.0<1>:d    r22.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r34.0<1>:d    r64.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@5}
+        rol (16|M16)             r44.0<1>:ud   r68.0<8;8,1>:ud   0x7:uw
+        xor (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M0)              r22.0<1>:d    r22.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@4}
+        and (16|M0)              r4.0<1>:d     r66.0<8;8,1>:d    r62.0<8;8,1>:d   {Compacted,$5.src}
+        and (16|M0)              r56.0<1>:d    r38.0<8;8,1>:d    ~r66.0<8;8,1>:d  {Compacted,$6.src}
+        xor (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r22.0<1>:d    r50.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r10.0<1>:d    r68.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,$7.src}
+        and (16|M16)             r58.0<1>:d    r40.0<8;8,1>:d    ~r68.0<8;8,1>:d  {Compacted}
+        or (16|M0)               r4.0<1>:d     r4.0<8;8,1>:d     r56.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r24.0<1>:d    r52.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@5}
+        or (16|M16)              r10.0<1>:d    r10.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r22.0<1>:d    r22.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@3}
+        add (16|M16)             r24.0<1>:d    r24.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r28.0<1>:d    r22.0<8;8,1>:d    r42.0<0;1,0>:d   {Compacted,@2,$5.dst}
+        add (16|M16)             r30.0<1>:d    r24.0<8;8,1>:d    r42.0<0;1,0>:d   {Compacted,@2}
+        add (16|M0)              r36.0<1>:d    r28.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@2,$6.dst}
+(W&f1.0) or (1|M0)               r8.3<1>:d     r9.0<0;1,0>:d     13:w
+        rol (16|M16)             r24.0<1>:ud   r34.0<8;8,1>:ud   0x13:uw
+        add (16|M16)             r44.0<1>:d    r30.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@4,$7.dst}
+        rol (16|M16)             r18.0<1>:ud   r34.0<8;8,1>:ud   0x1E:uw
+        rol (16|M0)              r22.0<1>:ud   r32.0<8;8,1>:ud   0x13:uw
+        rol (16|M0)              r12.0<1>:ud   r32.0<8;8,1>:ud   0x1E:uw
+        add (16|M0)              r110.0<1>:d   r48.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@7}
+(W&f1.0) mul (1|M0)              r3.0<1>:d     r8.3<0;1,0>:d     128:w               {@7}
+        xor (16|M16)             r18.0<1>:d    r18.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@5}
+        rol (16|M0)              r48.0<1>:ud   r32.0<8;8,1>:ud   0xA:uw
+        add (16|M16)             r24.0<1>:d    r90.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted,@3}
+        xor (16|M0)              r12.0<1>:d    r12.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@6}
+        rol (16|M0)              r50.0<1>:ud   r110.0<8;8,1>:ud  0x1A:uw              {@6}
+        rol (16|M0)              r56.0<1>:ud   r110.0<8;8,1>:ud  0x15:uw
+        add (16|M0)              r22.0<1>:d    r92.0<8;8,1>:d    r3.0<0;1,0>:d    {Compacted}
+        xor (16|M0)              r12.0<1>:d    r12.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@4}
+        send.dc1 (16|M16)        r48      r24     null    0x0            0x04205EFF           {@1,$8} // wr:2+0, rd:2; untyped surface read with x
+        xor (16|M0)              r50.0<1>:d    r50.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@3}
+        send.dc1 (16|M0)         r56      r22     null    0x0            0x04205EFF           {@1,$9} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M16)             r108.0<1>:d   r54.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted}
+        rol (16|M0)              r4.0<1>:ud    r110.0<8;8,1>:ud  0x7:uw
+        xor (16|M0)              r28.0<1>:d    r16.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted}
+        rol (16|M16)             r52.0<1>:ud   r108.0<8;8,1>:ud  0x1A:uw              {@3}
+        rol (16|M16)             r58.0<1>:ud   r108.0<8;8,1>:ud  0x15:uw
+        xor (16|M0)              r50.0<1>:d    r50.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@4}
+        and (16|M0)              r28.0<1>:d    r32.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@4}
+        and (16|M0)              r4.0<1>:d     r16.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted}
+        rol (16|M16)             r10.0<1>:ud   r108.0<8;8,1>:ud  0x7:uw
+        xor (16|M16)             r30.0<1>:d    r26.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r52.0<1>:d    r52.0<8;8,1>:d    r58.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M0)              r28.0<1>:d    r28.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@4}
+        rol (16|M16)             r54.0<1>:ud   r34.0<8;8,1>:ud   0xA:uw
+        and (16|M16)             r30.0<1>:d    r34.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r52.0<1>:d    r52.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r12.0<1>:d    r12.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@4}
+        and (16|M16)             r10.0<1>:d    r26.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r18.0<1>:d    r18.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r30.0<1>:d    r30.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        and (16|M16)             r28.0<1>:d    r108.0<8;8,1>:d   r68.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r94.0<1>:d    r36.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@5}
+        and (16|M16)             r12.0<1>:d    r46.0<8;8,1>:d    ~r108.0<8;8,1>:d {Compacted}
+        add (16|M16)             r52.0<1>:d    r40.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r18.0<1>:d    r18.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@5}
+        and (16|M0)              r10.0<1>:d    r110.0<8;8,1>:d   r66.0<8;8,1>:d   {Compacted}
+        and (16|M0)              r30.0<1>:d    r62.0<8;8,1>:d    ~r110.0<8;8,1>:d {Compacted}
+        add (16|M0)              r50.0<1>:d    r38.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted}
+        or (16|M16)              r28.0<1>:d    r28.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@6}
+        or (16|M0)               r10.0<1>:d    r10.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r52.0<1>:d    r52.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@2}
+        add (16|M0)              r50.0<1>:d    r50.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r52.0<1>:d    r52.0<8;8,1>:d    r42.1<0;1,0>:d   {Compacted,@2}
+        add (16|M0)              r50.0<1>:d    r50.0<8;8,1>:d    r42.1<0;1,0>:d   {Compacted,@2}
+        sync.nop                             null                             {Compacted,$9.src}
+        add (16|M16)             r22.0<1>:d    r52.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@2,$8.dst}
+        add (16|M16)             r84.0<1>:d    r44.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r18.0<1>:d    r50.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@3,$9.dst}
+        add (16|M16)             r104.0<1>:d   r20.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r106.0<1>:d   r14.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@2}
+        rol (16|M16)             r36.0<1>:ud   r104.0<8;8,1>:ud  0x1A:uw              {@2}
+        rol (16|M16)             r12.0<1>:ud   r104.0<8;8,1>:ud  0x15:uw
+(W&f1.0) or (1|M0)               r6.0<1>:d     r9.0<0;1,0>:d     14:w
+        rol (16|M0)              r24.0<1>:ud   r106.0<8;8,1>:ud  0x1A:uw              {@4}
+        rol (16|M0)              r30.0<1>:ud   r106.0<8;8,1>:ud  0x15:uw
+        rol (16|M0)              r38.0<1>:ud   r94.0<8;8,1>:ud   0x1E:uw
+        rol (16|M0)              r14.0<1>:ud   r94.0<8;8,1>:ud   0x13:uw
+        and (16|M16)             r52.0<1>:d    r104.0<8;8,1>:d   r108.0<8;8,1>:d  {Compacted}
+        rol (16|M0)              r10.0<1>:ud   r106.0<8;8,1>:ud  0x7:uw
+        xor (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@7}
+(W&f1.0) mul (1|M0)              r4.0<1>:d     r6.0<0;1,0>:d     128:w               {@7}
+        and (16|M16)             r12.0<1>:d    r68.0<8;8,1>:d    ~r104.0<8;8,1>:d {Compacted}
+        xor (16|M0)              r44.0<1>:d    r32.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M16)             r40.0<1>:ud   r84.0<8;8,1>:ud   0x1E:uw
+        rol (16|M16)             r20.0<1>:ud   r84.0<8;8,1>:ud   0x13:uw
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@7}
+        or (16|M16)              r52.0<1>:d    r52.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@6}
+        add (16|M16)             r14.0<1>:d    r90.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted,@7}
+        add (16|M0)              r12.0<1>:d    r92.0<8;8,1>:d    r4.0<0;1,0>:d    {Compacted}
+        and (16|M0)              r44.0<1>:d    r94.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@7}
+        and (16|M0)              r10.0<1>:d    r32.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@7}
+        send.dc1 (16|M16)        r20      r14     null    0x0            0x04205EFF           {@1,$10} // wr:2+0, rd:2; untyped surface read with x
+        xor (16|M0)              r44.0<1>:d    r44.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@2}
+        send.dc1 (16|M0)         r10      r12     null    0x0            0x04205EFF           {@1,$11} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M16)             r28.0<1>:ud   r104.0<8;8,1>:ud  0x7:uw
+(W&f1.0) or (1|M0)               r3.0<1>:d     r9.0<0;1,0>:d     15:w
+        xor (16|M16)             r48.0<1>:d    r34.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted}
+        rol (16|M0)              r54.0<1>:ud   r94.0<8;8,1>:ud   0xA:uw
+        and (16|M0)              r50.0<1>:d    r106.0<8;8,1>:d   r110.0<8;8,1>:d  {Compacted}
+        and (16|M0)              r30.0<1>:d    r66.0<8;8,1>:d    ~r106.0<8;8,1>:d {Compacted}
+        xor (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@6}
+(W&f1.0) mul (1|M0)              r3.1<1>:d     r3.0<0;1,0>:d     128:w               {@6}
+        and (16|M16)             r48.0<1>:d    r84.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@6}
+        and (16|M16)             r28.0<1>:d    r34.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted}
+        or (16|M0)               r50.0<1>:d    r50.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@5}
+        xor (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r30.0<1>:d    r90.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted,@5}
+        add (16|M0)              r28.0<1>:d    r92.0<8;8,1>:d    r3.1<0;1,0>:d    {Compacted}
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r54.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r36.0<1>:d    r46.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@7}
+        send.dc1 (16|M16)        r46      r30     null    0x0            0x04205EFF           {@1,$12} // wr:2+0, rd:2; untyped surface read with x
+        add (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@2}
+        send.dc1 (16|M0)         r44      r28     null    0x0            0x04205EFF           {@1,$13} // wr:2+0, rd:2; untyped surface read with x
+        rol (16|M16)             r56.0<1>:ud   r84.0<8;8,1>:ud   0xA:uw
+        add (16|M0)              r24.0<1>:d    r62.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r52.0<8;8,1>:d   {Compacted,@4}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r56.0<8;8,1>:d   {Compacted,@3}
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r50.0<8;8,1>:d   {Compacted,@3}
+        add (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@2}
+        add (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r42.2<0;1,0>:d   {Compacted,@4}
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r42.2<0;1,0>:d   {Compacted,@3}
+        add (16|M0)              r82.0<1>:d    r18.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r80.0<1>:d    r22.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@4}
+        add (16|M0)              r18.0<1>:d    r24.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@3,$11.dst}
+        add (16|M16)             r22.0<1>:d    r36.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@5,$10.dst}
+        rol (16|M0)              r38.0<1>:ud   r82.0<8;8,1>:ud   0x1E:uw              {@4}
+        rol (16|M0)              r4.0<1>:ud    r82.0<8;8,1>:ud   0x13:uw
+        rol (16|M16)             r40.0<1>:ud   r80.0<8;8,1>:ud   0x1E:uw              {@5}
+        rol (16|M16)             r12.0<1>:ud   r80.0<8;8,1>:ud   0x13:uw
+        xor (16|M0)              r14.0<1>:d    r94.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted}
+        xor (16|M16)             r48.0<1>:d    r84.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r102.0<1>:d   r16.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r100.0<1>:d   r26.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M0)              r28.0<1>:ud   r82.0<8;8,1>:ud   0xA:uw              {$13.src}
+        rol (16|M16)             r30.0<1>:ud   r80.0<8;8,1>:ud   0xA:uw              {$12.src}
+        and (16|M0)              r10.0<1>:d    r94.0<8;8,1>:d    r32.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r20.0<1>:d    r84.0<8;8,1>:d    r34.0<8;8,1>:d   {Compacted}
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@7}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@7}
+        and (16|M0)              r14.0<1>:d    r82.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@7}
+        and (16|M16)             r48.0<1>:d    r80.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M0)              r24.0<1>:ud   r102.0<8;8,1>:ud  0x1A:uw              {@7}
+        rol (16|M0)              r16.0<1>:ud   r102.0<8;8,1>:ud  0x15:uw
+        rol (16|M16)             r36.0<1>:ud   r100.0<8;8,1>:ud  0x1A:uw              {@7}
+        rol (16|M16)             r26.0<1>:ud   r100.0<8;8,1>:ud  0x15:uw
+        xor (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r14.0<1>:d    r14.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r48.0<1>:d    r48.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M0)              r4.0<1>:ud    r102.0<8;8,1>:ud  0x7:uw
+        rol (16|M16)             r12.0<1>:ud   r100.0<8;8,1>:ud  0x7:uw
+        xor (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@7}
+        add (16|M0)              r38.0<1>:d    r38.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@6}
+        add (16|M16)             r40.0<1>:d    r40.0<8;8,1>:d    r48.0<8;8,1>:d   {Compacted,@6}
+        xor (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@4}
+        xor (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@4}
+        and (16|M0)              r28.0<1>:d    r110.0<8;8,1>:d   ~r102.0<8;8,1>:d {Compacted}
+        and (16|M16)             r30.0<1>:d    r108.0<8;8,1>:d   ~r100.0<8;8,1>:d {Compacted}
+        and (16|M0)              r10.0<1>:d    r102.0<8;8,1>:d   r106.0<8;8,1>:d  {Compacted}
+        and (16|M16)             r20.0<1>:d    r100.0<8;8,1>:d   r104.0<8;8,1>:d  {Compacted}
+        add (16|M0)              r78.0<1>:d    r18.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r76.0<1>:d    r22.0<8;8,1>:d    r40.0<8;8,1>:d   {Compacted,@7}
+(W)     mov (1|M0)               r88.0<1>:ud   f0.0<0;1,0>:ud                   {Compacted}
+        add (16|M0)              r24.0<1>:d    r66.0<8;8,1>:d    r24.0<8;8,1>:d   {Compacted,@7}
+        add (16|M16)             r36.0<1>:d    r68.0<8;8,1>:d    r36.0<8;8,1>:d   {Compacted,@7}
+        or (16|M0)               r10.0<1>:d    r10.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@7}
+        or (16|M16)              r20.0<1>:d    r20.0<8;8,1>:d    r30.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M0)              r4.0<1>:ud    r78.0<8;8,1>:ud   0x1E:uw              {@7}
+        rol (16|M0)              r14.0<1>:ud   r78.0<8;8,1>:ud   0x13:uw
+        rol (16|M16)             r12.0<1>:ud   r76.0<8;8,1>:ud   0x1E:uw              {@7}
+        rol (16|M16)             r16.0<1>:ud   r76.0<8;8,1>:ud   0x13:uw
+(W)     cmp (16|M0)   (lt)f0.0   null<1>:d     r3.0<0;1,0>:ud    0x3F:uw
+(W&~f1.0) mov (1|M0)             f0.0<1>:ud    r88.0<0;1,0>:ud                  {@7}
+        xor (16|M0)              r26.0<1>:d    r82.0<8;8,1>:d    r94.0<8;8,1>:d   {Compacted}
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r28.0<1>:d    r80.0<8;8,1>:d    r84.0<8;8,1>:d   {Compacted}
+        add (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r20.0<8;8,1>:d   {Compacted,@7}
+        rol (16|M16)             r38.0<1>:ud   r76.0<8;8,1>:ud   0xA:uw
+        rol (16|M0)              r30.0<1>:ud   r78.0<8;8,1>:ud   0xA:uw
+        xor (16|M0)              r4.0<1>:d     r4.0<8;8,1>:d     r14.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r12.0<1>:d    r12.0<8;8,1>:d    r16.0<8;8,1>:d   {Compacted,@7}
+        and (16|M0)              r26.0<1>:d    r78.0<8;8,1>:d    r26.0<8;8,1>:d   {Compacted,@7}
+        and (16|M0)              r10.0<1>:d    r82.0<8;8,1>:d    r94.0<8;8,1>:d   {Compacted}
+        and (16|M16)             r28.0<1>:d    r76.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@7}
+        and (16|M16)             r14.0<1>:d    r80.0<8;8,1>:d    r84.0<8;8,1>:d   {Compacted}
+(W)     mov (1|M0)               r88.0<1>:ud   f0.0<0;1,0>:ud                   {Compacted}
+        add (16|M0)              r24.0<1>:d    r24.0<8;8,1>:d    r42.3<0;1,0>:d   {Compacted}
+        add (16|M16)             r36.0<1>:d    r36.0<8;8,1>:d    r42.3<0;1,0>:d   {Compacted,@7}
+        xor (16|M0)              r4.0<1>:d     r4.0<8;8,1>:d     r30.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r12.0<1>:d    r12.0<8;8,1>:d    r38.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M0)              r26.0<1>:d    r26.0<8;8,1>:d    r10.0<8;8,1>:d   {Compacted,@7}
+        xor (16|M16)             r28.0<1>:d    r28.0<8;8,1>:d    r14.0<8;8,1>:d   {Compacted,@7}
+(W)     cmp (16|M16)  (lt)f0.0   null<1>:d     r3.0<0;1,0>:ud    0x3F:uw
+(W&~f1.0) mov (1|M0)             f0.0<1>:ud    r88.0<0;1,0>:ud                  {@7}
+        add (16|M0)              r18.0<1>:d    r24.0<8;8,1>:d    r44.0<8;8,1>:d   {Compacted,@7,$13.dst}
+        add (16|M16)             r22.0<1>:d    r36.0<8;8,1>:d    r46.0<8;8,1>:d   {Compacted,@7,$12.dst}
+        add (16|M0)              r4.0<1>:d     r4.0<8;8,1>:d     r26.0<8;8,1>:d   {Compacted,@6}
+        add (16|M16)             r12.0<1>:d    r12.0<8;8,1>:d    r28.0<8;8,1>:d   {Compacted,@6}
+(W)     mov (1|M0)               f1.0<1>:ud    r86.0<0;1,0>:ud
+        add (16|M0)              r98.0<1>:d    r32.0<8;8,1>:d    r18.0<8;8,1>:d   {Compacted,@5}
+        add (16|M16)             r96.0<1>:d    r34.0<8;8,1>:d    r22.0<8;8,1>:d   {Compacted,@5}
+        add (16|M0)              r72.0<1>:d    r18.0<8;8,1>:d    r4.0<8;8,1>:d    {Compacted,@5}
+        add (16|M16)             r74.0<1>:d    r22.0<8;8,1>:d    r12.0<8;8,1>:d   {Compacted,@5}
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(~f0.0) break (32|M0)                        L19160                  L19160
+L19088:
+(W)     mov (1|M0)               r86.0<1>:ud   f0.0<0;1,0>:ud                   {Compacted}
+(W)     mov (1|M0)               f0.0<1>:ud    0x0:ud
+        cmp (32|M0)   (eq)f0.0   null<1>:uw    r2.0<0;1,0>:uw    r2.0<0;1,0>:uw
+(W&f0.0.any32h) add (1|M0)       r9.0<1>:d     r9.0<0;1,0>:d     16:w
+(W)     mov (1|M0)               f0.0<1>:ud    r86.0<0;1,0>:ud                  {@4}
+L19160:
+        while (32|M0)                        L9728
+L19176:
+        add (16|M0)              r54.0<1>:d    r72.0<8;8,1>:d    1779033703:d               {@7}
+        add (16|M16)             r52.0<1>:d    r74.0<8;8,1>:d    1779033703:d               {@7}
+        lzd (16|M0)              r4.0<1>:ud    r54.0<8;8,1>:ud                  {@2}
+        lzd (16|M16)             r10.0<1>:ud   r52.0<8;8,1>:ud                  {@2}
+        cmp (16|M0)   (lt)f1.0   null<1>:d     r4.0<8;8,1>:ud    r9.1<0;1,0>:ud   {@2}
+        cmp (16|M16)  (lt)f1.0   null<1>:d     r10.0<8;8,1>:ud   r9.1<0;1,0>:ud   {@2}
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(~f1.0) if (32|M0)                           L20240                  L20240
+L19304:
+(W)     mov (1|M0)               r86.0<1>:ud   f0.0<0;1,0>:ud                   {Compacted}
+(W)     mov (1|M0)               f0.0<1>:ud    0x0:ud
+        cmp (32|M0)   (eq)f0.0   null<1>:uw    r2.0<0;1,0>:uw    r2.0<0;1,0>:uw
+(W&f0.0.any32h) mov (16|M0)      r10.0<1>:f    0.0:f
+(W&f0.0.any32h) mov (16|M0)      r12.0<1>:f    0.0:f
+        mov (16|M0)              r10.0<1>:f    1.4013e-45:f
+        mov (16|M16)             r12.0<1>:f    1.4013e-45:f
+(W&f0.0.any32h) add (8|M0)       r10.1<2>:d    r10.0<2;1,0>:d    r10.1<2;1,0>:d   {@2}
+(W&f0.0.any32h) add (8|M0)       r12.1<2>:d    r12.0<2;1,0>:d    r12.1<2;1,0>:d   {@2}
+(W&f0.0.any32h) add (4|M0)       r10.2<4>:d    r10.2<4;1,0>:d    r10.1<4;1,0>:d   {@2}
+(W&f0.0.any32h) add (4|M0)       r12.2<4>:d    r12.2<4;1,0>:d    r12.1<4;1,0>:d   {@2}
+(W&f0.0.any32h) add (4|M0)       r10.3<4>:d    r10.3<4;1,0>:d    r10.1<4;1,0>:d   {@2}
+(W&f0.0.any32h) add (4|M0)       r12.3<4>:d    r12.3<4;1,0>:d    r12.1<4;1,0>:d   {@2}
+(W&f0.0.any32h) add (4|M0)       r10.4<1>:d    r10.3<0;1,0>:d    r10.4<4;4,1>:d   {@2}
+(W&f0.0.any32h) add (4|M0)       r11.4<1>:d    r11.3<0;1,0>:d    r11.4<4;4,1>:d
+(W&f0.0.any32h) add (4|M0)       r12.4<1>:d    r12.3<0;1,0>:d    r12.4<4;4,1>:d   {@3}
+(W&f0.0.any32h) add (4|M0)       r13.4<1>:d    r13.3<0;1,0>:d    r13.4<4;4,1>:d
+(W&f0.0.any32h) add (8|M0)       r11.0<1>:d    r10.7<0;1,0>:d    r11.0<8;8,1>:d   {@3}
+(W&f0.0.any32h) add (8|M0)       r13.0<1>:d    r12.7<0;1,0>:d    r13.0<8;8,1>:d   {@2}
+(W&f0.0.any32h) mov (2|M0)       r4.0<1>:f     r8.6<2;2,1>:f
+(W&f0.0.any32h) add (16|M0)      r12.0<1>:d    r11.7<0;1,0>:d    r12.0<8;8,1>:d   {@2}
+(W&f0.0.any32h) mov (1|M0)       r6.0<1>:f     r13.7<0;1,0>:f                   {@1}
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w
+(W&f0.0.any32h) send.dc1 (1|M0)   r3      r4      r6      0x40            0x0414A7FF           {@2,$14} // wr:2+1, rd:1; untyped a64 atomic int32 integer add
+(W&f0.0.any32h) add (16|M0)      r10.0<1>:d    r10.0<8;8,1>:d    r3.0<0;1,0>:ud   {$14.dst}
+(W&f0.0.any32h) add (16|M0)      r12.0<1>:d    r12.0<8;8,1>:d    r3.0<0;1,0>:ud
+        add (16|M0)              r6.0<1>:d     r10.0<8;8,1>:d    -1:w               {Compacted,@2}
+        add (16|M16)             r2.0<1>:d     r12.0<8;8,1>:d    -1:w               {Compacted,@2}
+(W)     mov (1|M0)               f0.0<1>:ud    r86.0<0;1,0>:ud
+        cmp (16|M0)   (lt)f0.0   null<1>:d     r6.0<8;8,1>:ud    0x8:uw              {@3}
+        cmp (16|M16)  (lt)f0.0   null<1>:d     r2.0<8;8,1>:ud    0x8:uw              {@3}
+(W)     csel (4|M0)   (eq)f0.0   r1.0<1>:w     r1.0<4;1>:w       r1.0<4;1>:w       r1.0<1>:w        {@7}
+(f0.0)  if (32|M0)                           L20224                  L20224
+L19808:
+        shl (16|M0)              r4.0<1>:d     r6.0<8;8,1>:d     2:w               {Compacted}
+        shl (16|M16)             r42.0<1>:d    r2.0<8;8,1>:d     2:w               {Compacted}
+        shl (16|M0)              r44.0<1>:d    r6.0<8;8,1>:d     5:w               {Compacted}
+        shl (16|M16)             r46.0<1>:d    r2.0<8;8,1>:d     5:w               {Compacted}
+        add (16|M0)              r12.0<1>:d    r78.0<8;8,1>:d    -1150833019:d
+        add (16|M16)             r20.0<1>:d    r76.0<8;8,1>:d    -1150833019:d
+        add (16|M0)              r14.0<1>:d    r82.0<8;8,1>:d    1013904242:d
+        add (16|M16)             r22.0<1>:d    r80.0<8;8,1>:d    1013904242:d
+        add (16|M0)              r16.0<1>:d    r94.0<8;8,1>:d    -1521486534:d
+        add (16|M16)             r24.0<1>:d    r84.0<8;8,1>:d    -1521486534:d
+        add (16|M0)              r26.0<1>:d    r98.0<8;8,1>:d    1359893119:d
+        add (16|M16)             r34.0<1>:d    r96.0<8;8,1>:d    1359893119:d
+        add (16|M0)              r28.0<1>:d    r102.0<8;8,1>:d   -1694144372:d
+        add (16|M16)             r36.0<1>:d    r100.0<8;8,1>:d   -1694144372:d
+        add (16|M0)              r30.0<1>:d    r106.0<8;8,1>:d   528734635:d
+        add (16|M16)             r38.0<1>:d    r104.0<8;8,1>:d   528734635:d
+        add (16|M0)              r32.0<1>:d    r110.0<8;8,1>:d   1541459225:d
+        add (16|M16)             r40.0<1>:d    r108.0<8;8,1>:d   1541459225:d
+        mov (16|M0)              r10.0<1>:f    r54.0<8;8,1>:f                   {Compacted}
+        mov (16|M16)             r18.0<1>:f    r52.0<8;8,1>:f                   {Compacted}
+        add (16|M0)              r4.0<1>:d     r4.0<8;8,1>:d     4:w               {Compacted}
+        add (16|M16)             r42.0<1>:d    r42.0<8;8,1>:d    4:w               {Compacted}
+        add (16|M0)              r48.0<1>:d    r44.0<8;8,1>:d    36:w               {Compacted}
+        add (16|M16)             r50.0<1>:d    r46.0<8;8,1>:d    36:w               {Compacted}
+        add (16|M16)             r54.0<1>:d    r46.0<8;8,1>:d    52:w               {Compacted}
+        add (16|M0)              r52.0<1>:d    r44.0<8;8,1>:d    52:w               {Compacted}
+        send.dc1 (16|M0)         null     r4      r114    0x80            0x04025E01           {@6,$15} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M16)        null     r42     r112    0x80            0x04025E01           {@5,$0} // wr:2+2, rd:0; untyped surface write with x
+        send.dc1 (16|M0)         null     r48     r10     0x200            0x04025001           {@4,$1} // wr:2+8, rd:0; untyped surface write with xyzw
+        send.dc1 (16|M16)        null     r50     r18     0x200            0x04025001           {@3,$2} // wr:2+8, rd:0; untyped surface write with xyzw
+        send.dc1 (16|M0)         null     r52     r26     0x200            0x04025001           {@1,$3} // wr:2+8, rd:0; untyped surface write with xyzw
+        send.dc1 (16|M16)        null     r54     r34     0x200            0x04025001           {@2,$4} // wr:2+8, rd:0; untyped surface write with xyzw
+L20224:
+        endif (32|M0)                        L20240
+L20240:
+        endif (32|M0)                        L20256
+L20256:
+        endif (32|M0)                        L20272
+L20272:
+(W)     mov (8|M0)               r127.0<1>:f   r87.0<8;8,1>:f                   {Compacted}
+(W)     send.dc0 (8|M0)          r3       r87     null    0x0            0x0219E000           {$5} // wr:1h+0, rd:1; synchronized global fence flushing
+(W)     mov (8|M0)               null<1>:ud    r3.0<8;8,1>:ud                   {$5.dst}
+(W)     mov (16|M0)              acc0.0<1>:f   0.0:f
+(W)     send.ts (1|M0)           null     r127    null    0x0            0x02000010           {EOT,@1} // wr:1+0, rd:0; end of thread
+L20344:
+        nop
+        illegal
+        illegal
+        illegal
+        illegal
+        illegal
+        illegal
+        illegal
+        illegal
+        illegal
+        illegal
+        illegal

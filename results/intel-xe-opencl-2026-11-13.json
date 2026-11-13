@@ -1,0 +1,35 @@
+{
+ "title": "SHA-256 PoW on Intel Iris Xe (gen12lp) through OpenCL NEO and IGC",
+ "date": "2026-11-13",
+ "host": {
+  "gpu": "Intel Iris(R) Xe Graphics (ADL-P, gen12lp, 96 EUs)",
+  "driver": "Intel graphics compute runtime 25.31.34666.3",
+  "compiler": "IGC 2.16.0 (libigc2)",
+  "api": "OpenCL 3.0 NEO"
+ },
+ "kernel": "tools/xe-sha256-opencl.c: one work-item per nonce, nonce in W[0], 48-byte message, clz hit test",
+ "correctness": {
+  "nonce": 0,
+  "digest": "f2bf82167d41fe1701711273d69d05f17793d6adb5bc30d290b448d1f5585f71",
+  "hashlib": "f2bf82167d41fe1701711273d69d05f17793d6adb5bc30d290b448d1f5585f71",
+  "ok": true
+ },
+ "throughput_mhps": 195.2,
+ "workload": {
+  "nonces": 4194304,
+  "best_of": 5,
+  "seconds": 0.021
+ },
+ "compiled": {
+  "format": "Zebin ELF",
+  "text_section": ".text.sha256_pow",
+  "text_bytes": 20544,
+  "instructions_disassembled": 1711,
+  "const_section_bytes": 256
+ },
+ "compare": {
+  "hand_written_instructions": 2844,
+  "webgpu_same_kernel_mhps": 70.6
+ },
+ "notes": "First native Intel GPU measurement here. Level Zero has no driver on this machine (only the loader); OpenCL does, so this goes through NEO and IGC. The hand-written listing in src/intel/xe is not executed: it is verified by interpreting its own instruction list and by assembling with IGA."
+}

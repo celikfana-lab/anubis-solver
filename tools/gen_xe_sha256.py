@@ -165,13 +165,14 @@ class Emitter:
         self.ins("shl", dst, a, n, note)
 
     def ror(self, dst: str, src, n: int, note: str = "") -> None:
-        """x86-style rotate right by a constant: no rotate in gen ISA, so two
-        shifts and an or. This is the single largest cost in the listing."""
-        t1, t2 = self.tmp(), self.tmp()
-        self.shr(t1, src, n, f"ror{n}(lo)")
-        self.shl(t2, src, 32 - n, f"ror{n}(hi)")
-        self.or_(dst, t1, t2, note or f"ror{n}")
-        self.give(t1, t2)
+        """Rotate right by a constant: one instruction on gen12lp.
+
+        The first version of this file expanded every rotation into
+        shr+shl+or, on the assumption that the ISA had no rotate because the
+        SASS of the CUDA kernel needs a funnel shift for the same job. It does
+        have one: IGC's output for this kernel uses `rol`, which is how the
+        mistake was found. The expansion cost 1,152 extra instructions."""
+        self.ins("ror", dst, src, n, note or f"ror{n}")
 
     def add3(self, dst: str, a, b, c, note: str = "") -> str:
         """dst = a + b + c, all mod 2^32, using one temporary."""
@@ -383,6 +384,10 @@ def interpret(ops: list[tuple], lane: int = 0) -> dict[str, int]:
             regs[dst] = (av >> (bv & 31)) & 0xFFFFFFFF
         elif op == "shl":
             regs[dst] = (av << (bv & 31)) & 0xFFFFFFFF
+        elif op in ("ror", "rol"):
+            n = bv & 31
+            regs[dst] = (((av >> n) | (av << (32 - n))) if op == "ror"
+                         else ((av << n) | (av >> (32 - n)))) & 0xFFFFFFFF
         elif op in ("lzd", "cmp", "jmpi"):
             # control flow and the leading-zero test are not part of the digest
             if op == "lzd" and dst is not None:

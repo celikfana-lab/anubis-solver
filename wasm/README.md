@@ -285,6 +285,30 @@ measurement is a measurement of the compiler, not the kernel.
 `crypto.createHash`, which is the measured 3.7× (157 → 589 kH/s) and the reason to
 have written it. It falls back to `createHash` when the module is not built.
 
+### What is left in the SHA-256 kernel
+
+Two things were worth checking, and both were checked rather than assumed:
+
+**The difficulty test in vector form.** The first version unpacked all 32 digest
+words (32 `extract_lane` + 128 byte stores) to test ~23 bits. For difficulty ≤ 32
+the whole test is one unsigned compare and one bitmask — `h[0] < 2^(32 − d)` per
+lane — and only a passing lane needs unpacking. Interleaved A/B, 4 rounds, median:
+
+| build | rate |
+|---|---:|
+| vector difficulty test | 3367 kH/s |
+| unpack every batch | 3258 kH/s |
+
+**+3 %, which is inside the noise.** Kept because it is simpler in the common path
+and never worse — not because it is a win.
+
+**Batching wider than four.** Ours runs at 2.3× the scalar rate for 4× the width,
+so ~40 % of the theoretical gain is lost to overhead. That is where the next
+improvement would come from — eight lanes across two `i32x4` groups — but the
+kernel already holds 8 state vectors plus a 16-vector schedule live, and wasm has
+no register allocator to lean on: more lanes means more spills, not linearly more
+throughput. Untested, and honestly a coin flip.
+
 ## Can the same trick make HashX faster? No — and here is why
 
 The SHA-256 win came from batching four nonces in `i32x4` lanes. It is tempting to

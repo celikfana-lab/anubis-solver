@@ -259,6 +259,33 @@ uint32_t anubis_work(uint32_t difficulty, uint32_t nonce, uint32_t iterand) {
         compress4(h, w);
 
         /* unpack: lane j is candidate j */
+        if (difficulty <= 32) {
+            /* leading zero bits of the digest == clz of the first word, and the
+             * digest is the words big-endian, so this is one vector compare */
+            const uint32_t limit = difficulty == 0 ? 0xFFFFFFFFu
+                                                    : (uint32_t)1 << (32 - difficulty);
+            const uint32_t mask = wasm_i32x4_bitmask(
+                wasm_u32x4_lt(h[0], wasm_i32x4_splat(limit)));
+            if (mask) {
+                const int lane = __builtin_ctz(mask);   /* smallest passing nonce */
+                uint32_t st[8];
+                switch (lane) {
+                case 0: for (int i = 0; i < 8; i++) st[i] = wasm_i32x4_extract_lane(h[i], 0); break;
+                case 1: for (int i = 0; i < 8; i++) st[i] = wasm_i32x4_extract_lane(h[i], 1); break;
+                case 2: for (int i = 0; i < 8; i++) st[i] = wasm_i32x4_extract_lane(h[i], 2); break;
+                default: for (int i = 0; i < 8; i++) st[i] = wasm_i32x4_extract_lane(h[i], 3); break;
+                }
+                for (int i = 0; i < 8; i++) {
+                    result[4 * i] = (uint8_t)(st[i] >> 24);
+                    result[4 * i + 1] = (uint8_t)(st[i] >> 16);
+                    result[4 * i + 2] = (uint8_t)(st[i] >> 8);
+                    result[4 * i + 3] = (uint8_t)st[i];
+                }
+                return cand[lane];
+            }
+            continue;
+        }
+
         uint8_t dg[4][32];
         /* unpack (extract_lane needs constant lane indices) */
         uint32_t st[4][8];

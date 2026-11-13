@@ -177,7 +177,7 @@ src/sass/                  NVIDIA SASS for the Tesla T4 SHA-256 kernel, and the
                            Kaggle job that produces and benchmarks it
 third_party/argon2/      reference Argon2id (CC0-1.0 / Apache-2.0)
 tests/                   unit, local end-to-end, version matrix, CVE harness
-examples/                Python, C and C++ samples
+examples/                samples in every supported language + run_all.sh
 bindings/node/           Node bindings (koffi FFI, no build step)
 bindings/go/             Go bindings (cgo, links the .so)
 bindings/csharp/         C# bindings (P/Invoke, no NuGet)

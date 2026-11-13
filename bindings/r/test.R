@@ -4,8 +4,12 @@
 # Needs anubisR.so (`make` in this directory) and libanubis_solver.so (`make` at
 # the repository root).
 
-here <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
-if (is.null(here) || !nzchar(here)) here <- getwd()
+a <- commandArgs(trailingOnly = FALSE)
+f <- sub("^--file=", "", a[grep("^--file=", a)])
+here <- if (length(f) == 1 && nzchar(f)) dirname(normalizePath(f)) else {
+    of <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
+    if (is.null(of) || !nzchar(of)) getwd() else of
+}
 setwd(here)
 source("anubis.R")
 

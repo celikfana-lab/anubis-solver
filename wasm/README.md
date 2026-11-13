@@ -54,46 +54,64 @@ Three independent implementations — our C engine, our compiled WAT and Anubis'
 Rust module — produce the same digest for the same nonce. That is the strongest
 verification available here, and it is the demo page's centrepiece.
 
-## Argon2id: the same trick, and why it does not work
+## Argon2id: the same trick, corrected
 
-HashX's win came from removing an **interpreter**. Argon2id has no interpreter to
-remove — it is a tight numeric kernel over 38,912 blocks of memory — so the
-question worth asking is whether hand-written WAT beats an optimising compiler at
-a numeric kernel. It does not.
+An earlier version of this file claimed the WAT port was **3.5–4.5× slower** than
+the module Anubis ships. That was wrong, and the way it was wrong is worth
+recording: the WAT side was measured cold and cache-resident (three fixed 1 KiB
+blocks, single pass, wasm still on its baseline compiler tier) against a warm,
+memory-bound whole hash. Both errors push in opposite directions and neither was
+checked. Re-measured properly — warm, best of three, references scattered across
+the 19 MiB arena a real Argon2id run uses — the answer changes.
 
-`tools/gen_argon2_wat.py` emits the reference `fill_block` (8 column rounds + 8
-row rounds of BlaMka, fully unrolled, 16 words per round in wasm locals).
-`wasm/verify-a2i.mjs` checks it against vectors produced by **compiling the
-vendored C reference** — bit-exact on all three trials:
+`tools/gen_argon2_wat.py` emits the reference `fill_block` (8 column + 8 row
+rounds of BlaMka, unrolled). `wasm/ref_fill_vectors.c` compiles the vendored C
+reference itself to produce vectors, and `wasm/verify-a2i.mjs` checks the WAT
+against them — bit-exact on all three trials.
 
-```
-  ok   trial 0 (with_xor=0): 128/128 words identical to the C reference
-  ok   trial 1 (with_xor=1): 128/128 words identical to the C reference
-  ok   trial 2 (with_xor=1): 128/128 words identical to the C reference
-```
+Then the question that matters: *who schedules the instructions*. Same block
+function, warmed, both regimes, best of three:
 
-`node wasm/bench-a2i.mjs` then measures it (m=19456 KiB, t=2 → 38,912 blocks per
-hash; H0 and H' are under 0.1% of the work, so a per-block rate converts directly):
+| implementation | cache-resident | memory-bound (19 MiB) | module size |
+|---|---:|---:|---:|
+| hand-written WAT | 1.59 µs | **1.61 µs** | 26,859 B |
+| **rustc → wasm (scalar)** | **1.49 µs** | 1.74 µs | **3,742 B** |
+| rustc → wasm (`+simd128`) | 1.94 µs | 2.20 µs | 5,784 B |
+| official Anubis baseline | — | 1.81–1.97 µs | 35,813 B |
+| official Anubis simd128 | — | 1.82–2.00 µs | 35,593 B |
 
-| | per block | whole hash | |
-|---|---:|---:|---|
-| WAT `fill_block` (scalar) | 7.99 µs | 3.2 hashes/s equivalent | |
-| official baseline | 2.25 µs | ~11 hashes/s | **3.5× faster** |
-| official simd128 | 1.79 µs | ~14 hashes/s | **4.5× faster** |
+Three things fall out of that:
 
-**So the answer is no.** A scalar hand-emitted port loses to LLVM by 3.5–4.5×: the
-kernel is ~3,000 64-bit multiply-heavy instructions per block, and the Rust build
-gets SIMD (`simd128`, two 64-bit lanes per operation), better scheduling and
-fewer round trips to memory. Hand-written WAT has none of those.
+1. **Hand-written WAT buys nothing here.** It is within run-to-run noise of
+   `rustc`'s output (repeat runs of the same binary vary 1.6–2.3 µs), and 7×
+   larger for it.
+2. **Auto-vectorisation made it slower.** `+simd128` is a clear pessimisation on
+   this kernel — 2.20 µs against 1.74 µs scalar. Do not assume the vector path
+   helps; measure it.
+3. **We are already at parity with what ships.** Within noise of the official
+   module, whose figure is a whole hash and ours is the mixing loop only.
 
-That is worth stating plainly, because it is where the HashX result came from: the
-19.9× and the 6× were **interpreter removal**, not hand-optimisation. Where there
-is no interpreter, there is nothing to win — and a person writing wasm by hand is
-not going to out-schedule a compiler.
+## So: raw WAT or C?
 
-What *would* help Argon2id in wasm is the same thing that helps it anywhere: use
-the `simd128` module, keep the block in registers across all 16 rounds, and let a
-vectorising compiler do it. That is exactly what the official module already does.
+**Write C or Rust.** Measured, not argued:
+
+- the compiler is **7× smaller** for the same speed (3.7 KB vs 27 KB),
+- speed is a wash: it even wins the cache-resident regime,
+- and the compile step is where a vectorising compiler *could* help you — though
+  as the `+simd128` row shows, it does not always.
+
+Hand-written WAT is worth it only when a compiler **cannot express** the
+optimisation. That is exactly the HashX case: a challenge-defined program has to
+be interpreted or code-generated, and removing the interpreter is the whole 6×.
+For a fixed numeric kernel like Argon2id's block mix there is no interpreter to
+remove, so the compiler's scheduling is free and hand-written wasm is just harder
+to maintain.
+
+If someone wants to go further on Argon2id in wasm, the remaining levers are not
+WAT-vs-C: they are explicit `v128` intrinsics with the 16 words held in vector
+registers across both phases (what `third_party/argon2/blake2/blamka-round-opt.h`
+does with `__m128i`), and the memory access pattern — not the instruction
+scheduling.
 
 ## The demo
 

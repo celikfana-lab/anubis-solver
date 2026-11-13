@@ -147,11 +147,14 @@ make serve                # http://127.0.0.1:8933/demo/ — the browser demo
 The demo solves the challenge with each engine, reports hashes/s, and shows
 whether the official module finds the same nonce and digest as ours.
 
-The same trick applied to **Argon2id** is a negative result worth having: the fill
-core ported to scalar WAT is bit-exact against the C reference but **3.5–4.5×
-slower** than the official module, because Argon2id has no interpreter to remove
-and a vectorising compiler beats hand-emitted wasm at a numeric kernel. See
-[`wasm/README.md`](wasm/README.md).
+The same trick applied to **Argon2id** is a correction worth keeping: the fill core
+ported to WAT is bit-exact against the C reference, and — measured properly, warm
+and memory-bound — it is **within noise of** the official module rather than the
+3.5–4.5× slower an earlier measurement claimed. The lesson is that hand-written
+WAT buys nothing where there is no interpreter to remove: `rustc` matches it at
+**7× smaller** a module, and `+simd128` auto-vectorisation is a pessimisation on
+this kernel. Write C or Rust; use WAT when a compiler *cannot express* the
+optimisation. See [`wasm/README.md`](wasm/README.md).
 
 ### Configuration: `make config`
 

@@ -40,6 +40,20 @@ a2i: all
 	node verify-a2i.mjs
 	node bench-a2i.mjs
 
+# the same fill_block compiled from Rust, for the WAT-vs-compiler question
+compiler/%.wasm: compiler/fill.rs
+	rustc --target wasm32-unknown-unknown --crate-type=cdylib -C opt-level=3 \
+	      -C panic=abort -C lto=yes $* -o $@ fill.rs 2>/dev/null || \
+	rustc --target wasm32-unknown-unknown --crate-type=cdylib -C opt-level=3 \
+	      -C panic=abort -C lto=yes -o $@ compiler/fill.rs
+
+compiler: compiler/fill_scalar.wasm compiler/fill_simd.wasm
+
+compare: all
+	@rustc --target wasm32-unknown-unknown --crate-type=cdylib -C opt-level=3 -C panic=abort -C lto=yes -o compiler/fill_scalar.wasm compiler/fill.rs
+	@rustc --target wasm32-unknown-unknown --crate-type=cdylib -C opt-level=3 -C panic=abort -C lto=yes -C target-feature=+simd128 -o compiler/fill_simd.wasm compiler/fill.rs
+	node bench-compiler.mjs
+
 bench: all
 	node bench.mjs --hashes $(HASHES) --official $(OFFICIAL)
 	node verify.mjs
@@ -49,6 +63,6 @@ serve: all
 	python3 -m http.server 8933 --bind 127.0.0.1
 
 clean:
-	rm -f hashx_jit.wasm hashx_jit.wat demo/hashx_jit.wasm argon2_fill.wasm argon2_fill.wat
+	rm -f compiler/fill_*.wasm hashx_jit.wasm hashx_jit.wat demo/hashx_jit.wasm argon2_fill.wasm argon2_fill.wat
 
-.PHONY: all bench a2i vectors serve clean
+.PHONY: all bench a2i vectors compare serve clean

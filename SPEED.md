@@ -708,26 +708,37 @@ difficulty-16 challenge, and they return the **same nonce (180078) and the same
 digest** — the official module is 7-9x slower on the same work. Three
 implementations (our C engine, our WAT, Anubis's Rust) agreeing is the evidence.
 
-### WebAssembly: Argon2id, and the limit of this trick
+### WebAssembly: Argon2id, and a correction
 
-The same "compile it, do not interpret it" approach, applied to the other
-memory-hard algorithm, **fails** — and the failure is the useful part.
+An earlier entry here claimed the WAT port of Argon2id's fill core was 3.5-4.5x
+slower than the official module. That number was an artifact: the WAT side was
+timed cold and cache-resident (three fixed 1 KiB blocks, one pass, wasm still on
+its baseline tier) against a warm memory-bound whole hash. Re-measured properly —
+warm, best of three, references scattered across the 19 MiB arena:
 
-`tools/gen_argon2_wat.py` emits the reference `fill_block` (8 column + 8 row
-rounds of BlaMka, unrolled, bit-exact against vectors compiled from the vendored
-C reference). Measured against the official Anubis module, m=19456 KiB t=2:
+| implementation | cache-resident | memory-bound | size |
+|---|---:|---:|---:|
+| hand-written WAT | 1.59 us | 1.61 us | 26,859 B |
+| rustc -> wasm (scalar) | 1.49 us | 1.74 us | 3,742 B |
+| rustc -> wasm (+simd128) | 1.94 us | 2.20 us | 5,784 B |
+| official Anubis baseline | - | 1.81-1.97 us | 35,813 B |
+| official Anubis simd128 | - | 1.82-2.00 us | 35,593 B |
 
-| | per block | whole hash |
-|---|---:|---:|
-| WAT fill_block (scalar) | 7.99 us | ~3.2 hashes/s |
-| official baseline | 2.25 us | ~11 hashes/s |
-| official simd128 | 1.79 us | ~14 hashes/s |
+(all per 1 KiB block; repeat runs of the same binary vary 1.6-2.3 us, so treat
+differences under ~30% as noise)
 
-So a scalar hand-written port is 3.5-4.5x **slower** than the compiler's output.
-Argon2id has no interpreter to remove — it is a numeric kernel — and LLVM's
-simd128, scheduling and register allocation beat hand-emitted wasm. The HashX
-wins (19.9x on CUDA, 6x in wasm) were interpreter removal, not hand optimisation;
-take the interpreter away and there is nothing left to win.
+Conclusions that survive the noise:
+
+- hand-written WAT is **not worth it** for this kernel: same speed as rustc's
+  output within noise, 7x larger.
+- `+simd128` auto-vectorisation is a **pessimisation** here (2.20 vs 1.74 us).
+- we are already at parity with the shipped module, so there is no big win left
+  in instruction scheduling — the remaining levers are explicit v128 intrinsics
+  and the memory access pattern.
+
+Hand-written WAT paid off for HashX because a challenge-defined program must be
+interpreted or code-generated, and removing the interpreter was the whole 6x.
+Where there is no interpreter, the compiler's scheduling is free.
 
 ### Tesla T4 (sm_75): the SHA-256 kernel and its SASS
 

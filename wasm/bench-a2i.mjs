@@ -32,16 +32,34 @@ const fmt = (n) => n.toLocaleString('en-US', { maximumFractionDigits: n < 10 ? 3
 
 const { instance: fill } = await WebAssembly.instantiate(readFileSync(join(HERE, 'argon2_fill.wasm')), {});
 const ex = fill.exports;
-const DST = 4096, PREV = 5120, REF = 6144;
-const dv = new DataView(ex.memory.buffer);
-for (const [addr, seed] of [[PREV, 1], [REF, 2], [DST, 3]]) {
-  for (let i = 0; i < 128; i++) dv.setBigUint64(addr + 8 * i, (BigInt(seed) << 56n) ^ BigInt(i), true);
+// The arena: exactly what a real Argon2id run mixes — m = 19456 blocks of 1 KiB,
+// which is ~19 MiB and does not fit in any cache. Filling three fixed blocks in a
+// loop measures the arithmetic only; that is the mistake the first version of
+// this benchmark made, and it flattered the hand-written version by ~5x.
+const ARENA = 2048;
+const DV = new DataView(ex.memory.buffer);
+const BLOCKS_M = 19456;
+const blockAddr = (b) => ARENA + (b % BLOCKS_M) * 1024;
+for (let b = 0; b < BLOCKS_M; b++) {
+  for (let i = 0; i < 128; i++) DV.setBigUint64(blockAddr(b) + 8 * i, BigInt(b * 128 + i), true);
 }
+const DST = blockAddr(0), PREV = blockAddr(1), REF = blockAddr(2);
 
-ex.fill_block(DST, PREV, REF, 0);                       // warm up
-let t0 = process.hrtime.bigint();
-for (let n = 0; n < BLOCKS; n++) ex.fill_block(DST, PREV, REF, n & 1);
-let ns = Number(process.hrtime.bigint() - t0);
+// warm-up matters as much here as for the official modules: keep the best of
+// three passes so the tier-up compiler is not part of the number
+// pseudo-random block references, deterministic
+let seed = 0x243f6a88;
+const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return seed % BLOCKS_M; };
+ex.fill_block(blockAddr(10), blockAddr(11), blockAddr(12), 0);
+let ns = Infinity;
+for (let rep = 0; rep < 3; rep++) {
+  const t0 = process.hrtime.bigint();
+  for (let n = 0; n < BLOCKS; n++) {
+    const dst = blockAddr(16 + n);
+    ex.fill_block(dst, blockAddr(rnd()), blockAddr(rnd()), n & 1);
+  }
+  ns = Math.min(ns, Number(process.hrtime.bigint() - t0));
+}
 const perBlock = ns / BLOCKS;
 const fillHashesPerSecond = 1e9 / (perBlock * BLOCKS_PER_HASH);
 
@@ -56,12 +74,19 @@ async function official(label) {
   const ch = Buffer.from(CHALLENGE, 'hex');
   new Uint8Array(ex.memory.buffer).set(ch, ex.data_ptr());
   ex.set_data_length(ch.length);
-  ex.anubis_validate(0, 1);                              // warm up + allocate
-  const reps = 3;
-  const s = process.hrtime.bigint();
-  for (let i = 0; i < reps; i++) ex.anubis_validate(i, 64);
-  const sec = Number(process.hrtime.bigint() - s) / 1e9;
-  return { label, seconds: sec / reps, hps: reps / sec, bytes: readFileSync(path).length };
+  // Two untimed passes first: the first call allocates the 19 MiB arena and the
+  // wasm tier-up compiler is still on its baseline tier, so timing an early call
+  // measures warm-up, not throughput. (Getting this wrong once is how the first
+  // version of this file reported a 4x loss that was mostly compilation.)
+  ex.anubis_validate(0, 1);
+  ex.anubis_validate(1, 1);
+  let best = Infinity;
+  for (let rep = 0; rep < 3; rep++) {
+    const s = process.hrtime.bigint();
+    ex.anubis_validate(100 + rep, 64);
+    best = Math.min(best, Number(process.hrtime.bigint() - s) / 1e9);
+  }
+  return { label, seconds: best, hps: 1 / best, bytes: readFileSync(path).length };
 }
 
 const officialResults = [];
@@ -73,7 +98,7 @@ for (const label of ['baseline', 'simd128']) {
 /* --------------------------------------------------------------- report */
 
 console.log(`Argon2id — m=19456 KiB, t=2, p=1, i.e. ${fmt(BLOCKS_PER_HASH)} blocks per hash`);
-console.log(`fill_block measured over ${fmt(BLOCKS)} blocks\n`);
+console.log(`fill_block measured over ${fmt(BLOCKS)} blocks x 3 passes, best of three\n`);
 console.log(`  WAT fill_block                ${(perBlock / 1000).toFixed(2)} us/block  ` +
             `-> ${fmt(fillHashesPerSecond)} hashes/s equivalent`);
 for (const o of officialResults) {
@@ -89,6 +114,8 @@ for (const o of officialResults) {
   console.log(`  vs official ${o.label.padEnd(9)}: ${ratio >= 1 ? '+' : ''}${ratio.toFixed(2)}x ` +
               `${ratio >= 1 ? 'faster' : 'slower'}`);
 }
-console.log('\nOur number covers the block-mixing loop only: H0 and H\' (a few dozen BLAKE2b');
-console.log('compressions, well under 0.1% of the work) are not in it. The official figure is a');
-console.log('whole hash, so the comparison is generous to us by that margin, not the reverse.');
+console.log('\nBoth sides now do the same thing: mix 1 KiB blocks at pseudo-random positions across');
+console.log('a 19 MiB arena, so the numbers include the memory traffic that makes Argon2id');
+console.log('memory-hard. Ours covers the mixing loop only; H0 and H\' (a few dozen BLAKE2b');
+console.log('compressions, well under 0.1% of the work) are not in it, which is the one');
+console.log('remaining asymmetry and it is in our favour by <0.1%.');

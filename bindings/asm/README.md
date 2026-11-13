@@ -22,7 +22,7 @@ make run-arm    # cross-builds an aarch64 library, then runs under qemu-aarch64
 Both demos print the same thing:
 
 ```
-libanubis_solver 1.1.0
+libanubis_solver 1.2.0
 gpu: Intel(R) Iris(R) Xe Graphics (ADL GT2) | threads 4 | batch 8
 nonce 1248  hash 0004e24f5f5e1d089b2fefa534fd51b5e077fbfae1dfdce6246966f20e47149d  0.643 ms
 verify: ok

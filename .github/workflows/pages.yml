@@ -40,7 +40,9 @@ jobs:
       # the layout check needs a browser; ubuntu-latest has Chrome preinstalled
       - name: Layout check at phone and desktop widths
         run: |
-          python3 -m http.server 8090 --bind 127.0.0.1 >/dev/null 2>&1 &
+          # serve web/ itself: the pages are at the root of the site, so serving
+          # the repository root would 404 every one of them
+          python3 -m http.server 8090 --bind 127.0.0.1 --directory web >/dev/null 2>&1 &
           sleep 1
           node web/check-layout.mjs --width 390
           node web/check-layout.mjs --width 1280

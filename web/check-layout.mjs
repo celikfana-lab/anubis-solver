@@ -168,7 +168,9 @@ const PROBE = `(() => {
   }
   return {
     loaded: location.protocol === 'http:' && !!document.querySelector('main'),
+    href: location.href,
     title: document.title,
+    h1: (document.querySelector('h1') || {}).textContent || '',
     viewport: vw,
     scrollWidth: doc.scrollWidth,
     overflows: out.slice(0, 5),
@@ -204,7 +206,8 @@ try {
     if (!r.loaded) {
       failures++;
       notLoaded++;
-      console.log(`FAIL ${page.padEnd(18)} did not load (is ${ORIGIN} serving?)`);
+      console.log(`FAIL ${page.padEnd(18)} did not load: at ${r.href} ` +
+                  `(${r.title || 'no title'}) — is ${ORIGIN} serving the site directory?`);
       continue;
     }
     const bad = r.count > 0 || r.scrollWidth > r.viewport + 1;

@@ -85,8 +85,15 @@ const chrome = spawn(CHROME, [
 
 let spawnError = null;
 chrome.on('error', (err) => { spawnError = err; });
+// keep the tail of Chrome's stderr: when it exits before opening the port, that
+// is the only place the reason is written
+const stderrTail = [];
 chrome.stderr.on('data', (buf) => {
   const text = String(buf);
+  for (const line of text.split('\n')) {
+    if (line.trim()) stderrTail.push(line.trim());
+  }
+  if (stderrTail.length > 20) stderrTail.splice(0, stderrTail.length - 20);
   if (spawnError === null && /not found|No such file/i.test(text)) spawnError = new Error(text.trim());
 });
 
@@ -107,7 +114,8 @@ async function findTarget() {
     }
     await sleep(100);
   }
-  throw new Error(`Chrome did not expose a page target on port ${PORT}`);
+  const why = stderrTail.length ? `\nChrome said:\n  ${stderrTail.join('\n  ')}` : '';
+  throw new Error(`Chrome did not expose a page target on port ${PORT}.${why}`);
 }
 
 class Cdp {

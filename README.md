@@ -101,15 +101,17 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 
 Besides the Python library at the top of the repository, `bindings/` has thin
 wrappers over the same `libanubis_solver.so`: **Node** (koffi FFI, no native
-addon), **Go** (cgo), **C#** (P/Invoke, no NuGet) and **R** (a `.Call` shim). All
-four expose introspection, the SHA-256 helpers, all five algorithm families and
-verification, and each ships with tests that run against the real library:
+addon), **Go** (cgo), **C#** (P/Invoke, no NuGet), **R** (a `.Call` shim) and
+**Java** (JNI, no jars, no preview flags). All five expose introspection, the
+SHA-256 helpers, all five algorithm families and verification, and each ships
+with tests that run against the real library:
 
 ```bash
-(cd bindings/node   && npm install && node test.js)          # 11 checks
-(cd bindings/go     && go test ./...)                        # 10 tests
+(cd bindings/node   && npm install && node test.js)              # 11 checks
+(cd bindings/go     && go test ./...)                            # 10 tests
 (cd bindings/csharp && dotnet run --project tests/Tests.csproj)  # 13 checks
-(cd bindings/r      && make && R --vanilla -f test.R)        # 14 checks
+(cd bindings/r      && make && R --vanilla -f test.R)            # 14 checks
+(cd bindings/java   && make test)                                # 15 checks
 ```
 
 ### Configuration: `make config`
@@ -178,6 +180,7 @@ bindings/node/           Node bindings (koffi FFI, no build step)
 bindings/go/             Go bindings (cgo, links the .so)
 bindings/csharp/         C# bindings (P/Invoke, no NuGet)
 bindings/r/              R bindings (.Call shim)
+bindings/java/           Java bindings (JNI, no jars)
 tools/                   kernel generators, build scripts, benchmarks
 results/                 raw benchmark JSON
 ```

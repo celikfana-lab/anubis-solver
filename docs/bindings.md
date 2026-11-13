@@ -5,13 +5,15 @@ Python package and the C examples use. Nothing is reimplemented: they call
 `anubis_solve_*`, `anubis_verify_*` and the introspection functions from
 [anubis-solver.h](../include/anubis-solver.h).
 
-| | Node | Go | C# | R |
-|---|---|---|---|---|
-| directory | `bindings/node/` | `bindings/go/` | `bindings/csharp/` | `bindings/r/` |
-| mechanism | koffi FFI | cgo | `[LibraryImport]` | `.Call` shim |
-| test | `node test.js` (11) | `go test ./...` (10) | `dotnet run` (13) | `R -f test.R` (14) |
-| errors | `SolverError.code` | `errors.Is` sentinels | `SolverException.Code` | `anubis_*` conditions |
-| lookup | `ANUBIS_LIB` | rpath | resolver + `ANUBIS_LIB` | `ANUBIS_LIB` |
+| | Node | Go | C# | R | Java |
+|---|---|---|---|---|---|
+| directory | `node/` | `go/` | `csharp/` | `r/` | `java/` |
+| mechanism | koffi FFI | cgo | `[LibraryImport]` | `.Call` shim | JNI shim |
+| test | `node test.js` (11) | `go test ./...` (10) | `dotnet run` (13) | `R -f test.R` (14) | `make test` (15) |
+| errors | `SolverError.code` | `errors.Is` | `SolverException.Code` | `anubis_*` conditions | `SolverException.code()` |
+| lookup | `ANUBIS_LIB` | rpath | resolver + `ANUBIS_LIB` | `ANUBIS_LIB` | `java.library.path` |
+
+All paths are under `bindings/`.
 
 Full usage, the API table and the two FFI pitfalls are in
 [bindings/README.md](../bindings/README.md).

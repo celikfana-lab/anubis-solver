@@ -27,3 +27,4 @@ bindings/csharp/tests/bin/
 bindings/csharp/tests/obj/
 bindings/r/anubisR.so
 bindings/r/src/*.o
+bindings/java/build/

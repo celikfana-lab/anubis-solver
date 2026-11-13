@@ -9,6 +9,7 @@ The C library is the one implementation; these are thin bindings to it.
 | Go | `bindings/go/` | `cgo` — links libanubis_solver.so directly |
 | C# | `bindings/csharp/` | `[LibraryImport]` P/Invoke — no NuGet, no shim |
 | R | `bindings/r/` | a small `.Call` shim, because `.C()` cannot return a code |
+| Java | `bindings/java/` | a JNI shim; no jars, no preview flags |
 
 All of them answer the same four questions and expose the same five algorithm
 families. Build the library first, from the repository root:
@@ -157,3 +158,39 @@ a condition. Without it there is no way to see a return code at all.
 
 R has no native 64-bit integer, so nonces come back as doubles - exact to 2^53,
 far beyond anything a search will reach.
+
+## Java
+
+```bash
+cd bindings/java
+make            # javac -h generates the JNI header, then cc builds libanubis_jni.so
+make test       # 15 checks against the real library
+```
+
+```java
+import io.github.celikfana.anubis.Anubis;
+
+var r = Anubis.solveNibbles("demo-challenge", 3);
+System.out.println(r.nonce() + " " + r.hash() + " " + r.millis() + "ms");
+
+var h = Anubis.solve("hashx", hexChallenge, 4);
+System.out.println(Anubis.verifyHashx(hexChallenge, h.nonce(), 4).ok());
+```
+
+Records for `Result`, `Verdict`, `Info` and `Options`; `SolverException` carries
+`.code()`, `.isUnsolved()` and `.isArgument()`.
+
+**Why JNI and not the FFM API:** `java.lang.foreign` is still a *preview* feature
+on JDK 21, so using it would require `--enable-preview` on both `javac` and
+`java`, and the classes would not run on another JDK. JNI has no flags, no
+dependencies and works from Java 8 to 25. The shim is ~300 lines.
+
+**The JNI trap:** a hand-declared native function whose signature does not match
+the Java declaration does not fail to link - it crashes or silently corrupts
+arguments at the call. `make` therefore runs `javac -h` to generate
+`io_github_celikfana_anubis_Anubis.h` and the C file includes it, so every
+signature is checked by the C compiler. Do not remove that include.
+
+The Java classes need the shim on `java.library.path`
+(`-Djava.library.path=bindings/java/build`); the shim itself finds
+`libanubis_solver.so` through its rpath, so no `LD_LIBRARY_PATH` is needed.

@@ -5,13 +5,13 @@ Python package and the C examples use. Nothing is reimplemented: they call
 `anubis_solve_*`, `anubis_verify_*` and the introspection functions from
 [anubis-solver.h](../include/anubis-solver.h).
 
-| | Node | Go | C# | R | Java | ASM |
-|---|---|---|---|---|---|---|
-| directory | `node/` | `go/` | `csharp/` | `r/` | `java/` | `asm/` |
-| mechanism | koffi FFI | cgo | `[LibraryImport]` | `.Call` shim | JNI shim | `.include` macros |
-| test | `node test.js` (11) | `go test ./...` (10) | `dotnet run` (13) | `R -f test.R` (14) | `make test` (15) | `make run` / `run-arm` |
-| errors | `SolverError.code` | `errors.Is` | `SolverException.Code` | `anubis_*` conditions | `SolverException.code()` | `%eax` / `w0` |
-| lookup | `ANUBIS_LIB` | rpath | resolver + `ANUBIS_LIB` | `ANUBIS_LIB` | `java.library.path` | `-L` + rpath |
+| | Node | Go | C# | R | Java | Rust | ASM |
+|---|---|---|---|---|---|---|---|
+| directory | `node/` | `go/` | `csharp/` | `r/` | `java/` | `rust/` | `asm/` |
+| mechanism | koffi FFI | cgo | `[LibraryImport]` | `.Call` shim | JNI shim | hand-written FFI | `.include` macros |
+| test | `node test.js` (11) | `go test` (10) | `dotnet run` (13) | `R -f test.R` (14) | `make test` (15) | `cargo test` (10) | `make run` / `run-arm` |
+| errors | `SolverError.code` | `errors.Is` | `SolverException.Code` | `anubis_*` conditions | `SolverException.code()` | `Error` enum | `%eax` / `w0` |
+| lookup | `ANUBIS_LIB` | rpath | resolver | `ANUBIS_LIB` | `java.library.path` | `build.rs` rpath | `-L` + rpath |
 
 All paths are under `bindings/`.
 

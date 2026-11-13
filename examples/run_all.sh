@@ -10,7 +10,7 @@ set -u
 
 cd "$(dirname "$0")/.." || exit 1
 ROOT=$PWD
-if [ $# -gt 0 ]; then WANT=("$@"); else WANT=(python node go csharp r java asm); fi
+if [ $# -gt 0 ]; then WANT=("$@"); else WANT=(python node go csharp r java rust asm); fi
 
 pass=0; fail=0; skip=0
 declare -a FAILED=()
@@ -107,6 +107,19 @@ if want java; then
         else
             bad "$?" java
         fi
+    fi
+fi
+
+# ------------------------------------------------------------------- rust
+if want rust; then
+    head_ rust
+    if have cargo; then
+        out=$(cd bindings/rust && cargo run --offline --quiet --example solve 2>&1 \
+              | grep -v "^warning\|Compiling\|Finished\|Running")
+        printf '%s\n' "$out"
+        if printf '%s\n' "$out" | grep -q "same digest"; then ok; else bad 1 rust; fi
+    else
+        skip_ "cargo not found"
     fi
 fi
 

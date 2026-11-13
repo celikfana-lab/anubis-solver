@@ -30,3 +30,4 @@ bindings/r/src/*.o
 bindings/java/build/
 bindings/asm/build/
 build-arm64/
+bindings/rust/target/

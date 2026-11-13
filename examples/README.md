@@ -17,6 +17,7 @@ file is standalone; run them from the repository root.
 | [`r_demo.R`](r_demo.R) | R: same, and shows `anubis_unsolved` as a catchable condition |
 | [`java_demo/`](java_demo/) | Java: same, and shows `SolverException.isUnsolved()` |
 | [`asm_min.s`](asm_min.s) | Assembly: the smallest binding — no libc, no startup files |
+| [`../bindings/rust/examples/solve.rs`](../bindings/rust/examples/solve.rs) | Rust: the crate's own example (`cargo run --example solve`) |
 
 The four algorithm families all behave the same way in every language: `fast` /
 `slow` take a plain challenge string and a nibble difficulty, while `sha256`,

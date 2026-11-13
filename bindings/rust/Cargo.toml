@@ -1,0 +1,17 @@
+[package]
+name = "anubis-solver"
+version = "1.3.0"
+edition = "2021"
+rust-version = "1.64"
+description = "Solve Anubis proof-of-work challenges through libanubis_solver"
+documentation = "https://github.com/celikfana-lab/anubis-solver/blob/main/bindings/rust/README.md"
+repository = "https://github.com/celikfana-lab/anubis-solver"
+readme = "README.md"
+# MIT + attribution: an SPDX expression cannot describe a modified MIT, so the
+# file itself is the license (see LICENSE section 3).
+license-file = "../../LICENSE"
+keywords = ["anubis", "proof-of-work", "captcha", "sha256", "argon2id"]
+categories = ["api-bindings", "cryptography"]
+
+[dependencies]
+# none: this crate is a thin hand-written FFI layer over the C ABI

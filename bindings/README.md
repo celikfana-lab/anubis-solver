@@ -11,6 +11,7 @@ The C library is the one implementation; these are thin bindings to it.
 | R | `bindings/r/` | a small `.Call` shim, because `.C()` cannot return a code |
 | Java | `bindings/java/` | a JNI shim; no jars, no preview flags |
 | Assembly | `bindings/asm/` | `.include` macros for x86-64 SysV and AArch64 |
+| Rust | `bindings/rust/` | hand-written FFI, no bindgen, no dependencies |
 
 All of them answer the same four questions and expose the same five algorithm
 families. Build the library first, from the repository root:
@@ -230,3 +231,39 @@ cross-built library, and they return the *same nonce and hash*, so the two are
 checked against each other. `bindings/asm/README.md` also documents how to
 cross-build the library (the root Makefile keys its kernel choice off `uname -m`,
 so a cross build must pass `ASM_SRC=src/cpu/neon.s` and argon2's `ref.c`).
+
+## Rust
+
+```bash
+cd bindings/rust
+cargo run --example solve      # the example
+cargo test                     # 9 integration tests + the doctest
+```
+
+```rust
+use anubis_solver as anubis;
+
+let r = anubis::solve_nibbles("demo-challenge", 3, anubis::Options::default())?;
+println!("nonce {} -> {} in {:.1} ms", r.nonce, r.hash, r.millis);
+
+let (ok, digest) = anubis::verify_nibbles("demo-challenge", r.nonce, 3)?;
+```
+
+The crate is a thin, hand-written FFI layer over `include/anubis-solver.h`:
+**no `bindgen`, no build-time code generation, no dependencies at all**. It wraps
+introspection, both SHA-256 helpers, all five algorithm families, per-family
+verification and a `solve(Algorithm, ..)` dispatcher.
+
+Errors are a real enum — `Error::Unsolved`, `Error::Argument`, `Error::Internal`,
+`Error::Unknown(i32)`, `Error::InteriorNul` — implementing `std::error::Error`, so
+`?` works and an exhausted budget is a value rather than a panic.
+
+`build.rs` points the linker at the repository root and bakes in an rpath, so
+`cargo test` needs no `LD_LIBRARY_PATH`. To link a library elsewhere:
+
+```bash
+ANUBIS_LIB_DIR=/opt/anubis/lib cargo build
+```
+
+The crate uses `license-file = "../../LICENSE"` rather than a `license` field,
+because an SPDX expression cannot express MIT + attribution.

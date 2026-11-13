@@ -1,0 +1,7 @@
+{
+  "name": "anubis_solver",
+  "description": "Solves Anubis proof-of-work challenges with libanubis_solver.so",
+  "path": "/REPLACED_BY_INSTALL_SH/anubis_native.py",
+  "type": "stdio",
+  "allowed_extensions": ["anubis-solver@celikfana-lab"]
+}

@@ -120,6 +120,24 @@ verification, and each ships with tests that run against the real library:
 (cd bindings/asm    && make run && make run-arm)                 # both arches
 ```
 
+### The browser, using the real library
+
+`firefox-extension/` is a Firefox add-on that solves Anubis challenges through
+**native messaging** instead of in-page WebAssembly: a click on the toolbar button
+hands the challenge to a native host that calls `libanubis_solver.so`. Measured on
+the same challenge:
+
+| engine | SHA-256 |
+|---|---:|
+| native host (SHA-NI, 4 threads) | **~20 M hashes/s** |
+| our wasm, 4 nonces wide | ~3.4 M hashes/s |
+| official Anubis wasm | ~1.9 M hashes/s |
+
+`python3 firefox-extension/test-native.py` drives the host exactly as Firefox does
+— framing, live challenge, pass-challenge exchange — and asserts the protected page
+comes back. See [firefox-extension/README.md](firefox-extension/README.md) for the
+manifest locations (Linux/macOS/Windows) and the add-on ID requirement.
+
 ### HashX compiled to WebAssembly
 
 A HashX program is fixed for a whole challenge, so it does not need to be
@@ -223,7 +241,8 @@ bindings/csharp/         C# bindings (P/Invoke, no NuGet)
 bindings/r/              R bindings (.Call shim)
 bindings/java/           Java bindings (JNI, no jars)
 bindings/rust/           Rust bindings (hand-written FFI, no deps)
-wasm/                   HashX compiled to WAT, benchmarked against Anubis
+wasm/                   HashX compiled to WAT and the sha256 kernels, benchmarked
+firefox-extension/      native messaging: the browser uses libanubis_solver.so
 bindings/asm/            assembly macros + demos (x86-64 and AArch64)
 dsh-plugin/              DSH tool: anubis_fetch, a web_fetch for Anubis pages
 tools/anubis_fetch.js    the fetch driver the plugin uses (pure Node)

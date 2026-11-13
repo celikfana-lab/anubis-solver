@@ -1,0 +1,19 @@
+{
+  "manifest_version": 2,
+  "name": "Anubis native solver",
+  "version": "1.10.0",
+  "description": "Solve Anubis proof-of-work challenges with the native C engine instead of the in-page WebAssembly solver.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "anubis-solver@celikfana-lab",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": ["nativeMessaging", "activeTab", "tabs", "notifications"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_action": {
+    "default_title": "Solve this Anubis challenge natively"
+  }
+}

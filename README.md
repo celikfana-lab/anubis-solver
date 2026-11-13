@@ -109,6 +109,8 @@ src/levelzero/*.cl         their OpenCL C kernels (embedded SPIR-V)
 src/vulkan/vulkan.c        Vulkan backends
 src/vulkan/*.comp          their GLSL kernels (embedded SPIR-V)
 src/opencl/                portable OpenCL host (not wired yet)
+src/sass/                  NVIDIA SASS for the Tesla T4 SHA-256 kernel, and the
+                           Kaggle job that produces and benchmarks it
 third_party/argon2/      reference Argon2id (CC0-1.0 / Apache-2.0)
 tests/                   unit, local end-to-end, version matrix, CVE harness
 examples/                Python, C and C++ samples

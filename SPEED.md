@@ -687,10 +687,10 @@ SHA-256 on its NEON/SHA-2 path, so 128 lanes are ~190x that.
 
 ### Tesla T4 (sm_75): the SHA-256 kernel and its SASS
 
-`beyond/asm/nvidiaT4_sha256.sass` is the shipped `src/cuda/cuda_sha256.cu` kernel
+`src/sass/nvidiaT4_sha256.sass` is the shipped `src/cuda/cuda_sha256.cu` kernel
 compiled for `sm_75` and disassembled with `nvdisasm -c`;
-`nvidiaT4_sha256_opt.sass` is the same algorithm with the block assembly moved
-out of local memory. Built and run by `beyond/tools/kaggle_t4_sass.py` on a Tesla
+`src/sass/nvidiaT4_sha256_opt.sass` is the same algorithm with the block assembly moved
+out of local memory. Built and run by `src/sass/kaggle_t4_sass.py` on a Tesla
 T4 (40 SMs, 1590 MHz, CUDA 13.0).
 
 | kernel | instruction lines | stack frame | registers | MH/s |

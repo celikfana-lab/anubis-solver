@@ -42,9 +42,6 @@ rtl/
               spi_slave.v         SPI / QSPI / OSPI slave, LANES = 1,2,4,8
               doctor.v            self-test: halt, test every datapath and the HBM
 
-asm/          nvidiaT4_sha256.sass       the shipped SHA-256 kernel, sm_75 SASS
-              nvidiaT4_sha256_opt.sass   the optimised variant (1.4-1.8x on a T4)
-              sha256_sm75_kernels.cu     both kernels, device code only
 tb/           one testbench per unit; tb_anubis_solve.v is the end-to-end search
 sim/          sim_top.v + sim_main.cpp, the Verilator harness
 tools/        gen_*.py vector generators, verify_solve.py

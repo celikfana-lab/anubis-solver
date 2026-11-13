@@ -1,12 +1,12 @@
 {
   "title": "SHA-256 PoW kernel compiled for sm_75 (Tesla T4): shipped vs optimised",
   "date": "2026-11-13",
-  "how": "Kaggle notebook on a Tesla T4 (40 SMs, 1590 MHz, CUDA 13.0 / nvcc 13.0.88), built and run by beyond/tools/kaggle_t4_sass.py",
+  "how": "Kaggle notebook on a Tesla T4 (40 SMs, 1590 MHz, CUDA 13.0 / nvcc 13.0.88), built and run by src/sass/kaggle_t4_sass.py",
   "artifacts": {
-    "shipped_sass": "beyond/asm/nvidiaT4_sha256.sass",
-    "optimised_sass": "beyond/asm/nvidiaT4_sha256_opt.sass",
-    "source": "beyond/asm/sha256_sm75_kernels.cu (both kernels, device code only)",
-    "job": "beyond/tools/kaggle_t4_sass.py"
+    "shipped_sass": "src/sass/nvidiaT4_sha256.sass",
+    "optimised_sass": "src/sass/nvidiaT4_sha256_opt.sass",
+    "source": "src/sass/sha256_sm75_kernels.cu (both kernels, device code only)",
+    "job": "src/sass/kaggle_t4_sass.py"
   },
   "compiler_report": {
     "shipped": {

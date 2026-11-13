@@ -1,0 +1,12 @@
+{
+  "name": "anubis-solver",
+  "version": "1.0.0",
+  "description": "Node bindings for libanubis_solver: solve Anubis proof-of-work challenges (fast, slow, sha256, argon2id, hashx)",
+  "main": "anubis.js",
+  "types": "anubis.d.ts",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "dependencies": { "koffi": "^3.3.8" },
+  "scripts": { "test": "node test.js" },
+  "files": ["anubis.js", "anubis.d.ts", "README.md"]
+}

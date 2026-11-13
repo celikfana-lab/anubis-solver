@@ -97,6 +97,19 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 
 ## Layout
 
+### Other languages
+
+Besides the Python library at the top of the repository, `bindings/` has thin
+wrappers over the same `libanubis_solver.so`: a **Node** one using koffi FFI (no
+native addon, no build step) and a **Go** one using cgo. Both expose
+introspection, the SHA-256 helpers, all five algorithm families and verification,
+and both ship with tests that run against the real library:
+
+```bash
+(cd bindings/node && npm install && node test.js)
+(cd bindings/go && go test ./...)
+```
+
 ### Configuration: `make config`
 
 Before building, ask the machine what it is:
@@ -159,6 +172,8 @@ src/sass/                  NVIDIA SASS for the Tesla T4 SHA-256 kernel, and the
 third_party/argon2/      reference Argon2id (CC0-1.0 / Apache-2.0)
 tests/                   unit, local end-to-end, version matrix, CVE harness
 examples/                Python, C and C++ samples
+bindings/node/           Node bindings (koffi FFI, no build step)
+bindings/go/             Go bindings (cgo, links the .so)
 tools/                   kernel generators, build scripts, benchmarks
 results/                 raw benchmark JSON
 ```

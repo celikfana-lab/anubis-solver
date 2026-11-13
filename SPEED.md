@@ -714,6 +714,15 @@ goes away with the local traffic.
 so ILP buys nothing — and ILP=1 uses 40 registers instead of 64 or 128, i.e.
 full occupancy. The right choice is no ILP at all.
 
+Both kernels also ship fully annotated, one comment per instruction:
+`nvidiaT4_sha256.annotated.sass` (2,024 instructions) and
+`nvidiaT4_sha256_opt.annotated.sass` (2,872). The instruction stream in those is
+byte-for-byte the SASS above - only trailing comments were added, and stripping
+them restores the originals exactly. They name the operands, the SHA-256 term each
+line implements, and the SASS modifiers that carry meaning (`.HI` funnel shifts,
+`.X` carry chains, LOP3 truth tables - 0x96 is a three-way xor here, 0xE8 Maj,
+0xB8 Ch).
+
 Scope: the shipped kernel serves both the decimal-nonce (`fast`/`slow`) and
 u32-nonce (`sha256`) families through a runtime branch; this optimisation is the
 `sha256` family. The decimal path can be specialised the same way, but its digit

@@ -417,7 +417,11 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(Wgsl(keys, prog, args.dump_after, args.no_branch).build(),
                    encoding="utf-8")
-    print(f"wrote {out.relative_to(root)} ({len(prog)} instructions, "
+    try:
+        shown = out.relative_to(root)
+    except ValueError:
+        shown = out            # an absolute --out outside the repo is allowed
+    print(f"wrote {shown} ({len(prog)} instructions, "
           f"{len(out.read_text(encoding='utf-8').splitlines())} lines)")
     return 0
 

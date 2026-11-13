@@ -156,9 +156,11 @@ it is *identical* across three completely different control-flow encodings:
 A numbers-only change of the control flow would not survive that; the wrong value
 is stable, so it is the same wrong arithmetic, not a wrong jump. In isolation the
 helpers are correct on this GPU, the PRF is correct, and the first 113
-instructions are correct. Something further into the program is miscompiled, and
-the divergence appears only in the **high halves of two registers** (`r2.hi`,
-`r7.hi`), both of which are produced by the emulated 64x64 multiply.
+instructions are correct; `--truncate 114` is where this driver and llvmpipe part.
+An earlier version of this file claimed the divergence was "the high halves of
+`r2` and `r7`, both from the emulated 64x64 multiply". That came from a single
+register dump with no trusted reference behind it, and the controlled bisect below
+does not support it. Treating a dump as evidence was the mistake.
 
 What it *does* do is fail deterministically, which is the more useful property. The
 same nonce returns the same wrong digest when it is the only active invocation in the
@@ -167,13 +169,29 @@ and it returns it again on a repeat run, on Chrome 154 as well as on 145
 (`webgpu/probe-det.html`). So this is not a race, not occupancy-sensitive register
 allocation and not a cross-lane effect: the compiler deterministically miscomputes
 one particular instruction sequence, and the same sequence gives the right answer on
-SwiftShader. That is what makes a bisect worth doing — generate the shader truncated
-at instruction `k` (`--truncate k`) and compare its digest against the same prefix
-compiled by the wasm JIT, which shares `load_program` with `gen_hashx_wat.py`, until
-the first divergent `k` appears.
+SwiftShader.
 
-Beyond that, reducing it further needs either a disassembly from the Intel Vulkan
-compiler (not accessible from here) or a second GPU to test on. The
+### It is the Intel driver, and WebGPU is not needed to show it
+
+`naga` is an independent WGSL front end (wgpu's). It turns this shader into
+SPIR-V, and a 200-line Vulkan harness dispatches that SPIR-V directly, with no
+Chrome, no Dawn and no Tint anywhere in the loop:
+
+| backend | nonce 0 |
+|---|---|
+| ANV (gen-12lp), naga's SPIR-V, direct Vulkan | `17ca683d…` — wrong, and byte-identical to what Chrome reports |
+| llvmpipe, same SPIR-V, same `libvulkan`, same binary | `36572054…` — the expected digest |
+
+Two front ends produce two different SPIR-V files and get the same wrong answer,
+so the common factor is Mesa's Intel compiler. Bisecting the program shows the
+two drivers agreeing for the first 113 instructions and disagreeing at 114; with
+branch handling removed, llvmpipe's digest is unchanged by instruction 114 while
+ANV's is not, which points at an optimisation that depends on the shader's shape
+rather than at one opcode.
+
+The reproducer is [`repro/anv/`](repro/anv/) (`./run.sh`, two commands) and the
+report drafted for Mesa is [`ANV-BUG.md`](ANV-BUG.md). What is left is upstream's
+to fix, and nothing here waits on it. The
 `webgpu/probe-*.html` pages are the isolated tests I used — they are kept so the
 next person does not have to rewrite them:
 

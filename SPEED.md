@@ -719,6 +719,35 @@ u32-nonce (`sha256`) families through a runtime branch; this optimisation is the
 `sha256` family. The decimal path can be specialised the same way, but its digit
 conversion still costs, so it is not claimed here.
 
+### Tesla T4 (sm_75): HashX, and what an interpreter costs
+
+Same treatment as SHA-256, and the answer is much bigger.
+`src/sass/nvidiaT4_hashx.sass` is the shipped `src/cuda/cuda_hashx.cu` kernel for
+`sm_75`; `_opt` pins the register file; `_jit` is the challenge program compiled
+to straight-line code. All three reproduce the repo's own HashX vector
+(`beyond/vectors/hx_vectors.hex` case 0, nonce 0) exactly.
+
+| kernel | what it does | LDL/STL | regs | MH/s | vs shipped |
+|---|---|---|---:|---:|---:|
+| shipped | interpreter, program in global memory | 20 / 19 | 56 | 62.7 | 1.0x |
+| `_opt` | register file pinned by a switch, program in `__constant__` | 1 / 2 | 50 | 87.3 | **1.39x** |
+| `_jit` | **the program emitted as 512 straight-line statements** | 1 / 2 | 48 | **1,244** | **19.9x** |
+
+At ILP 4 the JIT reaches **1,400 MH/s, 22.4x**.
+
+The reason is arithmetic. An interpreter charges one constant fetch, one 11-way
+dispatch and two local-memory accesses **per VM instruction**; the instruction
+itself is one 64-bit op. Over 512 instructions that overhead is roughly 20x the
+useful work — which is exactly the measured ratio. The HashX program is fixed for
+a whole challenge, so there is no reason to interpret it at all: a real backend
+generates this code host-side from `hashx_export`, and the only control flow that
+survives is the program's single taken branch, which becomes one label and one
+`goto`.
+
+ILP is a measured negative in both variants, for opposite reasons: the
+interpreter variant spills the register file (0.82x at 2, 0.36x at 4), and the
+JIT is already issue-bound at 48 registers.
+
 ### Against the GPUs
 
 | machine | argon2id hashes/s | hashx hashes/s |

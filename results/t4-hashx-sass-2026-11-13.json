@@ -1,0 +1,75 @@
+{
+  "title": "HashX PoW kernel compiled for sm_75 (Tesla T4): interpreter vs compiled program",
+  "date": "2026-11-13",
+  "how": "Kaggle notebook on a Tesla T4 (40 SMs, 1590 MHz, CUDA 13.0.88), built and run by src/sass/kaggle_t4_hashx.py",
+  "artifacts": {
+    "shipped_sass": "src/sass/nvidiaT4_hashx.sass",
+    "register_pinned_sass": "src/sass/nvidiaT4_hashx_opt.sass",
+    "jit_sass": "src/sass/nvidiaT4_hashx_jit.sass",
+    "source": "src/sass/hashx_sm75_kernels.cu",
+    "job": "src/sass/kaggle_t4_hashx.py"
+  },
+  "correctness": "all three variants reproduce the repo's own HashX vector (beyond/vectors/hx_vectors.hex case 0, nonce 0) exactly",
+  "measured": {
+    "shape": "8,388,608 nonces x 3 reps, one 512-instruction program per hash",
+    "shipped_mhps": [
+      62.69,
+      62.44,
+      62.55
+    ],
+    "opt_mhps": {
+      "ilp1": 87.33,
+      "ilp2": 51.29,
+      "ilp4": 22.82
+    },
+    "jit_mhps": {
+      "ilp1": 1244.34,
+      "ilp2": 1312.72,
+      "ilp4": 1399.7
+    },
+    "speedups": {
+      "opt": [
+        1.39,
+        0.82,
+        0.36
+      ],
+      "jit": [
+        19.85,
+        21.02,
+        22.38
+      ]
+    }
+  },
+  "compiler_report": {
+    "shipped": {
+      "registers": 56,
+      "stack_frame_bytes": 96,
+      "LDL": 20,
+      "STL": 19,
+      "LDG": 1
+    },
+    "opt_ilp1": {
+      "registers": 50,
+      "stack_frame_bytes": 32,
+      "LDL": 1,
+      "STL": 2,
+      "LDG": 0
+    },
+    "jit_ilp1": {
+      "registers": 48,
+      "stack_frame_bytes": 32,
+      "LDL": 1,
+      "STL": 2,
+      "LDG": 0,
+      "sass_lines": 3112
+    }
+  },
+  "what_was_found": [
+    "the shipped kernel indexes r[0..7] with runtime dst/src values, so the register file lives in LOCAL MEMORY: 20 LDL + 19 STL per hash, plus an LDG for every instruction fetch out of the global program array",
+    "variant 2 pins the register file with a uniform switch and moves the program to __constant__: 1.39x at ILP 1, but MORE ILP destroys it (0.82x at 2, 0.36x at 4) because 8 x 64-bit registers per lane plus the SipRound state does not fit and it spills",
+    "variant 3 removes the interpreter entirely: the program is fixed for a whole challenge, so it is emitted as 512 straight-line statements with constant register names, one label for the program's single taken branch, and no program memory at all. 19.9-22.4x over the shipped kernel"
+  ],
+  "why_the_jit_is_the_real_answer": "an interpreter charges one constant fetch, one 11-way dispatch and two local-memory accesses per VM instruction; the arithmetic itself is one 64-bit op. At 512 instructions that overhead is about 20x the useful work, which is exactly the measured ratio",
+  "caveat": "the JIT kernel is per-challenge code, the same thing a real deployment does host-side when it exports the program. It was generated here from case 0 of the repo's vector file; a production backend would generate it from hashx_export at challenge time",
+  "negative_result": "ILP does not help HashX either, in both variants, for opposite reasons: the interpreter variant spills the register file, and the JIT variant is already issue-bound with 48 registers"
+}

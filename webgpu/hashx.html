@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HashX on WebGPU — measurement</title>
+<title>HashX on WebGPU — self-check and measurement</title>
 <style>
-  body { font: 15px/1.6 system-ui, sans-serif; margin: 2rem; max-width: 60rem; color: #e8e8e4; background: #14161a; }
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 2rem; max-width: 62rem; color: #e8e8e4; background: #14161a; }
   h1 { font-size: 1.4rem; margin: 0 0 .4rem; }
   h2 { font-size: 1rem; margin: 1.6rem 0 .4rem; color: #9ad; }
   table { border-collapse: collapse; margin: .6rem 0; }
@@ -13,27 +13,36 @@
   td.n { text-align: right; font-variant-numeric: tabular-nums; }
   code, pre { font-family: ui-monospace, Menlo, monospace; font-size: .85rem; }
   .ok { color: #6f6; } .bad { color: #f88; } .muted { color: #888; }
+  .banner { border-left: 3px solid #666; padding: .6rem 1rem; margin: 1rem 0; background: #1b1e23; }
+  .banner.gpu { border-left-color: #6f6; }
+  .banner.wasm { border-left-color: #fa6; }
+  .chosen { font-weight: 700; }
   #log { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .8rem; color: #aaa; }
 </style>
 </head>
 <body>
 <h1>HashX on WebGPU</h1>
 <p class="muted">
-  The same 512-instruction program compiled to a WGSL compute shader, one
-  invocation per nonce, against the same program compiled to WebAssembly. Both in
-  this browser, same process, same program, same work.
+  The same 512-instruction program compiled to a WGSL compute shader and to
+  WebAssembly, in one browser and one process. <strong>The page does not trust the
+  GPU:</strong> before using it, it hashes eight known nonces and compares the
+  digests against the WebAssembly module. If they disagree — which is what the
+  Intel Vulkan backend on this laptop does — the page reports it and falls back to
+  WebAssembly instead of returning wrong answers faster.
 </p>
+
+<div id="selection" class="banner"><span class="chosen">selecting a backend…</span></div>
 
 <h2>Adapter</h2>
 <table id="adapter"><tbody></tbody></table>
 
-<h2>Correctness</h2>
+<h2>Self-check (8 known nonces, digest compared with WebAssembly)</h2>
 <div id="verify">running…</div>
 
 <h2>Throughput</h2>
-<table id="rates"><thead><tr><th>engine</th><th>hashes/s</th><th>per hash</th><th>notes</th></tr></thead><tbody></tbody></table>
+<table id="rates"><thead><tr><th>engine</th><th>hashes/s</th><th>per hash</th><th>status</th></tr></thead><tbody></tbody></table>
 
-<h2>Latency per challenge</h2>
+<h2>Latency per challenge, selected engine only</h2>
 <table id="latency"><thead><tr><th>difficulty</th><th>expected hashes</th><th>wall time</th></tr></thead><tbody></tbody></table>
 
 <h2>Log</h2>
@@ -42,8 +51,9 @@
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const log = (m) => { $('log').textContent += m + '\n'; };
-const row = (table, cells) => {
+const row = (table, cells, cls) => {
   const tr = document.createElement('tr');
+  if (cls) tr.className = cls;
   for (const [i, c] of cells.entries()) {
     const td = document.createElement('td');
     if (i === 1) td.className = 'n';
@@ -54,17 +64,29 @@ const row = (table, cells) => {
 };
 const fmt = (n, d = 0) => Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[s.length >> 1]; };
+const percent = (r) => (r >= 1e6 ? `${(r / 1e6).toFixed(2)} M` : r >= 1e3 ? `${(r / 1e3).toFixed(0)} k` : r.toFixed(0));
 
 const WGSL_URL = './hashx.wgsl';
 const WASM_URL = '../wasm/hashx_jit.wasm';
-const GROUPS = 64;   // must match @workgroup_size in the shader
+const GROUPS = 64;                     // must match @workgroup_size in the shader
+const SELF_CHECK_NONCES = 8;
+
+// ?engine=wasm or ?engine=webgpu forces a backend (useful for reproducing the
+// Intel bug on purpose); the default is "check the GPU, then decide".
+const forced = new URLSearchParams(location.search).get('engine');
 
 async function main() {
   const out = { ok: false };
 
-  if (!navigator.gpu) { $('verify').innerHTML = '<span class="bad">navigator.gpu missing</span>'; return out; }
+  if (!navigator.gpu) {
+    $('verify').innerHTML = '<span class="bad">navigator.gpu is missing</span>';
+    return out;
+  }
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-  if (!adapter) { $('verify').innerHTML = '<span class="bad">no adapter</span>'; return out; }
+  if (!adapter) {
+    $('verify').innerHTML = '<span class="bad">no adapter</span>';
+    return out;
+  }
   if (adapter.info) {
     for (const [k, v] of Object.entries({ vendor: adapter.info.vendor, architecture: adapter.info.architecture,
       device: adapter.info.device, description: adapter.info.description })) {
@@ -73,22 +95,29 @@ async function main() {
   }
   const device = await adapter.requestDevice();
   out.adapter = adapter.info ? { vendor: adapter.info.vendor, arch: adapter.info.architecture } : {};
-
   device.addEventListener('uncapturederror', (e) => log('GPU error: ' + e.error.message));
 
-  /* ---------------- shader ---------------- */
+  /* ---------------- the wasm reference, needed by the self-check ---------------- */
+  const wasmBytes = await (await fetch(WASM_URL)).arrayBuffer();
+  const { instance: wasm } = await WebAssembly.instantiate(wasmBytes, {});
+  const wx = wasm.exports;
+  const wasmDigest = (nonce) => {
+    wx.hash(BigInt(nonce));
+    return [...new Uint8Array(wx.memory.buffer, 0, 32)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  /* ---------------- the GPU ---------------- */
   const code = await (await fetch(WGSL_URL)).text();
   const module = device.createShaderModule({ code, label: 'hashx' });
   const info = await module.getCompilationInfo();
   const errs = info.messages.filter((m) => m.type === 'error');
-  if (errs.length) {
-    $('verify').innerHTML = '<span class="bad">shader does not compile</span>';
-    for (const m of errs) log(`line ${m.lineNum}: ${m.message}`);
-    return out;
-  }
+  let gpuUsable = errs.length === 0;
   for (const m of info.messages) log(`shader ${m.type} line ${m.lineNum}: ${m.message}`);
+  if (!gpuUsable) {
+    $('verify').innerHTML = '<span class="bad">the shader does not compile on this backend</span>';
+    for (const m of errs) log(`line ${m.lineNum}: ${m.message}`);
+  }
 
-  // Params: code_size, difficulty, base, count — four u32
   const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const resultsSize = 16 + 8 * 4 + 64 * 4;
   const resultsBuf = device.createBuffer({
@@ -97,21 +126,19 @@ async function main() {
   });
   const readBuf = device.createBuffer({ size: resultsSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 
-  const pipeline = device.createComputePipeline({
-    layout: 'auto',
-    compute: { module, entryPoint: 'main' },
-  });
-  const bind = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: paramsBuf } },
-      { binding: 1, resource: { buffer: resultsBuf } },
-    ],
-  });
-
-  function clearResults() {
-    device.queue.writeBuffer(resultsBuf, 0, new Uint32Array(resultsSize / 4));
+  let pipeline, bind;
+  if (gpuUsable) {
+    pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+    bind = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: paramsBuf } },
+        { binding: 1, resource: { buffer: resultsBuf } },
+      ],
+    });
   }
+
+  const clearResults = () => device.queue.writeBuffer(resultsBuf, 0, new Uint32Array(resultsSize / 4));
 
   function encode(count, difficulty, base) {
     device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([0, difficulty, base >>> 0, count >>> 0]));
@@ -131,24 +158,16 @@ async function main() {
     await readBuf.mapAsync(GPUMapMode.READ);
     const u32 = new Uint32Array(readBuf.getMappedRange().slice(0));
     readBuf.unmap();
-    // layout in u32 words: [0] total, [1..3] pad, [4..11] nonces, [12..] hashes (8 per hit)
+    // u32 layout: [0] total, [1..3] pad, [4..11] nonces, [12..] hashes (8 words per hit)
     const total = u32[0];
     const hits = [];
     for (let s = 0; s < Math.min(8, total); s++) {
-      hits.push({
-        nonce: u32[4 + s],
-        words: Array.from(u32.slice(12 + s * 8, 12 + s * 8 + 8)),
-      });
+      hits.push({ nonce: u32[4 + s], words: Array.from(u32.slice(12 + s * 8, 12 + s * 8 + 8)) });
     }
     return { total, hits };
   }
 
-  /* ---------------- the wasm reference ---------------- */
-  const wasmBytes = await (await fetch(WASM_URL)).arrayBuffer();
-  const { instance: wasm } = await WebAssembly.instantiate(wasmBytes, {});
-  const wx = wasm.exports;
   const digestHex = (words) => {
-    // words are (lo, hi) pairs of little-endian u64s, as the C engine lays them out
     const bytes = new Uint8Array(32);
     const dv = new DataView(bytes.buffer);
     for (let i = 0; i < 4; i++) {
@@ -157,94 +176,144 @@ async function main() {
     }
     return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
   };
-  const wasmDigest = (nonce) => {
-    wx.hash(BigInt(nonce));
-    const bytes = new Uint8Array(wx.memory.buffer, 0, 32);
-    return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
-  };
 
-  /* ---------------- correctness: difficulty 0 records everything ---------------- */
-  clearResults();
-  encode(8, 0, 0);       // base 0, count 8, every digest qualifies
-  await device.queue.onSubmittedWorkDone();
-  const got = await readResults();
+  /* ---------------- step 1: does this GPU compute HashX correctly? ---------------- */
+  // This is the check that decides everything else. It is the same "verify before
+  // you trust a backend" rule the C engine applies to every GPU hit, in the one
+  // place a browser can apply it: up front, against a reference that is itself
+  // checked against Anubis's module.
+  let gpuCorrect = false;
+  let checked = 0;
   let mismatches = 0;
-  const rows = [];
-  for (let i = 0; i < Math.min(8, got.hits.length); i++) {
-    const h = got.hits[i];
-    const mine = digestHex(h.words);
-    const theirs = wasmDigest(h.nonce);
-    const same = mine === theirs;
-    if (!same) mismatches++;
-    rows.push({ nonce: h.nonce, same, mine, theirs });
+  if (gpuUsable) {
+    try {
+      clearResults();
+      encode(SELF_CHECK_NONCES, 0, 0);   // difficulty 0: every digest qualifies
+      await device.queue.onSubmittedWorkDone();
+      const got = await readResults();
+      for (const h of got.hits) {
+        checked++;
+        const mine = digestHex(h.words);
+        const theirs = wasmDigest(h.nonce);
+        if (mine !== theirs) {
+          mismatches++;
+          if (mismatches <= 2) log(`self-check: nonce ${h.nonce} gpu ${mine} wasm ${theirs}`);
+        }
+      }
+      gpuCorrect = checked === SELF_CHECK_NONCES && mismatches === 0;
+    } catch (e) {
+      log('self-check threw: ' + e);
+    }
+    $('verify').innerHTML = gpuCorrect
+      ? `<span class="ok">${checked}/${checked} digests match WebAssembly</span> — the WebGPU backend computes HashX correctly here.`
+      : `<span class="bad">${mismatches} of ${checked} digests differ from WebAssembly</span> — ` +
+        `this GPU backend miscompiles the shader (reproduced on Intel gen-12lp). ` +
+        `Wrong answers, not slow answers: the page will use WebAssembly.`;
+  } else {
+    $('verify').innerHTML = '<span class="bad">the shader did not compile, so there is nothing to check</span>';
   }
-  const allSame = mismatches === 0 && rows.length === 8 && got.total === 8;
-  $('verify').innerHTML = allSame
-    ? `<span class="ok">8/8 digests match the wasm module</span> &nbsp;` +
-      `<code>${rows[0].mine.slice(0, 16)}…</code> for nonce ${rows[0].nonce}`
-    : `<span class="bad">${mismatches} of ${rows.length} digests differ</span>`;
-  for (const r of rows.filter((r) => !r.same)) log(`nonce ${r.nonce}: gpu ${r.mine} wasm ${r.theirs}`);
-  out.correct = allSame;
-  out.total = got.total;
-  out.first = rows[0] ? { nonce: rows[0].nonce, mine: rows[0].mine, theirs: rows[0].theirs } : null;
 
-  if (new URLSearchParams(location.search).has('quick')) {
-    window.__result = out; log('quick mode: verification only'); return out;
+  /* ---------------- step 2: pick a backend ---------------- */
+  let engine = gpuCorrect && gpuUsable ? 'webgpu' : 'wasm';
+  if (forced === 'wasm') engine = 'wasm';
+  if (forced === 'webgpu') engine = 'webgpu';
+  out.selfCheck = gpuCorrect ? 'pass' : (gpuUsable ? 'fail' : 'unavailable');
+  out.engine = engine;
+  out.forced = forced ?? null;
+  out.ok = engine === 'webgpu' ? gpuCorrect : gpuUsable !== undefined;
+
+  const why = forced ? `forced with ?engine=${forced}`
+    : !gpuUsable ? 'the shader did not compile on this backend'
+    : gpuCorrect ? 'self-check passed'
+    : 'self-check failed: wrong digests, so the GPU is not used';
+  $('selection').className = 'banner ' + (engine === 'webgpu' ? 'gpu' : 'wasm');
+  $('selection').innerHTML =
+    `<span class="chosen">using ${engine === 'webgpu' ? 'WebGPU' : 'WebAssembly'}</span>` +
+    ` — ${why}.<br><span class="muted">` +
+    (engine === 'webgpu'
+      ? 'The GPU passed the known-answer test, so it is safe to use.'
+      : 'This is the same fallback the C engine performs for every GPU hit: a backend that cannot reproduce the reference digest is not used, however fast it is.') +
+    '</span>';
+
+  /* ---------------- throughput: measure both, mark which is used ---------------- */
+  const quick = new URLSearchParams(location.search).has('quick');
+  if (quick) {
+    window.__result = out;
+    log('quick mode: self-check only');
+    return out;
   }
 
-  /* ---------------- throughput ---------------- */
-  const COUNT = 1 << 20;                  // 1,048,576 nonces per dispatch
-  const difficulty = 255;                 // nothing qualifies: pure hashing
-  const gpuRuns = [];
-  for (let r = 0; r < 6; r++) {
-    const t0 = performance.now();
-    encode(COUNT, difficulty, 0);
-    await device.queue.onSubmittedWorkDone();
-    gpuRuns.push(performance.now() - t0);
-  }
-  const gpuMs = median(gpuRuns.slice(2));  // drop the first two: shader warm-up
-  const gpuRate = COUNT / (gpuMs / 1000);
+  const COUNT = 1 << 20;
+  const difficulty = 255;              // nothing qualifies: pure hashing
+  let gpuRate = 0;
+  let wasmRate = 0;
 
-  // the wasm module hashes inside its own loop, so this is one call for the same work
+  if (gpuUsable) {
+    const runs = [];
+    for (let r = 0; r < 6; r++) {
+      const t0 = performance.now();
+      encode(COUNT, difficulty, 0);
+      await device.queue.onSubmittedWorkDone();
+      runs.push(performance.now() - t0);
+    }
+    const gpuMs = median(runs.slice(2));   // drop the first two: shader warm-up
+    gpuRate = COUNT / (gpuMs / 1000);
+    row($('rates'), ['WebGPU, compiled to WGSL', fmt(gpuRate), `${(1e9 / gpuRate / 1000).toFixed(3)} µs`,
+      engine === 'webgpu' ? 'selected' : 'not used: wrong digests'],
+      engine === 'webgpu' ? 'chosen' : 'rejected');
+  }
+
   const wasmRuns = [];
   for (let r = 0; r < 5; r++) {
-    wx.solve(0n, 255n, BigInt(COUNT));     // difficulty 255: never hits, hashes exactly COUNT
+    wx.solve(0n, 255n, BigInt(COUNT));     // difficulty 255 never hits
     const t0 = performance.now();
     wx.solve(0n, 255n, BigInt(COUNT));
     wasmRuns.push(performance.now() - t0);
   }
   const wasmMs = median(wasmRuns.slice(1));
-  const wasmRate = COUNT / (wasmMs / 1000);
-
-  row($('rates'), ['WebGPU, compiled to WGSL', fmt(gpuRate), `${(1e9 / gpuRate / 1000).toFixed(3)} µs`,
-    `${fmt(gpuMs, 1)} ms per ${fmt(COUNT)} hashes`]);
+  wasmRate = COUNT / (wasmMs / 1000);
   row($('rates'), ['WebAssembly, compiled to wasm', fmt(wasmRate), `${(1e9 / wasmRate / 1000).toFixed(3)} µs`,
-    `${fmt(wasmMs, 1)} ms per ${fmt(COUNT)} hashes`]);
-  row($('rates'), ['ratio', `${(gpuRate / wasmRate).toFixed(2)}x`, '', gpuRate > wasmRate ? 'WebGPU faster' : 'wasm faster']);
+    engine === 'wasm' ? 'selected' : 'reference'],
+    engine === 'wasm' ? 'chosen' : '');
 
-  /* ---------------- per-challenge latency ---------------- */
+  if (gpuRate && wasmRate) {
+    row($('rates'), ['ratio', `${(Math.max(gpuRate, wasmRate) / Math.min(gpuRate, wasmRate)).toFixed(2)}x`, '',
+      gpuRate > wasmRate ? 'WebGPU is faster' : 'WebAssembly is faster']);
+  }
+
+  /* ---------------- per-challenge latency, selected engine only ---------------- */
+  const engineIsGpu = engine === 'webgpu';
   for (const bits of [16, 20, 24]) {
     const need = Math.pow(2, bits);
-    // dispatch enough invocations that P(finding a hit) is ~63%
     const t0 = performance.now();
-    encode(Math.min(need, 1 << 22), bits, 0);
-    await device.queue.onSubmittedWorkDone();
-    const res = await readResults();
-    const ms = performance.now() - t0;
-    row($('latency'), [`${bits} bits`, fmt(need), `${ms.toFixed(1)} ms`,
-      res.total ? `${res.total} hit(s)` : 'no hit this dispatch']);
-    if (res.total) {
-      const h = res.hits[0];
-      const ok = digestHex(h.words) === wasmDigest(h.nonce);
-      log(`difficulty ${bits}: nonce ${h.nonce}, digest ${ok ? 'verified' : 'MISMATCH'}`);
+    if (engineIsGpu) {
+      encode(Math.min(need, 1 << 22), bits, 0);
+      await device.queue.onSubmittedWorkDone();
+      const res = await readResults();
+      const ms = performance.now() - t0;
+      row($('latency'), [`${bits} bits`, fmt(need), `${ms.toFixed(1)} ms`]);
+      if (res.total) {
+        const h = res.hits[0];
+        const ok = digestHex(h.words) === wasmDigest(h.nonce);
+        log(`difficulty ${bits}: nonce ${h.nonce}, digest ${ok ? 'verified' : 'MISMATCH'}`);
+      }
+    } else {
+      // the wasm module hashes inside its own loop, so give it the same amount of
+      // work in one call and report the wall time
+      const got = wx.solve(0n, BigInt(bits), BigInt(Math.min(need, 1 << 22)));
+      const ms = performance.now() - t0;
+      row($('latency'), [`${bits} bits`, fmt(need), `${ms.toFixed(1)} ms`]);
+      log(`difficulty ${bits}: wasm nonce ${got}, ${
+        got >= 0n ? 'verified' : 'no hit in this window'}`);
     }
   }
 
   out.gpuRate = gpuRate;
   out.wasmRate = wasmRate;
-  out.ok = allSame;
+  out.usedRate = engineIsGpu ? gpuRate : wasmRate;
+  out.ok = engineIsGpu ? gpuCorrect : true;
   window.__result = out;
-  log('done');
+  log(`done: ${engine} at ${fmt(out.usedRate)} hashes/s`);
   return out;
 }
 

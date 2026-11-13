@@ -14,6 +14,27 @@ split verdict:
 
 That is the honest state. Details, including what is ruled out, are below.
 
+## The page checks before it trusts
+
+`hashx.html` does not assume the GPU is right. Before using it, it hashes eight
+known nonces, compares the digests against `wasm/hashx_jit.wasm`, and only uses
+the GPU if all eight match:
+
+| backend | self-check | engine used |
+|---|---|---|
+| Intel Iris Xe | **fails** (wrong digests) | WebAssembly |
+| SwiftShader (either machine) | passes | WebGPU |
+| no WebGPU adapter | unavailable | WebAssembly |
+
+If the check fails the page says so in a banner, keeps the GPU's number in the
+table marked *not used: wrong digests*, and does the latency runs on WebAssembly.
+`?engine=wasm` and `?engine=webgpu` force either side, which is how the Intel bug
+is reproduced on purpose.
+
+This is the same rule the C engine applies to every GPU hit - "every GPU hit must
+be re-verified with the reference before it is accepted" - applied where a browser
+can apply it: up front, once, instead of never.
+
 ## Running it
 
 ```bash

@@ -733,6 +733,58 @@ costs ~6 ms per challenge, which is why the browser does it unconditionally and
 why a threshold would be the refinement if very low difficulties ever mattered:
 below about difficulty 12 the build is a larger cost than the search.
 
+### WebGPU: HashX compiled to WGSL
+
+The same trick again, one layer down: `tools/gen_hashx_wgsl.py` compiles the
+challenge's program to a WGSL compute shader and the browser runs it on the GPU,
+one invocation per nonce. WGSL has no 64-bit integers, so a `u64` is a
+`vec2<u32>` with the multiplies built from 16-bit limbs. Hits are counted with an
+`atomicAdd` inside the shader, so a dispatch costs one readback, not one per hash.
+
+**It is much faster, and the digests are wrong on the one GPU that can run it
+here.** Both statements are needed; the number alone would be a lie:
+
+| engine | hashes/s | per hash | digests | |
+|---|---:|---:|---|---|
+| WebGPU, Intel Iris Xe (`gen-12lp`, Vulkan) | 11.5 M - 47.2 M | 85 - 22 ns | **wrong** | 4-15x the wasm, but unusable |
+| WebAssembly, this repo | 2.6 M - 3.2 M | 380 - 310 ns | exact | the reference |
+| WebGPU on SwiftShader, Xeon 56c box | 0.89 M | 1.1 µs | **exact** | a CPU emulator; wasm does 5.99 M there |
+
+Same browser, same process, same program, 1,048,576 nonces per dispatch at
+difficulty 255. The GPU range is two runs, because this laptop's clocks move.
+
+So the answer to "would WebGPU be faster" is **about 4-15x on an integrated GPU** —
+but from this machine that is a measurement of the same instructions computing the
+wrong thing, so it does not go in the headline tables. What it establishes is that
+the idea is worth the work, not that it works.
+
+The wrong digest is identical across three different control-flow encodings
+(nested loops with `continue`, a dispatch loop, and a build with all branch
+handling removed), while the PRF, the u64 helpers and the first 113 VM
+instructions are bit-exact on that GPU when dumped individually — so it is the
+same wrong arithmetic, not a wrong jump. Two independent software backends
+(SwiftShader on two machines) produce exact digests, which puts the burden of
+proof on the Intel Vulkan compiler rather than on the WGSL.
+
+**The page verifies before it trusts.** `webgpu/hashx.html` hashes eight known
+nonces, compares them against the WebAssembly module, and only uses the GPU if
+they all match; otherwise it says so and runs on WebAssembly. That is the same
+rule the C engine applies to every GPU hit - a backend that cannot reproduce the
+reference digest is not used, however fast it is - applied in the one place a
+browser can apply it: up front.
+
+| backend | self-check | engine used |
+|---|---|---|
+| Intel Iris Xe | fails: wrong digests | WebAssembly |
+| SwiftShader (either machine) | passes | WebGPU |
+| no WebGPU adapter at all | unavailable | WebAssembly |
+
+`webgpu/README.md` has the backend matrix, the debug flags (`--dump-after`,
+`--truncate`, `--no-branch`) and the four isolated probe pages used to reduce
+this. `webgpu/run.sh` runs it; without
+`--enable-features=Vulkan --use-angle=vulkan --use-vulkan=native` Chrome hands out
+SwiftShader and every number measured is a CPU emulator's.
+
 Correctness is not assumed: `wasm/verify.mjs` makes both engines solve the same
 difficulty-16 challenge, and they return the **same nonce (180078) and the same
 digest** — the official module is 7-9x slower on the same work. Three

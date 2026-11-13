@@ -15,7 +15,7 @@ solves itself and you land on your backend.
 
 ```
 $ ./betterAnusbis --target http://127.0.0.1:3000 --algorithm sha256 --difficulty 12
-[betterAnusbis] betterAnusbis 1.10.0 listening on :8080 -> http://127.0.0.1:3000 (sha256, difficulty 12)
+[betterAnusbis] betterAnusbis 1.15.0 listening on :8080 -> http://127.0.0.1:3000 (sha256, difficulty 12)
 [betterAnusbis] open http://127.0.0.1:8080/ and the challenge page solves it for you
 ```
 
@@ -39,7 +39,14 @@ just that a challenge was issued:
   argon2id     difficulty 4   via python  PASS
   hashx        difficulty 4   via python  PASS
 
-6 passed, 0 failed
+honeypot
+  trap link hidden in <script type="ignore"> PASS
+  tarpit ramps with hit count                PASS  (0.0035s -> 0.1013s)
+  maze page links further in                 PASS
+  trap hits are logged                       PASS  (10 hits logged)
+  flagged network gets a harder challenge    PASS  (4 -> 12)
+
+11 passed, 0 failed
 ```
 
 And it actually rejects things:
@@ -135,24 +142,29 @@ normal solve still passes with it on.
 - **State is in memory**, a 4096-bucket table with a one-hour window, so it resets
   with the process. Anubis stores it in its backends and can share it across
   replicas.
-- **No `honeypot/network` policy rule** — there is no policy engine — so the flag is
-  the difficulty bump above rather than a weight the rules interpret.
+- **No `honeypot/network` policy rule.** The policy file takes `allow`, `deny` and
+  `challenge` (on user agent, path, header or network); a network the honeypot has
+  already flagged gets its difficulty bump from the trap table, not from a rule,
+  and a rule cannot express a weight the way Anubis's rules can.
 
 ## The browser solves every algorithm, with no native code
 
 The page loads **our own wasm kernels** from the server itself
 (`/.within.website/x/cmd/anubis/api/static/anubis/<name>.wasm`, `--web DIR`) and
 drives them through the same ABI Anubis's modules use — `data_ptr`,
-`set_data_length`, `anubis_work`, `result_hash_*`:
+`set_data_length`, `anubis_work`, `result_hash_*`. `hashx` is the exception: its
+program depends on the challenge, so the page compiles the module itself from the
+challenge bytes and only falls back to fetching the interpreter.
 
 | algorithm | kernel | size | digest vs Anubis's own module |
 |---|---|---:|---|
 | `sha256` | `sha256_pow_batch.wasm` (four nonces wide) | 38.7 KB | exact, and **1.8-2.1x faster** |
 | `argon2id` | `argon2id_pow.wasm` (our register-resident fill, m=19456 t=2 p=1) | 13.9 KB | **exact, and 1.02-1.05x faster** |
-| `hashx` | compiled in the page from the challenge (`hashx_jit.mjs`), falling back to `hashx_pow.wasm` | 10.4 KB / 14.9 KB | **identical** |
+| `hashx` | compiled in the page from the challenge (`hashx_jit.mjs`), falling back to `hashx_pow.wasm` | 10.4 KB / 14.9 KB | **exact, and 7-8x faster** |
 
 `fast`, `slow` and `metarefresh` are solved inline in JS, so a page needs no
-network round trip for the cheap algorithms.
+network round trip for the cheap algorithms, and `hashx` needs none either because
+it builds its kernel in the page.
 
 Verified end to end through the served kernels, and measured head to head against
 Anubis's own modules (one hash per call, warm):
@@ -236,17 +248,17 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
 
 ## What it does not do
 
-- **No TLS.** Terminate TLS in front of it (nginx, caddy, stunnel) and it will
-  happily sit behind it; `--target https://` would need a TLS client, which this
-  does not implement, so targets are `http://`.
-- **No policy**: one rule for everything, no user-agent matching, no weighting.
-- **No imprint page, no `make-challenge` API.** `pass-challenge`, `check`, `ping`
-  and the honeypot are implemented.
-- **No TLS listener, no HTTP/2, no keep-alive.** It reads one request, answers it
-  and closes — which is fine behind a real reverse proxy and keeps this readable.
-- **The in-page solver covers `fast`, `slow`, `sha256` and `metarefresh`.** For
-  `argon2id` and `hashx` the page says so and points at the CLI or the extension;
-  the server verifies all six either way.
+- **No HTTP/2 and no keep-alive.** It reads one request, answers it and closes,
+  which is fine behind a reverse proxy and keeps the listener readable. TLS itself
+  is there (`--tls-cert`/`--tls-key`, and `--target https://` with
+  `--target-insecure` for a self-signed backend).
+- **No imprint page and no `make-challenge` API.** `pass-challenge`, `check`,
+  `ping`, the state endpoint and the honeypot are implemented.
+- **Policy is a flat file, not a language.** `allow`/`deny`/`challenge` on user
+  agent, path, header or network, first match wins. No weights, no expressions,
+  no per-rule difficulty beyond what the line says.
+- **`--stateless` gives up replay protection.** By default an issued challenge is
+  consumed once; that table is what makes a second submission fail.
 
 ## Why C, and why it is easier
 

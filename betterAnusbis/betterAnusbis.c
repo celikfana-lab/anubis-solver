@@ -44,7 +44,7 @@
 
 /* ----------------------------------------------------------------- config */
 
-#define VERSION "1.10.0"
+#define VERSION "1.15.0"
 #define API_PREFIX "/.within.website/x/cmd/anubis/api/"
 #define DEFAULT_COOKIE_PREFIX "techaro.lol-anubis"
 #define MAX_HEADER 32768

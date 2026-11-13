@@ -133,8 +133,11 @@ the T4; each prints the SASS, the register/spill report and the timings.
 - **Nothing is wired into the library itself.** The optimised kernels live in
   `src/sass/` as measured references and are not compiled into
   `src/cuda/*.cu` — that would need a GPU to validate the library path end to end.
-- **The hashx/argon2id JS engine coverage is partial** (`anubis_fetch` handles
-  those via Python, because they are memory-hard or VM-based).
+- **The JS engine coverage is no longer partial, but argon2id still is.**
+  `tools/anubis_fetch.js` solves `fast`, `slow`, `sha256` and now `hashx` by
+  itself (`hashx` is compiled to wasm for the challenge, in JavaScript);
+  `argon2id` still goes through the Python driver or the C engine, because ~19 MiB
+  of memory-hard work is not something to reimplement in JS for a client.
 - **Some chip design choices were wrong and are documented as such** rather than
   quietly dropped — e.g. 484 engines at 2 contexts measured 1,592 B/cycle against
   a predicted ~9,800, and that anomaly is unexplained, so it appears in no table.

@@ -88,8 +88,15 @@ Three things fall out of that:
 2. **Auto-vectorisation made it slower.** `+simd128` is a clear pessimisation on
    this kernel — 2.20 µs against 1.74 µs scalar. Do not assume the vector path
    helps; measure it.
-3. **We are already at parity with what ships.** Within noise of the official
-   module, whose figure is a whole hash and ours is the mixing loop only.
+3. **The block is at parity; the module is now ahead.** The official figures
+   here are a whole hash and ours is the mixing loop only, so this table can
+   only ever show a tie for the block. The module is a different question and it
+   is settled elsewhere: `wasm/argon2id_pow.wasm` is 1.02-1.05x faster than
+   Anubis's module, because `argon2_fill_fast.c` keeps each round in registers
+   and because the build no longer passes `-ffreestanding`. Both are in
+   [../SPEED.md](../SPEED.md#argon2id-in-wasm-why-it-was-2x-slower-and-what-fixed-it).
+   The two tables above predate the v128 rewrite; its current row is in the next
+   table.
 
 ## So: raw WAT or C? — measured, with C
 

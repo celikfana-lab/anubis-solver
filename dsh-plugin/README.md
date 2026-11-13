@@ -29,12 +29,13 @@ model ──anubis_fetch(url)──► plugin ──► tools/anubis_fetch.js   
 `tools/anubis_fetch.js` is a pure-Node implementation: `node:crypto` for the proof
 of work, the built-in `fetch` for HTTP, and a cookie jar of its own. No Python, no
 native library, no child process, no npm packages. It handles `fast`, `slow`,
-`sha256` and `metarefresh`.
+`sha256`, `metarefresh` and `hashx` — the last one by compiling the challenge's
+HashX program to wasm with `wasm/hashx_jit.mjs`, which is 7x the interpreter.
 
-`tools/anubis_fetch.py` is the original driver, and it is still the way to reach
-`argon2id` and `hashx`, which are memory-hard or VM-based and are not implemented
-in JS. The plugin uses it only when the challenge names one of those and the file
-is present.
+`tools/anubis_fetch.py` is the original driver, and `argon2id` is the one algorithm
+still worth reaching for it (or for the C engine): ~19 MiB of memory-hard work per
+attempt is not something to reimplement in JS. The plugin uses it when the
+challenge names `argon2id` and the file is present.
 
 The JS proof of work was checked against the C engine rather than trusted: for the
 same challenge both find the same nonce and produce the same digest, and the C

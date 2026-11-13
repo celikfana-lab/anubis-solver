@@ -714,6 +714,25 @@ For scale, the C engine is ~571 cycles/hash: ~1.75 M hashes/s per core lane at
 which is the interesting result — hand-emitted WAT with no optimiser behind it,
 against a Rust-compiled interpreter.
 
+That was a build-time artifact for one challenge. The shipped version is the
+same idea at run time: `wasm/hashx_jit.mjs` derives the program and emits the
+module bytes in JavaScript, so `betterAnusbis`'s page and `tools/anubis_fetch.js`
+compile whatever challenge they are handed, with no toolchain and no server round
+trip. Same challenge, difficulty 20, 479,623 counted hashes, warm, one process:
+
+| path | hashes/s | per hash | size |
+|---|---:|---:|---:|
+| **compiled in the page** | **2.90-3.18 M** | 0.31-0.34 us | 10,380 B |
+| `hashx_pow.wasm` (our interpreter) | 0.43-0.46 M | 2.19-2.31 us | 15,237 B |
+| official Anubis baseline | 0.37-0.39 M | 2.54-2.73 us | 35,983 B |
+| official Anubis simd128 | 0.37-0.39 M | 2.54-2.72 us | 35,863 B |
+
+So the runtime compiler is 6.7-7.0x the interpreter and 7.9-8.1x the module
+Anubis ships, and all four agree on the nonce and the digest. The compile itself
+costs ~6 ms per challenge, which is why the browser does it unconditionally and
+why a threshold would be the refinement if very low difficulties ever mattered:
+below about difficulty 12 the build is a larger cost than the search.
+
 Correctness is not assumed: `wasm/verify.mjs` makes both engines solve the same
 difficulty-16 challenge, and they return the **same nonce (180078) and the same
 digest** — the official module is 7-9x slower on the same work. Three
@@ -729,7 +748,7 @@ compiled from the vendored C reference. Interleaved rounds, median of five:
 | WAT, scalar (generated) | 1.53 us | 1.70 us | 26,859 B |
 | clang C, -O3 | 1.53 us | 1.76 us | 3,683 B |
 | rustc, scalar | 1.55 us | 1.77 us | 3,742 B |
-| WAT, v128 hand-written (rewritten) | 1.21 us | 1.53 us | 39,887 B |
+| WAT, v128 hand-written (rewritten, separate run) | 1.21 us | 1.53 us | 39,887 B |
 | rustc, +simd128 | 1.97 us | 2.21 us | 5,784 B |
 | clang C, -O3 -msimd128 | 2.02 us | 2.32 us | 6,173 B |
 | official Anubis baseline | - | 1.81-1.97 us | 35,813 B |
@@ -739,8 +758,10 @@ Three conclusions, all measured rather than argued:
 - **write C**: within 4% of hand-written WAT (inside the noise) and 7x smaller.
 - **`-msimd128` hurts**, in clang and in rustc. Their auto-vectoriser loses to
   plain scalar on this kernel.
-- **hand-written v128 loses too**: 1.53 us memory-bound against the scalar
-  module's 1.59, a tie. The round costs 1.31-1.49x the scalar round because the
+- **hand-written v128 loses too**: in its own interleaved run it is 1.53 us
+  memory-bound against the scalar module's 1.59, a tie, which is why it is
+  marked as a separate run above. The round costs 1.31-1.49x the scalar round
+  because the
   unsigned 32x32->64 multiply fBlaMka needs is not `vpmuludq` in wasm SIMD - it
   multiplies adjacent i32 lanes, so each operand needs a shuffle to gather the
   two low halves first, and V8 then lowers the extmul with two more. Four
@@ -751,7 +772,7 @@ The parallel lever is real and elsewhere: p=1 is fixed by the challenge, so
 threads go across nonces - 2.11x on 2 workers, 3.75x on 4.
 
 Hand-written WAT paid for HashX because a challenge-defined program must be
-interpreted or code-generated, and removing the interpreter was the whole 6x.
+interpreted or code-generated, and removing the interpreter was the whole 7x.
 Where there is no interpreter, use a compiler.
 
 ### Argon2id in wasm: why it was 2x slower, and what fixed it
@@ -769,7 +790,7 @@ number of calls (m=19456 KiB, t=2, p=1 is 38,912 block fills per hash):
 | **`argon2id_pow.wasm`** (now) | **64.6 - 74.8** | **1.66 - 1.92** | `argon2_fill_fast.c`, clang `-O3` |
 | Anubis `baseline/argon2id.wasm` | 67.8 - 76.0 | 1.74 - 1.95 | their scalar build |
 | Anubis `simd128/argon2id.wasm` | 69.9 - 78.8 | 1.80 - 2.02 | their shipped SIMD build |
-| `argon2id_pow.wasm` (previous) | 131.5 - 162.6 | 3.38 - 4.18 | what the last three releases shipped |
+| `argon2id_pow.wasm` (previous) | 131.5 - 162.6 | 3.38 - 4.18 | what v1.14.0 and v1.14.1 shipped |
 
 The ranges are two runs on the same machine at different times, not error bars on
 one measurement: this laptop drifts by 30% with load and governor. So the claim

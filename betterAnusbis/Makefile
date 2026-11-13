@@ -8,6 +8,10 @@ LIBDIR  ?= ..
 # our engine for verification, OpenSSL for the TLS listener and the TLS backend
 LDLIBS  ?= -L$(LIBDIR) -lanubis_solver -Wl,-rpath,$(abspath $(LIBDIR)) -lssl -lcrypto
 
+# the first rule in a makefile is its default goal, and the wasm copies below
+# must not become it
+.DEFAULT_GOAL := betterAnusbis
+
 # the browser kernels, copied from wasm/ where they are built and verified
 WASM    ?= ../wasm
 web/argon2id_pow.wasm: $(WASM)/argon2id_pow.wasm

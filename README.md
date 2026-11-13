@@ -51,9 +51,10 @@ assembly and optional GPU backends.
   falls back, so a broken driver cannot produce an invalid proof.
 - **Seven language bindings** over the same `.so`: Node, Go, C#, R, Java, Rust
   (hand-written FFI, no bindgen) and assembly on x86-64 and AArch64.
-- **WebAssembly kernels** with measured wins: SHA-256 four nonces wide at **2.1x**
-  Anubis's own module, HashX compiled to straight-line WAT at **6-8x**,
-  Argon2id at parity. All bit-exact against the C reference.
+- **WebAssembly kernels** that beat the modules Anubis ships: SHA-256 four nonces
+  wide at **2.1x**, HashX compiled from the challenge at **7-8x**, Argon2id at
+  **1.02-1.05x**. All bit-exact against the C reference and against Anubis's own
+  modules, which are asked to accept our answers.
 - **Two ways to put the wall up**: `betterAnusbis/`, an Anubis-compatible gate in
   one C file (all six algorithms, the honeypot included), and
   `firefox-extension/`, which lets the browser solve with the native library over
@@ -70,8 +71,9 @@ results that came out negative.
 | | | how |
 |---|---|---|
 | SHA-256 in wasm, 4 nonces wide | **1.8-2.1x** Anubis's own module (3.0-3.9 vs 1.7-1.9 M hashes/s) | `cd wasm && make && node bench-sha256.mjs` |
-| HashX compiled to WAT | **6-8x** Anubis's module (1.9-2.7 vs 0.30-0.35 M hashes/s) | `cd wasm && node bench.mjs` |
-| Argon2id fill core | parity with Anubis (~1.8 µs/block) | `cd wasm && node bench-a2i.mjs` |
+| HashX compiled from the challenge | **7-8x** Anubis's module (2.9-3.2 vs 0.37-0.44 M hashes/s) | `cd wasm && node verify-jit.mjs` |
+| Argon2id, whole hash | **1.02-1.05x** Anubis's module (65-75 vs 68-76 ms/hash) | `cd wasm && make verify-module` |
+| Argon2id fill core | parity with Anubis (~1.5-1.9 µs/block) | `cd wasm && node bench-a2i.mjs` |
 | Browser, native library | **10x** the in-page wasm at difficulty 20 | `python3 firefox-extension/test-native.py` |
 | Gate server footprint | **~21x less RAM** (2.1 vs 44-46 MB), ~1.9x less CPU per request | `python3 tools/bench-server-resources.py` |
 | Client memory | wasm kernel 0.13 MiB vs Anubis's 1.06 MiB | `node tools/bench-client-resources.mjs` |

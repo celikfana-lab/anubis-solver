@@ -2619,7 +2619,35 @@ static int parse_listen(const char *spec, struct sockaddr_in6 *out) {
     const char *colon = strrchr(spec, ':');
     if (!colon) return -1;
     out->sin6_port = htons((uint16_t)atoi(colon + 1));
-    return 0;
+
+    /* ":8080" keeps meaning every interface. "127.0.0.1:8080" has to mean that
+     * address: a gate that says it listens on the loopback should not be
+     * answering the whole network. */
+    size_t hostlen = (size_t)(colon - spec);
+    if (hostlen == 0) return 0;
+    while (hostlen >= 2 && spec[0] == '[' && spec[hostlen - 1] == ']') {
+        spec++;
+        hostlen -= 2;
+    }
+    char host[64];
+    if (hostlen >= sizeof host) return -1;
+    memcpy(host, spec, hostlen);
+    host[hostlen] = 0;
+
+    struct in6_addr v6;
+    struct in_addr v4;
+    if (inet_pton(AF_INET6, host, &v6) == 1) {
+        out->sin6_addr = v6;
+        return 0;
+    }
+    if (inet_pton(AF_INET, host, &v4) == 1) {
+        /* an IPv4 literal on an AF_INET6 socket is written as the mapped form */
+        static const unsigned char mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+        memcpy(out->sin6_addr.s6_addr, mapped, 12);
+        memcpy(out->sin6_addr.s6_addr + 12, &v4, 4);
+        return 0;
+    }
+    return -1;                  /* a bind address, not a hostname to resolve */
 }
 
 static void parse_target(const char *url) {
@@ -2649,7 +2677,8 @@ static void usage(FILE *out) {
         "\n"
         "usage: betterAnusbis --target http://127.0.0.1:3000 [options]\n"
         "\n"
-        "  --listen ADDR:PORT     where to listen (default :8080)\n"
+        "  --listen ADDR:PORT     where to listen; omit the address for every\n"
+        "                         interface (default :8080)\n"
         "  --target URL           the backend to protect (required)\n"
         "  --algorithm NAME       fast, slow, sha256, argon2id, hashx or metarefresh\n"
         "                         (default sha256)\n"

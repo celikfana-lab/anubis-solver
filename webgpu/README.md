@@ -187,13 +187,14 @@ committed challenge produces
 which is what `wasm/argon2id_pow.wasm` produces, and the page's self-check passes
 **4/4 on the Intel backend** as well as on SwiftShader.
 
-It is also **3.9x slower than the WebAssembly module**, and the reason is
+It is also **3.7x slower than the WebAssembly module** (278 ms against 76 ms in
+the quiet window), and the reason is
 structural rather than a bug:
 
 | engine | ms/hash | hashes/s | concurrency |
 |---|---:|---:|---:|
-| **WebGPU, Intel Iris Xe** | **277** | **3.6** | 6 |
-| WebAssembly, same browser | 71 | 14.1 | 1 |
+| **WebGPU, Intel Iris Xe** | **278** | **3.6** | 6 |
+| WebAssembly, same browser | 76 | 13.2 | 1 |
 | native C, one core | 13 | 75 | 1 |
 
 One Argon2id hash needs 19,456 KiB. WebGPU caps a storage binding at
@@ -239,7 +240,8 @@ It is also the first thing here that beats the wasm module by a wide margin:
 
 | window | GPU | wasm 4-wide | ratio |
 |---|---:|---:|---:|
-| quiet machine | **68.0 MH/s** (median of 73.1, 68.0, 68.6, 66.2, 66.8) | 2.03 MH/s | **33x** |
+| quiet machine | **86.7 MH/s** | 2.53 MH/s | **34x** |
+| quiet, earlier window | 68.0 MH/s (median of 73.1, 68.0, 68.6, 66.2, 66.8) | 2.03 MH/s | 33x |
 | moderate load | 23-39 MH/s | 0.79-1.15 MH/s | 29-39x |
 | desktop busy (load 10-11) | 3.5 MH/s | 0.93 MH/s | 3.7x |
 | SwiftShader (CPU backend) | 0.51 MH/s | 2.48 MH/s | 0.2x, i.e. slower |
@@ -249,8 +251,8 @@ CPU and needs the CPU to submit work, so a busy desktop hurts it far more than i
 hurts the wasm module. The ratio is the result; the absolute figure depends on
 whether you are using the machine.
 
-68 MH/s is about half the repository's native Vulkan/Level Zero SHA-256 on the same
-iGPU (137 MH/s), which is the right ballpark for a shader compiler with less
+86.7 MH/s is about two thirds of the repository's native Vulkan/Level Zero SHA-256
+on the same iGPU (137 MH/s), which is the right ballpark for a shader compiler with less
 freedom than a hand-written SPIR-V kernel, and 17-23x the wasm module using the
 repo's own 3.0-3.9 M/s figure.
 
@@ -285,7 +287,7 @@ difficulty 255 (nothing qualifies, so this is pure hashing):
 
 | engine | hashes/s | per hash | |
 |---|---:|---:|---|
-| WebGPU on Iris Xe | 11.5 M – 47.2 M | 85 – 22 ns | indicative only (wrong digests) |
+| WebGPU on Iris Xe | 41.6 M (11.5–47.2 M across loads) | 24 ns | indicative only (wrong digests) |
 | WebAssembly (this repo) | 2.6 – 3.2 M | 380 – 310 ns | verified |
 
 The spread on the GPU side is two runs; this laptop's clocks move a long way

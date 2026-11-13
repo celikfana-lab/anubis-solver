@@ -733,30 +733,61 @@ costs ~6 ms per challenge, which is why the browser does it unconditionally and
 why a threshold would be the refinement if very low difficulties ever mattered:
 below about difficulty 12 the build is a larger cost than the search.
 
-### WebGPU: HashX compiled to WGSL
+### WebGPU: three algorithms, three different verdicts
 
-The same trick again, one layer down: `tools/gen_hashx_wgsl.py` compiles the
-challenge's program to a WGSL compute shader and the browser runs it on the GPU,
-one invocation per nonce. WGSL has no 64-bit integers, so a `u64` is a
-`vec2<u32>` with the multiplies built from 16-bit limbs. Hits are counted with an
-`atomicAdd` inside the shader, so a dispatch costs one readback, not one per hash.
+All three Anubis algorithms are now compiled to WGSL and run from the browser's
+GPU (`webgpu/`). The point of putting them in one table is that "is WebGPU faster"
+has three different answers:
 
-**It is much faster, and the digests are wrong on the one GPU that can run it
-here.** Both statements are needed; the number alone would be a lie:
+| algorithm | WebGPU, Intel Iris Xe | WebAssembly, same browser | ratio | digests on the GPU | engine actually used |
+|---|---:|---:|---:|---|---|
+| **`sha256`** | **86.7 M hashes/s** | 2.53 M (4-wide) | **34x faster** | exact | **WebGPU** |
+| `hashx` | 41.6 M hashes/s | 2.78 M | 15x faster | **wrong** | WebAssembly |
+| `argon2id` | 3.6 hashes/s (278 ms/hash) | 13.2 (76 ms) | **0.27x, i.e. slower** | exact | WebGPU, against its own interest |
+
+Measured back to back in one window on 2026-11-13 (load average 1.4-1.8, so the
+desktop was idle), Chrome 145, Intel Iris Xe `gen-12lp` over Vulkan, each page
+comparing itself against `wasm/*.wasm` in the same process. One window matters: the
+same three figures move by 2-20x when the host is busy, and on this machine an iGPU
+degrades far more than the CPU does because it shares memory bandwidth and needs the
+CPU to submit work.
+
+Two rows need their caveat attached rather than a footnote:
+
+- **`hashx` is fastest-looking and unusable.** 41.6 M hashes/s against 2.78 M is a
+  15x win, on digests that are wrong. The page's self-check refuses it and falls
+  back to WebAssembly, so the number in the "GPU" column is the price of a
+  backend that cannot be trusted, not a result.
+- **`argon2id` works and loses.** 3.6 h/s against 13.2 is not a kernel bug: one
+  hash needs 19,456 KiB, WebGPU caps a storage binding at 128 MiB, and six
+  concurrent hashes cannot fill a GPU. The native Vulkan backend on the same
+  hardware, with 64 concurrent hashes and 1.24 GB, gets 326 h/s. The limit, not the
+  algorithm, is the story.
+
+The rest of this section is the detail per algorithm.
+
+#### HashX on WebGPU: the fastest wrong answer here
+
+`tools/gen_hashx_wgsl.py` compiles the challenge's program to a WGSL compute shader
+and the browser runs it on the GPU, one invocation per nonce. WGSL has no 64-bit
+integers, so a `u64` is a `vec2<u32>` with the multiplies built from 16-bit limbs.
+Hits are counted with an `atomicAdd` inside the shader, so a dispatch costs one
+readback, not one per hash.
 
 | engine | hashes/s | per hash | digests | |
 |---|---:|---:|---|---|
-| WebGPU, Intel Iris Xe (`gen-12lp`, Vulkan) | 11.5 M - 47.2 M | 85 - 22 ns | **wrong** | 4-15x the wasm, but unusable |
-| WebAssembly, this repo | 2.6 M - 3.2 M | 380 - 310 ns | exact | the reference |
+| WebGPU, Intel Iris Xe (`gen-12lp`, Vulkan) | 41.6 M | 24 ns | **wrong** | 15x the wasm, and unusable |
+| WebAssembly, this repo | 2.78 M | 360 ns | exact | the reference |
 | WebGPU on SwiftShader, Xeon 56c box | 0.89 M | 1.1 µs | **exact** | a CPU emulator; wasm does 5.99 M there |
 
 Same browser, same process, same program, 1,048,576 nonces per dispatch at
-difficulty 255. The GPU range is two runs, because this laptop's clocks move.
+difficulty 255. Earlier runs of the same kernel measured 11.5-47.2 M depending on
+load; the 41.6 M above is from the quiet window.
 
-So the answer to "would WebGPU be faster" is **about 4-15x on an integrated GPU** —
-but from this machine that is a measurement of the same instructions computing the
-wrong thing, so it does not go in the headline tables. What it establishes is that
-the idea is worth the work, not that it works.
+So the answer to "would WebGPU be faster for HashX" is **yes, by 15x on an
+integrated GPU** — but from this machine that is a measurement of the same
+instructions computing the wrong thing, so it does not go in the headline tables.
+What it establishes is that the idea is worth the work, not that it works.
 
 The wrong digest is identical across three different control-flow encodings
 (nested loops with `continue`, a dispatch loop, and a build with all branch
@@ -790,13 +821,13 @@ SwiftShader and every number measured is a CPU emulator's.
 `webgpu/argon2id.wgsl` does the same for Argon2id (m=19456 KiB, t=2, p=1,
 32-byte tag) and the digest is bit-exact against `wasm/argon2id_pow.wasm` - nonce 0
 of the committed challenge is `99d43e7d...` from both, and the self-check passes
-4/4 on the Intel backend as well as on SwiftShader. It is also **3.9x slower than
-the WebAssembly module**, for a structural reason:
+4/4 on the Intel backend as well as on SwiftShader. It is also **3.7x slower than
+the WebAssembly module** (0.27x), for a structural reason:
 
 | engine | ms/hash | hashes/s | concurrency |
 |---|---:|---:|---:|
-| **WebGPU, Intel Iris Xe** | **277** | **3.6** | 6 |
-| WebAssembly, same browser | 71 | 14.1 | 1 |
+| **WebGPU, Intel Iris Xe** | **278** | **3.6** | 6 |
+| WebAssembly, same browser | 76 | 13.2 | 1 |
 | native C, one core | 13 | 75 | 1 |
 
 One hash needs 19,456 KiB and WebGPU caps a storage binding at 128 MiB here, so at
@@ -822,7 +853,8 @@ here that beats the wasm module by a wide margin:
 
 | window | GPU | wasm 4-wide | ratio |
 |---|---:|---:|---:|
-| quiet machine | **68.0 MH/s** | 2.03 MH/s | **33x** |
+| quiet machine | **86.7 MH/s** | 2.53 MH/s | **34x** |
+| quiet, earlier window | 68.0 MH/s | 2.03 MH/s | 33x |
 | moderate load | 23-39 MH/s | 0.79-1.15 MH/s | 29-39x |
 | desktop busy (load 10-11) | 3.5 MH/s | 0.93 MH/s | 3.7x |
 | SwiftShader (CPU backend) | 0.51 MH/s | 2.48 MH/s | 0.2x |

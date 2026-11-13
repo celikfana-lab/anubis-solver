@@ -56,7 +56,30 @@ The digest is checked inside the shader: leading zero bits are counted, and hits
 are recorded through an `atomicAdd` into a small results buffer, so a dispatch
 costs one readback rather than one per hash.
 
-## The correctness story
+## Tested backends
+
+Three machines, four configurations, and the digests do not agree:
+
+| backend | digests | hashes/s | note |
+|---|---|---|---|
+| Intel Iris Xe, Vulkan (`gen-12lp`) | **wrong** | 11.5 M – 47.2 M | the fast one, and the broken one |
+| SwiftShader, this laptop | exact | — | CPU emulator |
+| SwiftShader, Xeon 56c / 64 GB box | **exact 8/8** | 0.89 M | CPU emulator; wasm there does 5.99 M |
+| AMD FirePro V3800 | exact | — | ran on SwiftShader: that card has no Vulkan to run on |
+
+The fourth row is worth explaining, because it is the one people ask about. The
+FirePro V3800 is a 2010 Terascale 2 part with 512 MB: Mesa drives it with the
+legacy `r600` Gallium driver for OpenGL, `radv` starts at GCN so it never sees
+Vulkan, and Mesa's OpenCL support skipped it too (`/etc/OpenCL/vendors` had no
+AMD ICD at all). Chrome therefore hands WebGPU to SwiftShader there. So the
+shader *works* on that machine and the GPU cannot be used by WebGPU at all — no
+Vulkan, no OpenCL, OpenGL only.
+
+Two independent software backends produce exact digests. That is the strongest
+argument that the WGSL is right and the Intel Vulkan compiler is the outlier, not
+the other way round.
+
+## The correctness story, on the failing backend
 
 | check | Intel gen-12lp | SwiftShader |
 |---|---|---|
@@ -118,9 +141,11 @@ worth fixing rather than shelving.
 
 - **No validated GPU number.** The number above is real work, but the program it
   computes does not match HashX on this backend.
-- **One GPU, one browser, one driver.** The failure is backend-specific; it may
-  well work on another vendor's Vulkan, on macOS via Metal, or on a newer Dawn.
-  That is the single most useful experiment to run next.
+- **One GPU, one browser, one driver.** The failure is backend-specific: two
+  software backends are exact, so it may well work on another vendor's Vulkan, on
+  macOS via Metal, or on a newer Dawn. That is still the most useful experiment
+  to run next — the FirePro V3800 turned out to be unable to run it at all
+  (no Vulkan), so it settled correctness and not speed.
 - **Not wired into anything.** No gate serves this; `betterAnusbis` and the
   extension still use wasm and native code.
 - **The 6 ms compile is per challenge**, same as the wasm JIT, so a threshold

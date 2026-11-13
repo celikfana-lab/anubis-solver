@@ -174,12 +174,21 @@ HBM3E     := rtl/mem/hbm3e_mem.v rtl/mem/hbm3_model.v
 HBM3E_BW  ?= 1228
 HBM3E_LAT ?= 350
 HBM3E_EFF ?= 100
-MP_NENG   ?= 236
-MP_KCTX   ?= 2
-MP_CYC    ?= 260
+# THE MAXIMUM THIS MEMORY CAN FEED. 9,824 B/cycle of HBM3e is 2.74 blocks/cycle
+# at 3,584 B per block, and with 3 contexts per engine a block costs the
+# datapath's own 133 cycles, so 2.74 x 133 = 365 engines saturate all eight
+# stacks and a 366th buys nothing. (At 2 contexts the latency floor is 175
+# cycles/block and the same link needs 484 engines for the same hashes/s.)
+# A full run of this default takes ~15 minutes of Icarus; drop MP_NENG to
+# 240 or so while iterating.
+MP_NENG   ?= 365
+MP_KCTX   ?= 3
+MP_CYC    ?= 133
 MP_NSTACK ?= 8
-MP_NPORT  ?= 1
-MP_NRESP  ?= 1
+# 3 lanes: 9,824 / 3,584 = 2.74 requests per cycle are needed, and one lane is
+# 3,584 B/cycle, so one lane would use 36% of the stacks.
+MP_NPORT  ?= 3
+MP_NRESP  ?= 3
 MP_TARGET ?= 10000
 MP_WARMUP ?= 500
 

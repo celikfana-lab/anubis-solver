@@ -34,7 +34,7 @@
 module argon2_mpipe #(
     parameter integer NENG      = 24,
     parameter integer KCTX      = 2,
-    parameter integer CYC_BLOCK = 260,
+    parameter integer CYC_BLOCK = 133,   // measured argon2_fill block cost
     parameter integer BPH       = 38912,   // blocks per hash, m=19456 t=2
     parameter integer SEG       = 19456,   // blocks in pass 0
     parameter integer IDW       = 6,
@@ -135,9 +135,11 @@ module argon2_mpipe #(
     end
 
     integer lanec;
+    reg [31:0] nblk;             // blocks completed on this edge (blocking temp)
     always @(posedge clk) begin
         if (!rst_n) begin
             blocks_done <= 32'd0;
+            nblk = 32'd0;
             cur <= {(NPORT*32){1'b0}};
             for (c = 0; c < NCTX; c = c + 1) begin
                 st[c] <= S_IDLE; blk[c] <= 32'd0; nxt[c] <= 32'd0; cyc[c] <= 16'd0;
@@ -158,6 +160,7 @@ module argon2_mpipe #(
                     if (mem_resp_valid[r] && (mem_resp_id[r*IDW +: IDW] == c))
                         got[c] <= 1'b1;
 
+            nblk = 32'd0;
             for (ce = 0; ce < NENG; ce = ce + 1) begin
                 lanec = ce % NPORT;
                 for (ck = 0; ck < KCTX; ck = ck + 1) begin
@@ -197,13 +200,17 @@ module argon2_mpipe #(
                             // nonblocking increments collapse into a single +1,
                             // so this counter under-reads above one block per
                             // cycle. Bytes are the trustworthy throughput number.
-                            blocks_done <= blocks_done + 32'd1;
+                            // several contexts can finish on one edge; a
+                            // nonblocking +1 collapses those into a single count,
+                            // so they are tallied in nblk and added once below.
+                            nblk = nblk + 32'd1;
                             st[c] <= S_REQ;
                         end
                         default: st[c] <= S_IDLE;
                     endcase
                 end
             end
+            blocks_done <= blocks_done + nblk;
         end
     end
 endmodule

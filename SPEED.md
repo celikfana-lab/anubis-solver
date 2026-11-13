@@ -491,7 +491,7 @@ uses 36% of the memory it paid for. Measured, with everything else wide open:
 | request lanes | offered | used | hashes/s @ 1 GHz |
 |---:|---:|---:|---:|
 | 1 | 3,584 B/cycle | 3,575 (36%) | 25,699 |
-| **3** | 10,752 B/cycle | **9,801 (99.8%)** | **70,282** |
+| **3** | 10,752 B/cycle | **9,801 (99.8%)** | **70,426** |
 
 Three lanes are enough because 9,824 / 3,584 = 2.74 requests per cycle fill the
 memory. Lanes are per-engine (`lane = engine % 3`), each with its own rotating
@@ -508,15 +508,38 @@ And contexts, not engines, are what hide the latency — `max(133, 350/K)`:
 | **3** | **133** (the datapath) | **365** |
 
 The last third of the engine count is bought with DRAM (19 MiB of extra hash in
-flight) rather than silicon, which is the cheapest trade in this document. The
-measured 365-engine point:
+flight) rather than silicon, which is the cheapest trade in this document.
 
-| engines | in flight | memory | hashes/s @ 1 GHz | cycles/engine/block |
+**365 engines is the most this memory can feed.** Measured sweep, eight HBM3e
+stacks, 3 request lanes, 1 GHz, 10,000-cycle window:
+
+| engines | contexts | cycles/engine/block | memory used | hashes/s @ 1 GHz |
 |---:|---:|---:|---:|---:|
-| 177 | 354 | 3,575 / 9,824 (36%) | 25,699 | port-bound |
-| 365 | 1,095 | 9,801 / 9,824 (99.8%) | **70,282** | 133 |
+| 177 | 2, one lane | 177.0 | 3,575 / 9,824 (36%) | 25,699 |
+| 240 | 3 | 135.6 | 6,378 / 9,824 (65%) | 45,500 |
+| **365** | **3** | **133.2** | **9,801 / 9,824 (99.8%)** | **70,426** |
+| 550 | 3 | 200.4 | 9,799 / 9,824 (99.8%) | 70,518 |
 
-That is 11.9× the single-HBM3 design and 40× the measured 2× T4 pair.
+Past 365 the extra engines have nothing to do: 550 of them — 50% more
+silicon — add **0.13%**. The engines are no longer the limit at that point; at
+133.2 cycles per block each engine is running at exactly the datapath's own
+cost, and the link is at 99.8%.
+
+Capacity is not a consideration at this scale: 365 engines x 3 contexts is
+1,095 hashes in flight, 20.8 GiB of a 128 GiB memory. All 6,894 hashes that
+would fit could be resident at once — the memory is bought for bandwidth, and
+bandwidth is what runs out.
+
+With a realistic DRAM derate the same design gives:
+
+| link efficiency | memory used | hashes/s @ 1 GHz |
+|---:|---:|---:|
+| 100% (ideal) | 9,801 B/cycle | **70,426** |
+| 75% (realistic) | 6,454 B/cycle | **46,582** |
+
+So the honest range for a 1 GHz, 365-engine, eight-HBM3e design is
+**46.6–70.4 k hashes/s** — 8–12× the single-HBM3 design and 26–40× the measured
+2x T4 pair.
 
 ### Against the GPUs
 
@@ -525,14 +548,14 @@ That is 11.9× the single-HBM3 design and 40× the measured 2× T4 pair.
 | 1 CPU thread (i7-1260P) | 73 | 8.8 M |
 | 2× Tesla T4 (measured) | 1,759 | 108.5 M |
 | 59 chip engines @ 1 GHz + HBM3 | 5,888 | 188 M (100 engines) |
-| 365 chip engines @ 1 GHz + 8× HBM3e | **70,282** | — |
+| 365 chip engines @ 1 GHz + 8× HBM3e | **46.6–70.4 k** | — |
 | RTX 4090 (estimate, bandwidth-bound) | ~7,000 | — |
 | H100 (estimate, bandwidth-bound) | ~20,000 | — |
 
 Argon2id: one HBM3 stack beats the 2× T4 pair by **3.4×** and roughly matches a
 4090 — it is a pure DRAM-bandwidth contest at that point, and 819 GB/s buys about
 what a 4090's 1,008 GB/s buys. Eight HBM3e stacks change the character of the
-argument: 70,282 hashes/s is 40× the T4 pair and 3.5× a (bandwidth-extrapolated)
+argument: 70,426 hashes/s is 40× the T4 pair and 3.5× a (bandwidth-extrapolated)
 H100, because 9.82 TB/s is more bandwidth than any single GPU has.
 HashX: 100 engines beat the T4 pair by 1.7×, which is the one place custom
 silicon genuinely wins, because the core has no memory to wait on.
@@ -545,7 +568,7 @@ silicon genuinely wins, because the core has no memory to wait on.
   to use its 9.82 TB/s. That is Argon2id working as designed.
 - **The eight-stack number depends on K=3.** At two contexts per engine the
   floor is 175 cycles/block and the same 9.82 TB/s needs 484 engines instead of
-  365, for the same 70,282 hashes/s. Nothing else in the design changes.
+  365, for the same 70,426 hashes/s. Nothing else in the design changes.
 - **Area, not throughput, is where a core is big.** `argon2_fill` synthesises
   to 186,594 generic cells against `sha256_core`'s 8,477 and `hashx_exec`'s
   58,654 — roughly 10× a CUDA core, because it holds a 128 × 64-bit block and

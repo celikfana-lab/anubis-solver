@@ -319,26 +319,35 @@ engines 59, contexts/engine 2 (118 in flight), HBM3 819 B/cycle, 350 cyc latency
   throughput: 5090 hashes/s at 1 GHz
 ```
 
-59 engines is where the link runs out (813 of 819 GB/s). 64 engines reach
-5,870 hashes/s and 96 reach 5,881 - no gain, 33 idle engines. At 75% link
-efficiency, which is what random 1 KiB blocks costing a row activate each
-actually deliver, the same 59 engines give 4,406 hashes/s.
+40 engines is where one HBM3 stack runs out: 809.5 of 819 GB/s, because
+819 B/cycle is 0.229 blocks/cycle at 3,584 B per block and two contexts floor a
+block at 350/2 = 175 cycles. 59 engines reach 819 GB/s and 5,888 hashes/s, and
+the rest idle. At 75% link efficiency - what random 1 KiB blocks costing a row
+activate each actually deliver - the same design gives 4,406 hashes/s.
 
-Two bugs this sweep caught in the model itself: the request arbiter advanced
-its ring pointer while idle and de-synchronised from demand (up to 38% loss at
-36 engines), and every context started at block 0 so the window only ever
-covered pass 0. Both are fixed; the curve is monotonic now.
+Two bugs this sweep caught in the model itself: the request arbiter advanced its
+ring pointer while idle and de-synchronised from demand (up to 38% loss at 36
+engines), and every context started at block 0 so the window only ever covered
+pass 0. Both are fixed; the curve is monotonic now.
 
-`tools/perf_model.py` predicts 2370 hashes/s for the same configuration, and
-says why the knobs behave as they do:
+A third finding matters more than either: a block costs `max(133, 350/K)` engine
+cycles, not 133. `make mpipe` at 24 engines measures 176.50 cycles per engine per
+block, because 350/2 = 175 is the floor at two contexts - the write-back halved
+the datapath and left this configuration latency-bound. Hiding latency is what
+K=3 is for, and it is why the eight-stack design needs 365 engines instead of
+484.
+
+`tools/perf_model.py` reproduces all of it, and says why the knobs behave as they
+do:
 
 | configuration @ 1 GHz | hashes/s |
 |---|---|
-| 24 engines, HBM3 (331 GB/s) | 2,074 |
-| 48 engines, HBM3 (662 GB/s) | 4,151 |
-| **59 engines, HBM3 (813 GB/s)** | **5,090** |
-| 64 engines, HBM3 (saturated) | 5,870 |
-| 59 engines, HBM3 at 75% efficiency | 4,406 |
+| 24 engines, HBM3, 2 contexts | 3,494 (measured, latency-bound) |
+| 40 engines, HBM3 (809.5 GB/s) | 5,813 (measured) |
+| **59 engines, HBM3 (819 GB/s)** | **5,888 (measured)** |
+| 1 HBM3 at 75% efficiency | 4,406 |
+| **365 engines, 8x HBM3e** | **70,426 (ideal) / 46,582 (75%)** |
+| 550 engines, 8x HBM3e | 70,518 (+0.13% for 50% more cores) |
 | 24 engines on LPDDR6 (86 GB/s) | 617, bandwidth-bound |
 
 For scale: the 2x Tesla T4 measured elsewhere in this repo do 1759 Argon2id
@@ -369,7 +378,7 @@ Two things are easy to get wrong and both were:
 * **The request port, not the DRAM, is the wall.** At most one request per cycle
   at Argon2's 3,584-byte average block is 3,584 B/cycle, so a single-port design
   uses 36% of the memory it paid for (measured: 3,575 B/cycle, 25,699 hashes/s,
-  flat from 177 engines upward). Three lanes reach 9,801 B/cycle and 70,282
+  flat from 177 engines upward). Three lanes reach 9,801 B/cycle and 70,426
   hashes/s. A lane is per engine (`engine % 3`) with its own rotating arbiter.
 * **`ready` must not depend on `valid`.** Gating the memory's ready on the
   requester's valid deadlocks any master that waits for ready first — it produced

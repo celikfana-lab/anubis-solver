@@ -28,15 +28,22 @@ Four limits are modelled:
             to use eight HBM3e stacks.
 
 Checked against cycle-accurate RTL, not assumed:
-  * tb/tb_mpipe.v, 24 engines x 2 contexts, one 819 B/cycle HBM3 link with
-    CYC_BLOCK=260: measured 260.00 cycles/engine/block = 2,372 hashes/s, i.e.
-    exactly the compute counter and zero memory stalls.
+  * tb/tb_mpipe.v, 24 engines x 2 contexts, one 819 B/cycle HBM3 link at the
+    default CYC_BLOCK=133: measured 176.50 cycles/engine/block = 3,494
+    hashes/s. The model says max(132.76, 350/2) = max(CPB, LAT/K) = 175, so the
+    engine is latency-bound here, not compute-bound - the extra 1.5 cycles are
+    the request handshake. With CYC_BLOCK=260 the same bench measured 260.00
+    exactly (2,372 hashes/s), i.e. compute-bound and zero memory stalls.
   * tb/tb_hbm3e_x8.v, eight HBM3e stacks: each of the eight links sustains
     1,228 B/cycle and the eight together 9,824 B/cycle (measured, exact, one
     request port per stack); through a single request port the same subsystem
     measures 4,096 B/cycle (4.096 TB/s), and argon2_mpipe's 3,072/4,096 B
     traffic plateaus at 3,584 B/cycle (3.584 TB/s, ~25.7 k hashes/s at 1 GHz).
-    Reaching the 9.82 TB/s link ceiling needs >= 3 request lanes.
+  * the same bench at NENG=365, KCTX=3, NPORT=3: 365 engines saturate all eight
+    stacks (2.74 blocks/cycle, 99.8% of 9,824 B/cycle) at 133 cycles per engine
+    per block, which is 70,426 hashes/s at 1 GHz. KCTX=2 needs 484 engines for
+    the same rate because the floor is LAT/2 = 175, and adding engines past the
+    saturation point buys nothing.
 
 Run:  python3 tools/perf_model.py
 """

@@ -25,6 +25,7 @@ const CASES = [
   [`${OFFICIAL}/simd128/sha256.wasm`, 'official simd128'],
   [`${OFFICIAL}/baseline/sha256.wasm`, 'official baseline'],
   [`${HERE}sha256_pow.wasm`, 'ours (scalar schedule)'],
+  [`${HERE}sha256_pow_batch.wasm`, 'ours (4 nonces wide)'],
 ];
 
 async function rate(path) {

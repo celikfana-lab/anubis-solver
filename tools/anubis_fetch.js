@@ -246,11 +246,20 @@ async function loadSha256() {
   try {
     const { readFileSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
-    const path = fileURLToPath(new URL('../wasm/sha256_pow.wasm', import.meta.url));
-    const { instance } = await WebAssembly.instantiate(readFileSync(path), {
-      anubis: { anubis_update_nonce: () => {} },
-    });
-    sha256Module = instance.exports;
+    // the 4-wide kernel hashes four nonces at once; the scalar one is the
+    // fallback, and createHash after that
+    const { fileURLToPath: toPath } = await import('node:url');
+    for (const name of ['sha256_pow_batch.wasm', 'sha256_pow.wasm']) {
+      try {
+        const path = toPath(new URL(`../wasm/${name}`, import.meta.url));
+        const { instance } = await WebAssembly.instantiate(readFileSync(path), {
+          anubis: { anubis_update_nonce: () => {} },
+        });
+        sha256Module = instance.exports;
+        break;
+      } catch { /* try the next one */ }
+    }
+    if (sha256Module === null) sha256Module = false;
   } catch {
     sha256Module = false;
   }

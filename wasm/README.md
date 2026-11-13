@@ -159,6 +159,52 @@ HashX case, where removing the interpreter was the whole 6×. For a fixed numeri
 kernel the compiler is at least as fast, 7× smaller, and maintainable — so use it,
 and spend the parallel budget on nonces.
 
+## Beating the official module: four nonces at a time
+
+The official module and my first kernel hash **one nonce per pass**. SHA-256's 64
+rounds are serial, so the only thing left to vectorise is the message schedule —
+which is exactly what `sha2`'s `wasm32_simd128` backend does, and why it was ~16 %
+ahead of a scalar kernel.
+
+But this is a **search**, and the candidates are independent. So don't vectorise
+the schedule: vectorise **across four nonces**. Every round becomes four hashes
+wide, the schedule comes along for free, and the winner is still the smallest
+nonce that satisfies the difficulty — the same answer a sequential scan gives.
+
+`wasm/sha256_pow_batch.c` does that, in `i32x4` lanes, with the padded block built
+once per challenge and only the four nonce bytes differing per lane.
+
+Fixed work, warm, difficulty 23, best of two (`node bench-sha256.mjs`):
+
+| module | rate | per hash | size |
+|---|---:|---:|---:|
+| **ours, 4 nonces wide** | **3936 kH/s** | **0.254 µs** | 38,643 B |
+| official `simd128` (schedule-vectorised) | 1854 kH/s | 0.539 µs | 18,428 B |
+| ours, scalar schedule | 1682 kH/s | 0.595 µs | 25,924 B |
+| official `baseline` | 1517 kH/s | 0.659 µs | 25,326 B |
+
+**2.13× the module Anubis ships**, from a 2.6× wider module. Not a compiler trick
+and not a micro-optimisation: it attacks the part neither of us could vectorise
+before, because we were both optimising a single hash instead of the search.
+
+### Why it is still the same answer
+
+Changing the batch width must not change *which* nonce wins. It cannot: the
+candidates are scanned in increasing order, four per batch, and the first hit in a
+batch is the smallest. `vbatch` checks this at three difficulties against a
+sequential scan and against `node:crypto`, and the fetcher's end-to-end test puts
+it through a real server:
+
+```
+  start          1 -> nonce          1  digest matches node
+  start       1234 -> nonce       1234  digest matches node
+  difficulty  8: batch nonce 49, sequential 49  identical
+  difficulty 12: batch nonce 350, sequential 350  identical
+  difficulty 16: batch nonce 79656, sequential 79656  identical
+```
+
+All five solvers — including this one — are accepted by the live Anubis server.
+
 ## The true test: a real Anubis server, four solvers
 
 `wasm/live-test.mjs` stands up against a running Anubis, solves each challenge

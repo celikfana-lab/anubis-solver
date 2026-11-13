@@ -1,0 +1,824 @@
+# Argon2id on sm_75: SASS for the shipped kernel, and an A/B of the block
+# copy path (16-byte vectors, no second read of prev^ref).
+KERNELS = r'''/*
+ * cuda_argon2.cu — CUDA Argon2id backend (Anubis "argon2id" challenges).
+ *
+ * One CUDA block per candidate nonce: the 1 KiB Argon2 block lives in shared
+ * memory and the 64 threads cooperate on the BlaMka permutation, while the
+ * 19 MiB memory matrix lives in global memory (one region per block). The
+ * BLAKE2b work (H0, H', final tag) runs on thread 0.
+ *
+ * Opt in with ANUBIS_GPU_ARGON2=1; the C core re-verifies every digest with
+ * the reference Argon2 implementation before accepting it.
+ */
+
+#include <cuda_runtime.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define A2_M 19456u
+#define A2_T 2u
+#define A2_LANES 128u          /* parallel hashes per launch per device */
+
+typedef struct {
+    uint32_t count;
+    uint32_t pad[3];
+    uint32_t nonces[8];
+    uint32_t hashes[8][8];
+} a2_results;
+
+__constant__ uint64_t c_iv[8] = {
+    0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL, 0x3c6ef372fe94f82bULL,
+    0xa54ff53a5f1d36f1ULL, 0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL,
+    0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL
+};
+
+__constant__ uint8_t c_sigma[12][16] = {
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
+    {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
+    {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
+    {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
+    {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
+    {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
+    {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
+    {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
+    {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3}
+};
+
+__constant__ uint8_t c_perm[8][4] = {
+    {0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15},
+    {0, 5, 10, 15}, {1, 6, 11, 12}, {2, 7, 8, 13}, {3, 4, 9, 14}
+};
+
+__device__ __forceinline__ uint64_t rotr64(uint64_t x, int n) {
+    return (x >> n) | (x << (64 - n));
+}
+
+__device__ __forceinline__ uint64_t ld64(const uint8_t *p) {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++) {
+        v |= (uint64_t)p[i] << (8 * i);
+    }
+    return v;
+}
+
+__device__ __forceinline__ void st64(uint8_t *p, uint64_t v) {
+    for (int i = 0; i < 8; i++) {
+        p[i] = (uint8_t)(v >> (8 * i));
+    }
+}
+
+__device__ __forceinline__ void b2g(uint64_t *a, uint64_t *b, uint64_t *c,
+                                    uint64_t *d, uint64_t x, uint64_t y) {
+    *a = *a + *b + x;
+    *d = rotr64(*d ^ *a, 32);
+    *c = *c + *d;
+    *b = rotr64(*b ^ *c, 24);
+    *a = *a + *b + y;
+    *d = rotr64(*d ^ *a, 16);
+    *c = *c + *d;
+    *b = rotr64(*b ^ *c, 63);
+}
+
+__device__ void b2_compress(uint64_t h[8], const uint64_t m[16], uint64_t t,
+                            int last) {
+    uint64_t v[16];
+    for (int i = 0; i < 8; i++) {
+        v[i] = h[i];
+    }
+    for (int i = 0; i < 8; i++) {
+        v[8 + i] = c_iv[i];
+    }
+    v[12] ^= t;
+    if (last) {
+        v[14] = ~v[14];
+    }
+    for (int r = 0; r < 12; r++) {
+        const uint8_t *s = c_sigma[r];
+        b2g(&v[0], &v[4], &v[8], &v[12], m[s[0]], m[s[1]]);
+        b2g(&v[1], &v[5], &v[9], &v[13], m[s[2]], m[s[3]]);
+        b2g(&v[2], &v[6], &v[10], &v[14], m[s[4]], m[s[5]]);
+        b2g(&v[3], &v[7], &v[11], &v[15], m[s[6]], m[s[7]]);
+        b2g(&v[0], &v[5], &v[10], &v[15], m[s[8]], m[s[9]]);
+        b2g(&v[1], &v[6], &v[11], &v[12], m[s[10]], m[s[11]]);
+        b2g(&v[2], &v[7], &v[8], &v[13], m[s[12]], m[s[13]]);
+        b2g(&v[3], &v[4], &v[9], &v[14], m[s[14]], m[s[15]]);
+    }
+    for (int i = 0; i < 8; i++) {
+        h[i] ^= v[i] ^ v[8 + i];
+    }
+}
+
+__device__ void b2_hash(const uint8_t *data, uint32_t len, uint32_t outlen,
+                        uint8_t out[64]) {
+    uint64_t h[8];
+    uint64_t m[16];
+    uint32_t off = 0;
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        h[i] = c_iv[i];
+    }
+    h[0] ^= 0x01010000ULL ^ outlen;
+
+    while (len - off > 128u) {
+        for (i = 0; i < 16; i++) {
+            m[i] = ld64(data + off + 8 * i);
+        }
+        off += 128u;
+        b2_compress(h, m, off, 0);
+    }
+    {
+        uint8_t blk[128];
+        uint32_t rem = len - off;
+        for (i = 0; i < 128; i++) {
+            blk[i] = (i < (int)rem) ? data[off + i] : 0;
+        }
+        for (i = 0; i < 16; i++) {
+            m[i] = ld64(blk + 8 * i);
+        }
+        b2_compress(h, m, len, 1);
+    }
+    for (i = 0; i < 8; i++) {
+        if ((uint32_t)(8 * i) >= outlen) {
+            break;
+        }
+        st64(out + 8 * i, h[i]);
+    }
+}
+
+__device__ __forceinline__ uint64_t blamka(uint64_t x, uint64_t y) {
+    return x + y + 2ULL * (x & 0xFFFFFFFFULL) * (y & 0xFFFFFFFFULL);
+}
+
+__device__ __forceinline__ void a2g(uint64_t *a, uint64_t *b, uint64_t *c,
+                                    uint64_t *d) {
+    *a = blamka(*a, *b);
+    *d = rotr64(*d ^ *a, 32);
+    *c = blamka(*c, *d);
+    *b = rotr64(*b ^ *c, 24);
+    *a = blamka(*a, *b);
+    *d = rotr64(*d ^ *a, 16);
+    *c = blamka(*c, *d);
+    *b = rotr64(*b ^ *c, 63);
+}
+
+
+__shared__ uint64_t sR[128];
+__shared__ uint64_t sP[128];      /* prev^ref, kept so it is not re-read */
+__shared__ uint8_t sbuf[4224];
+
+/* ===================== the shipped fill_block, verbatim ===================== */
+__device__ void fill_block_shipped(uint64_t *mem, uint32_t dst, uint32_t prev,
+                                   uint32_t ref, int with_xor, int tid) {
+    const uint32_t g = (uint32_t)tid >> 3;
+    const uint32_t gi = (uint32_t)tid & 7u;
+    const uint64_t *p = mem + (size_t)prev * 128u;
+    const uint64_t *r = mem + (size_t)ref * 128u;
+    uint64_t *d = mem + (size_t)dst * 128u;
+    const uint8_t off[16] = {0, 1, 16, 17, 32, 33, 48, 49,
+                             64, 65, 80, 81, 96, 97, 112, 113};
+
+    for (int i = tid; i < 128; i += 64) sR[i] = p[i] ^ r[i];
+    __syncthreads();
+    for (int half = 0; half < 2; half++) {
+        if (gi < 4) {
+            uint32_t idx = gi + (uint32_t)(half ? 4 : 0);
+            uint32_t base = g * 16u;
+            uint64_t a = sR[base + c_perm[idx][0]], b = sR[base + c_perm[idx][1]];
+            uint64_t c = sR[base + c_perm[idx][2]], dd = sR[base + c_perm[idx][3]];
+            a2g(&a, &b, &c, &dd);
+            sR[base + c_perm[idx][0]] = a; sR[base + c_perm[idx][1]] = b;
+            sR[base + c_perm[idx][2]] = c; sR[base + c_perm[idx][3]] = dd;
+        }
+        __syncthreads();
+    }
+    for (int half = 0; half < 2; half++) {
+        if (gi < 4) {
+            uint32_t idx = gi + (uint32_t)(half ? 4 : 0);
+            uint32_t base = 2u * g;
+            uint64_t a = sR[base + off[c_perm[idx][0]]], b = sR[base + off[c_perm[idx][1]]];
+            uint64_t c = sR[base + off[c_perm[idx][2]]], dd = sR[base + off[c_perm[idx][3]]];
+            a2g(&a, &b, &c, &dd);
+            sR[base + off[c_perm[idx][0]]] = a; sR[base + off[c_perm[idx][1]]] = b;
+            sR[base + off[c_perm[idx][2]]] = c; sR[base + off[c_perm[idx][3]]] = dd;
+        }
+        __syncthreads();
+    }
+    for (int i = tid; i < 128; i += 64) {
+        uint64_t v = sR[i] ^ p[i] ^ r[i];
+        if (with_xor) v ^= d[i];
+        d[i] = v;
+    }
+    __syncthreads();
+}
+
+/* ===================== the optimised block copy ============================
+ * The permutation is untouched - it is the algorithm, and it is already
+ * cooperative. Only the traffic around it changes:
+ *
+ *  1. 16-byte vectors instead of 8-byte scalars: 64 threads cover a 1 KiB block
+ *     in one iteration instead of two, and each warp request is 512 B instead
+ *     of 256 B.
+ *  2. prev^ref is saved in sP, so the final xor does not re-read prev and ref
+ *     from memory. The shipped form reads 2 KiB, then reads the same 2 KiB
+ *     again; on a random-access workload that second read is L2 traffic that
+ *     this removes outright.
+ */
+__device__ void fill_block_opt(uint64_t *mem, uint32_t dst, uint32_t prev,
+                               uint32_t ref, int with_xor, int tid) {
+    const uint32_t g = (uint32_t)tid >> 3;
+    const uint32_t gi = (uint32_t)tid & 7u;
+    const uint4 *pu = (const uint4 *)(mem + (size_t)prev * 128u);
+    const uint4 *ru = (const uint4 *)(mem + (size_t)ref * 128u);
+    uint4 *du = (uint4 *)(mem + (size_t)dst * 128u);
+    const uint8_t off[16] = {0, 1, 16, 17, 32, 33, 48, 49,
+                             64, 65, 80, 81, 96, 97, 112, 113};
+
+    uint4 a4 = pu[tid], b4 = ru[tid], x4;
+    x4.x = a4.x ^ b4.x; x4.y = a4.y ^ b4.y;
+    x4.z = a4.z ^ b4.z; x4.w = a4.w ^ b4.w;
+    ((uint4 *)sR)[tid] = x4;
+    ((uint4 *)sP)[tid] = x4;
+    __syncthreads();
+
+    for (int half = 0; half < 2; half++) {
+        if (gi < 4) {
+            uint32_t idx = gi + (uint32_t)(half ? 4 : 0);
+            uint32_t base = g * 16u;
+            uint64_t a = sR[base + c_perm[idx][0]], b = sR[base + c_perm[idx][1]];
+            uint64_t c = sR[base + c_perm[idx][2]], dd = sR[base + c_perm[idx][3]];
+            a2g(&a, &b, &c, &dd);
+            sR[base + c_perm[idx][0]] = a; sR[base + c_perm[idx][1]] = b;
+            sR[base + c_perm[idx][2]] = c; sR[base + c_perm[idx][3]] = dd;
+        }
+        __syncthreads();
+    }
+    for (int half = 0; half < 2; half++) {
+        if (gi < 4) {
+            uint32_t idx = gi + (uint32_t)(half ? 4 : 0);
+            uint32_t base = 2u * g;
+            uint64_t a = sR[base + off[c_perm[idx][0]]], b = sR[base + off[c_perm[idx][1]]];
+            uint64_t c = sR[base + off[c_perm[idx][2]]], dd = sR[base + off[c_perm[idx][3]]];
+            a2g(&a, &b, &c, &dd);
+            sR[base + off[c_perm[idx][0]]] = a; sR[base + off[c_perm[idx][1]]] = b;
+            sR[base + off[c_perm[idx][2]]] = c; sR[base + off[c_perm[idx][3]]] = dd;
+        }
+        __syncthreads();
+    }
+
+    uint4 o = ((const uint4 *)sR)[tid], k = ((const uint4 *)sP)[tid], v;
+    v.x = o.x ^ k.x; v.y = o.y ^ k.y; v.z = o.z ^ k.z; v.w = o.w ^ k.w;
+    if (with_xor) {
+        uint4 d4 = du[tid];
+        v.x ^= d4.x; v.y ^= d4.y; v.z ^= d4.z; v.w ^= d4.w;
+    }
+    du[tid] = v;
+    __syncthreads();
+}
+__device__ uint32_t index_alpha(uint32_t pass, uint32_t slice,
+                                uint32_t index, uint32_t pseudo,
+                                uint32_t seg, uint32_t mb) {
+    uint32_t ref_area;
+    uint64_t hi;
+    uint32_t rp;
+    uint32_t start;
+    if (pass == 0) {
+        ref_area = (slice == 0) ? (index - 1u) : (slice * seg + index - 1u);
+    } else {
+        ref_area = mb - seg + index - 1u;
+    }
+    hi = ((uint64_t)pseudo * (uint64_t)pseudo) >> 32;
+    rp = (uint32_t)(((uint64_t)ref_area * hi) >> 32);
+    rp = ref_area - 1u - rp;
+    start = (pass == 0) ? 0u : ((slice == 3u) ? 0u : (slice + 1u) * seg);
+    return (start + rp) % mb;
+}
+
+#define fill_block fill_block_shipped
+#define argon2id_kernel argon2id_kernel_shipped
+__global__ void argon2id_kernel(const uint8_t *challenge, uint32_t clen,
+                                uint32_t use_le, uint32_t difficulty,
+                                uint32_t base, uint32_t count,
+                                uint64_t *mem_all, a2_results *res) {
+    uint32_t idx = blockIdx.x;
+    int tid = (int)threadIdx.x;
+    uint32_t nonce;
+    uint64_t *mem;
+    uint32_t seg = A2_M / 4u;
+    uint64_t h0[8];
+
+    if (idx >= count) {
+        return;
+    }
+    nonce = base + idx;
+    mem = mem_all + (size_t)idx * (size_t)(A2_M + 3u) * 128u;
+
+    if (tid == 0) {
+        uint32_t pw[7];
+        uint32_t len = 0;
+        int i, j;
+        pw[0] = 1u;
+        pw[1] = 32u;
+        pw[2] = A2_M;
+        pw[3] = A2_T;
+        pw[4] = 0x13u;
+        pw[5] = 2u;
+        pw[6] = clen;
+        for (i = 0; i < 7; i++) {
+            for (j = 0; j < 4; j++) {
+                sbuf[len++] = (uint8_t)(pw[i] >> (8 * j));
+            }
+        }
+        for (i = 0; i < (int)clen; i++) {
+            sbuf[len++] = challenge[i];
+        }
+        for (i = 0; i < 4; i++) {
+            sbuf[len++] = 8;            /* LE32(len(salt)) */
+            sbuf[len++] = 0;
+            sbuf[len++] = 0;
+            sbuf[len++] = 0;
+            break;
+        }
+        for (i = 0; i < 8; i++) {
+            int sh = use_le ? (8 * i) : (8 * (7 - i));
+            sbuf[len++] = (uint8_t)((uint64_t)nonce >> sh);
+        }
+        for (i = 0; i < 8; i++) {
+            sbuf[len++] = 0;            /* LE32(len(secret)) + LE32(len(ad)) */
+        }
+        b2_hash(sbuf, len, 64, (uint8_t *)h0);
+
+        for (int b = 0; b < 2; b++) {
+            uint8_t in[76];
+            uint8_t V[64];
+            uint8_t out[64];
+            uint32_t o;
+            in[0] = 0x00;
+            in[1] = 0x04;
+            in[2] = 0x00;
+            in[3] = 0x00;
+            for (i = 0; i < 64; i++) {
+                in[4 + i] = ((uint8_t *)h0)[i];
+            }
+            for (i = 0; i < 4; i++) {
+                in[68 + i] = (uint8_t)((uint32_t)b >> (8 * i));
+                in[72 + i] = 0;
+            }
+            b2_hash(in, 76, 64, V);
+            o = (uint32_t)b * 128u;
+            for (i = 0; i < 4; i++) {
+                mem[o + (uint32_t)i] = ld64(V + 8 * i);
+            }
+            for (int it = 2; it <= 31; it++) {
+                b2_hash(V, 64, 64, out);
+                for (i = 0; i < 64; i++) {
+                    V[i] = out[i];
+                }
+                if (it < 31) {
+                    for (i = 0; i < 4; i++) {
+                        mem[o + (uint32_t)(4 * (it - 1) + i)] = ld64(V + 8 * i);
+                    }
+                } else {
+                    for (i = 0; i < 8; i++) {
+                        mem[o + (uint32_t)(4 * (it - 1) + i)] = ld64(V + 8 * i);
+                    }
+                }
+            }
+        }
+        for (i = 0; i < 256; i++) {
+            mem[(size_t)A2_M * 128u + (size_t)i] = 0;
+        }
+    }
+    __syncthreads();
+
+    for (uint32_t pass = 0; pass < A2_T; pass++) {
+        for (uint32_t slice = 0; slice < 4; slice++) {
+            int di = (pass == 0 && slice < 2);
+            uint32_t start = (pass == 0 && slice == 0) ? 2u : 0u;
+            if (di) {
+                if (tid == 0) {
+                    uint64_t *inp = mem + (size_t)(A2_M + 1u) * 128u;
+                    for (int i = 0; i < 256; i++) {
+                        inp[i] = 0;
+                    }
+                    inp[0] = pass;
+                    inp[1] = 0;            /* lane */
+                    inp[2] = slice;
+                    inp[3] = A2_M;
+                    inp[4] = A2_T;
+                    inp[5] = 2;
+                }
+                __syncthreads();
+                if (start == 2u) {
+                    if (tid == 0) {
+                        mem[(size_t)(A2_M + 1u) * 128u + 6u] += 1;
+                    }
+                    __syncthreads();
+                    fill_block(mem, A2_M + 2u, A2_M, A2_M + 1u, 0, tid);
+                    fill_block(mem, A2_M + 2u, A2_M, A2_M + 2u, 0, tid);
+                }
+            }
+            for (uint32_t i = start; i < seg; i++) {
+                uint32_t curr = slice * seg + i;
+                uint32_t prev = (curr == 0) ? (A2_M - 1u) : (curr - 1u);
+                uint32_t pseudo;
+                if (di) {
+                    if ((i & 127u) == 0u) {
+                        if (tid == 0) {
+                            mem[(size_t)(A2_M + 1u) * 128u + 6u] += 1;
+                        }
+                        __syncthreads();
+                        fill_block(mem, A2_M + 2u, A2_M, A2_M + 1u, 0, tid);
+                        fill_block(mem, A2_M + 2u, A2_M, A2_M + 2u, 0, tid);
+                    }
+                    pseudo = (uint32_t)mem[(size_t)(A2_M + 2u) * 128u +
+                                           (size_t)(i & 127u)];
+                } else {
+                    pseudo = (uint32_t)mem[(size_t)prev * 128u];
+                }
+                {
+                    uint32_t ref = index_alpha(pass, slice, i, pseudo, seg, A2_M);
+                    fill_block(mem, curr, prev, ref, (pass == 0) ? 0 : 1, tid);
+                }
+            }
+        }
+    }
+
+    if (tid == 0) {
+        uint8_t tag[32];
+        int ok = 1;
+        uint32_t i;
+        sbuf[0] = 32;
+        sbuf[1] = 0;
+        sbuf[2] = 0;
+        sbuf[3] = 0;
+        {
+            const uint8_t *lb = (const uint8_t *)(mem + (size_t)(A2_M - 1u) * 128u);
+            for (i = 0; i < 1024u; i++) {
+                sbuf[4 + i] = lb[i];
+            }
+        }
+        b2_hash(sbuf, 1028, 32, tag);
+        for (i = 0; i < difficulty; i++) {
+            if (((tag[i >> 3] >> (7u - (i & 7u))) & 1u) != 0) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            uint32_t slot = atomicAdd(&res->count, 1u);
+            if (slot < 8u) {
+                res->nonces[slot] = nonce;
+                for (i = 0; i < 8; i++) {
+                    res->hashes[slot][i] = ((uint32_t)tag[4 * i] << 24) |
+                                           ((uint32_t)tag[4 * i + 1] << 16) |
+                                           ((uint32_t)tag[4 * i + 2] << 8) |
+                                           (uint32_t)tag[4 * i + 3];
+                }
+            }
+        }
+    }
+}
+
+#undef fill_block
+#undef argon2id_kernel
+#define fill_block fill_block_opt
+#define argon2id_kernel argon2id_kernel_opt
+__global__ void argon2id_kernel(const uint8_t *challenge, uint32_t clen,
+                                uint32_t use_le, uint32_t difficulty,
+                                uint32_t base, uint32_t count,
+                                uint64_t *mem_all, a2_results *res) {
+    uint32_t idx = blockIdx.x;
+    int tid = (int)threadIdx.x;
+    uint32_t nonce;
+    uint64_t *mem;
+    uint32_t seg = A2_M / 4u;
+    uint64_t h0[8];
+
+    if (idx >= count) {
+        return;
+    }
+    nonce = base + idx;
+    mem = mem_all + (size_t)idx * (size_t)(A2_M + 3u) * 128u;
+
+    if (tid == 0) {
+        uint32_t pw[7];
+        uint32_t len = 0;
+        int i, j;
+        pw[0] = 1u;
+        pw[1] = 32u;
+        pw[2] = A2_M;
+        pw[3] = A2_T;
+        pw[4] = 0x13u;
+        pw[5] = 2u;
+        pw[6] = clen;
+        for (i = 0; i < 7; i++) {
+            for (j = 0; j < 4; j++) {
+                sbuf[len++] = (uint8_t)(pw[i] >> (8 * j));
+            }
+        }
+        for (i = 0; i < (int)clen; i++) {
+            sbuf[len++] = challenge[i];
+        }
+        for (i = 0; i < 4; i++) {
+            sbuf[len++] = 8;            /* LE32(len(salt)) */
+            sbuf[len++] = 0;
+            sbuf[len++] = 0;
+            sbuf[len++] = 0;
+            break;
+        }
+        for (i = 0; i < 8; i++) {
+            int sh = use_le ? (8 * i) : (8 * (7 - i));
+            sbuf[len++] = (uint8_t)((uint64_t)nonce >> sh);
+        }
+        for (i = 0; i < 8; i++) {
+            sbuf[len++] = 0;            /* LE32(len(secret)) + LE32(len(ad)) */
+        }
+        b2_hash(sbuf, len, 64, (uint8_t *)h0);
+
+        for (int b = 0; b < 2; b++) {
+            uint8_t in[76];
+            uint8_t V[64];
+            uint8_t out[64];
+            uint32_t o;
+            in[0] = 0x00;
+            in[1] = 0x04;
+            in[2] = 0x00;
+            in[3] = 0x00;
+            for (i = 0; i < 64; i++) {
+                in[4 + i] = ((uint8_t *)h0)[i];
+            }
+            for (i = 0; i < 4; i++) {
+                in[68 + i] = (uint8_t)((uint32_t)b >> (8 * i));
+                in[72 + i] = 0;
+            }
+            b2_hash(in, 76, 64, V);
+            o = (uint32_t)b * 128u;
+            for (i = 0; i < 4; i++) {
+                mem[o + (uint32_t)i] = ld64(V + 8 * i);
+            }
+            for (int it = 2; it <= 31; it++) {
+                b2_hash(V, 64, 64, out);
+                for (i = 0; i < 64; i++) {
+                    V[i] = out[i];
+                }
+                if (it < 31) {
+                    for (i = 0; i < 4; i++) {
+                        mem[o + (uint32_t)(4 * (it - 1) + i)] = ld64(V + 8 * i);
+                    }
+                } else {
+                    for (i = 0; i < 8; i++) {
+                        mem[o + (uint32_t)(4 * (it - 1) + i)] = ld64(V + 8 * i);
+                    }
+                }
+            }
+        }
+        for (i = 0; i < 256; i++) {
+            mem[(size_t)A2_M * 128u + (size_t)i] = 0;
+        }
+    }
+    __syncthreads();
+
+    for (uint32_t pass = 0; pass < A2_T; pass++) {
+        for (uint32_t slice = 0; slice < 4; slice++) {
+            int di = (pass == 0 && slice < 2);
+            uint32_t start = (pass == 0 && slice == 0) ? 2u : 0u;
+            if (di) {
+                if (tid == 0) {
+                    uint64_t *inp = mem + (size_t)(A2_M + 1u) * 128u;
+                    for (int i = 0; i < 256; i++) {
+                        inp[i] = 0;
+                    }
+                    inp[0] = pass;
+                    inp[1] = 0;            /* lane */
+                    inp[2] = slice;
+                    inp[3] = A2_M;
+                    inp[4] = A2_T;
+                    inp[5] = 2;
+                }
+                __syncthreads();
+                if (start == 2u) {
+                    if (tid == 0) {
+                        mem[(size_t)(A2_M + 1u) * 128u + 6u] += 1;
+                    }
+                    __syncthreads();
+                    fill_block(mem, A2_M + 2u, A2_M, A2_M + 1u, 0, tid);
+                    fill_block(mem, A2_M + 2u, A2_M, A2_M + 2u, 0, tid);
+                }
+            }
+            for (uint32_t i = start; i < seg; i++) {
+                uint32_t curr = slice * seg + i;
+                uint32_t prev = (curr == 0) ? (A2_M - 1u) : (curr - 1u);
+                uint32_t pseudo;
+                if (di) {
+                    if ((i & 127u) == 0u) {
+                        if (tid == 0) {
+                            mem[(size_t)(A2_M + 1u) * 128u + 6u] += 1;
+                        }
+                        __syncthreads();
+                        fill_block(mem, A2_M + 2u, A2_M, A2_M + 1u, 0, tid);
+                        fill_block(mem, A2_M + 2u, A2_M, A2_M + 2u, 0, tid);
+                    }
+                    pseudo = (uint32_t)mem[(size_t)(A2_M + 2u) * 128u +
+                                           (size_t)(i & 127u)];
+                } else {
+                    pseudo = (uint32_t)mem[(size_t)prev * 128u];
+                }
+                {
+                    uint32_t ref = index_alpha(pass, slice, i, pseudo, seg, A2_M);
+                    fill_block(mem, curr, prev, ref, (pass == 0) ? 0 : 1, tid);
+                }
+            }
+        }
+    }
+
+    if (tid == 0) {
+        uint8_t tag[32];
+        int ok = 1;
+        uint32_t i;
+        sbuf[0] = 32;
+        sbuf[1] = 0;
+        sbuf[2] = 0;
+        sbuf[3] = 0;
+        {
+            const uint8_t *lb = (const uint8_t *)(mem + (size_t)(A2_M - 1u) * 128u);
+            for (i = 0; i < 1024u; i++) {
+                sbuf[4 + i] = lb[i];
+            }
+        }
+        b2_hash(sbuf, 1028, 32, tag);
+        for (i = 0; i < difficulty; i++) {
+            if (((tag[i >> 3] >> (7u - (i & 7u))) & 1u) != 0) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            uint32_t slot = atomicAdd(&res->count, 1u);
+            if (slot < 8u) {
+                res->nonces[slot] = nonce;
+                for (i = 0; i < 8; i++) {
+                    res->hashes[slot][i] = ((uint32_t)tag[4 * i] << 24) |
+                                           ((uint32_t)tag[4 * i + 1] << 16) |
+                                           ((uint32_t)tag[4 * i + 2] << 8) |
+                                           (uint32_t)tag[4 * i + 3];
+                }
+            }
+        }
+    }
+}
+
+#undef fill_block
+#undef argon2id_kernel
+'''
+
+BENCH = r'''
+#include "kernels.cu"
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include <cuda_runtime.h>
+
+#define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { \
+    printf("CUDA error %s at %d: %s\n", #x, __LINE__, cudaGetErrorString(e_)); \
+    return 1; } } while (0)
+
+/* one hash per CUDA block, so the resident set is NB x ~19.9 MiB */
+#define NB 64
+#define THREADS 64
+
+static int verify(const a2_results *hr, const uint8_t *expect, const char *who) {
+    const uint32_t *got = (const uint32_t *)hr->hashes[0];
+    for (int i = 0; i < 8; i++) {
+        unsigned b = ((unsigned)((const uint8_t *)hr->hashes[0])[0]);
+        (void)b;
+        break;
+    }
+    /* the kernel stores the tag as 8 little-endian words read from bytes */
+    for (int w = 0; w < 32; w++) {
+        unsigned want = expect[w];
+        unsigned got_b = ((const uint8_t *)hr->hashes[0])[w];
+        if (got_b != want) {
+            printf("  %s byte %d: got %02x want %02x\n", who, w, got_b, want);
+            return 1;
+        }
+    }
+    (void)got;
+    return 0;
+}
+
+int main() {
+    cudaDeviceProp pr;
+    CK(cudaGetDeviceProperties(&pr, 0));
+    printf("device: %s  sm_%d%d  SMs=%d  mem %.1f GiB\n", pr.name, pr.major, pr.minor,
+           pr.multiProcessorCount, pr.totalGlobalMem / 1073741824.0);
+
+    uint8_t challenge[64];
+    for (int i = 0; i < 64; i++) challenge[i] = (uint8_t)(i * 7 + 1);
+    uint32_t clen = 32;
+
+    size_t per_hash = (size_t)(A2_M + 3u) * 128u;
+    uint64_t *dmem;
+    size_t bytes = per_hash * NB * sizeof(uint64_t);
+    printf("resident set: %d hashes x %.1f MiB = %.2f GiB\n", NB, per_hash * 8 / 1048576.0,
+           bytes / 1073741824.0);
+    CK(cudaMalloc(&dmem, bytes));
+    uint8_t *dchal; CK(cudaMalloc(&dchal, 64));
+    CK(cudaMemcpy(dchal, challenge, 64, cudaMemcpyHostToDevice));
+    a2_results *dres; CK(cudaMalloc(&dres, sizeof(a2_results)));
+
+    /* ---- correctness: the two variants must agree with each other ---- */
+    CK(cudaMemset(dres, 0, sizeof(a2_results)));
+    argon2id_kernel_shipped<<<1, THREADS>>>(dchal, clen, 1, 0, 0, 1, dmem, dres);
+    CK(cudaDeviceSynchronize());
+    a2_results h1; CK(cudaMemcpy(&h1, dres, sizeof h1, cudaMemcpyDeviceToHost));
+
+    CK(cudaMemset(dres, 0, sizeof(a2_results)));
+    argon2id_kernel_opt<<<1, THREADS>>>(dchal, clen, 1, 0, 0, 1, dmem, dres);
+    CK(cudaDeviceSynchronize());
+    a2_results h2; CK(cudaMemcpy(&h2, dres, sizeof h2, cudaMemcpyDeviceToHost));
+
+    int same = (memcmp(h1.hashes[0], h2.hashes[0], 32) == 0);
+    printf("shipped and opt agree on the tag: %s\n", same ? "yes" : "NO");
+    printf("tag: ");
+    for (int i = 0; i < 32; i++) printf("%02x", ((const uint8_t *)h1.hashes[0])[i]);
+    printf("\n");
+    if (!same) return 1;
+
+    /* ---- throughput ---- */
+    int reps = 8;
+    cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
+    argon2id_kernel_shipped<<<NB, THREADS>>>(dchal, clen, 1, 0, 0, NB, dmem, dres);
+    CK(cudaDeviceSynchronize());
+    cudaEventRecord(e0);
+    for (int r = 0; r < reps; r++)
+        argon2id_kernel_shipped<<<NB, THREADS>>>(dchal, clen, 1, 0, (uint32_t)r * NB, NB, dmem, dres);
+    cudaEventRecord(e1); CK(cudaDeviceSynchronize());
+    float ms1 = 0; cudaEventElapsedTime(&ms1, e0, e1);
+
+    argon2id_kernel_opt<<<NB, THREADS>>>(dchal, clen, 1, 0, 0, NB, dmem, dres);
+    CK(cudaDeviceSynchronize());
+    cudaEventRecord(e0);
+    for (int r = 0; r < reps; r++)
+        argon2id_kernel_opt<<<NB, THREADS>>>(dchal, clen, 1, 0, (uint32_t)r * NB, NB, dmem, dres);
+    cudaEventRecord(e1); CK(cudaDeviceSynchronize());
+    float ms2 = 0; cudaEventElapsedTime(&ms2, e0, e1);
+
+    double hs1 = (double)NB * reps / (ms1 * 1e-3);
+    double hs2 = (double)NB * reps / (ms2 * 1e-3);
+    printf("\n=== m=%u t=%u p=1, %d hashes x %d reps ===\n", A2_M, A2_T, NB, reps);
+    printf("shipped: %8.2f H/s   (%.1f ms)\n", hs1, ms1);
+    printf("opt    : %8.2f H/s   (%.1f ms)\n", hs2, ms2);
+    printf("speedup: %.2fx\n", hs2 / hs1);
+    printf("\n{\"device\": \"%s\", \"shipped_hps\": %.2f, \"opt_hps\": %.2f, "
+           "\"speedup\": %.2f, \"correct\": true}\n", pr.name, hs1, hs2, hs2 / hs1);
+    return 0;
+}
+'''
+
+
+import os, re, subprocess
+
+def sh(cmd, cwd=None):
+    r = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    return r.stdout + r.stderr
+
+os.chdir("/kaggle/working")
+os.makedirs("out", exist_ok=True)
+open("kernels.cu", "w").write(KERNELS)
+open("bench.cu", "w").write(BENCH)
+
+print("=== BUILD a2 v1 ===")
+print(sh("nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader"))
+print(sh("nvcc --version | tail -2"))
+
+print("=== compile sm_75: registers / local memory ===")
+print(sh("nvcc -arch=sm_75 -O3 -cubin -Xptxas -v -o out/a2.cubin kernels.cu 2>&1 | "
+         "grep -E 'Compiling|Used|stack'"))
+
+sass = sh("nvdisasm -c out/a2.cubin")
+open("out/nvdisasm_all.sass", "w").write(sass)
+parts = re.split(r"(?m)^\s*\.section\s+\.text\.", sass)
+for part in parts[1:]:
+    name = part.split(",")[0].strip()
+    body = ".section .text." + part
+    tag = "opt" if "opt" in name else "shipped"
+    fn = "out/nvidiaT4_argon2id_%s.sass" % tag
+    open(fn, "w").write("// sm_75 (Tesla T4) SASS for " + name + "\n" + body)
+    print("wrote", fn, len(body.splitlines()), "lines")
+    for pat in ("LDL", "STL", "LDG", "STG", "LDS", "STS"):
+        print("   %s: %d" % (pat, len(re.findall(r"\b%s" % pat, body))))
+
+print(sh("nvcc -arch=sm_75 -O3 -o out/bench bench.cu 2>&1 | tail -20"))
+print("=== run ===")
+r = sh("out/bench")
+print(r)
+open("out/bench.log", "w").write(r)

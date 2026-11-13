@@ -1,0 +1,53 @@
+{
+  "title": "Argon2id kernel compiled for sm_75 (Tesla T4): SASS and a block-copy A/B",
+  "date": "2026-11-13",
+  "how": "Kaggle notebook on a Tesla T4 (40 SMs, 14.6 GiB, CUDA 13.0.88), built and run by src/sass/kaggle_t4_argon2id.py. The device source is sliced straight out of src/cuda/cuda_argon2.cu, so the shipped variant really is the shipped code; only fill_block is swapped.",
+  "artifacts": {
+    "shipped_sass": "src/sass/nvidiaT4_argon2id.sass",
+    "optimised_sass": "src/sass/nvidiaT4_argon2id_opt.sass",
+    "source": "src/sass/argon2id_sm75_kernels.cu",
+    "job": "src/sass/kaggle_t4_argon2id.py"
+  },
+  "measured": {
+    "params": "m=19456 KiB, t=2, p=1 (the real Anubis parameters)",
+    "shape": "64 concurrent hashes (1.19 GiB resident) x 8 reps",
+    "shipped_hps": 714.98,
+    "optimised_hps": 960.22,
+    "speedup": 1.34,
+    "correctness": "both variants produce the identical 32-byte tag, checked before timing"
+  },
+  "compiler_report": {
+    "shipped": {
+      "registers": 255,
+      "stack_frame_bytes": 416,
+      "spilled_bytes": 6,
+      "smem": 5248,
+      "LDG": 1057,
+      "STG": 547,
+      "LDS": 347,
+      "STS": 1176
+    },
+    "optimised": {
+      "registers": 255,
+      "stack_frame_bytes": 416,
+      "spilled_bytes": 6,
+      "smem": 6272,
+      "LDG": 1045,
+      "STG": 546,
+      "LDS": 351,
+      "STS": 1181
+    },
+    "note": "255 registers is the T4 maximum: the kernel is at the register wall and already spills 6 bytes. The 416-byte stack frame is inherited from H0/H' and the 16-word schedules, not from this change."
+  },
+  "what_changed": [
+    "block copy moved from 8-byte scalars to 16-byte uint4: 64 threads cover a 1 KiB block in one iteration instead of two, and a warp request is 512 B instead of 256 B",
+    "prev^ref is saved in a second shared array (sP), so the final xor does not re-read prev and ref from memory. The shipped form reads 2 KiB, then re-reads the same 2 KiB; on a random-access workload that second read is pure L2 traffic, and it is now gone",
+    "the permutation is byte-identical in both variants - it is the algorithm, and it was already cooperative (one block per CUDA block, 64 threads, shared sR)"
+  ],
+  "what_was_not_changed_and_why": [
+    "only 32 of the 64 threads do G work in each half-phase (the gi < 4 guard), and the two halves are separated by a barrier because G4..G7 read words G0..G3 wrote. Fixing that means 32 threads holding 4 words each in registers with __shfl-based lanes - the classic warp-cooperative Argon2 kernel - which is a full rewrite of fill_block, not a copy-path change",
+    "the 255-register wall and 6 bytes of spill: H0/H' with 16-word schedules and the BLAKE2b compression dominate register pressure. Shrinking it would raise occupancy, which matters because this kernel is memory-latency bound"
+  ],
+  "where_the_time_goes": "38,912 blocks per hash x 3 KiB of random traffic is 139 MB per hash; at 715 H/s that is ~102 GB/s of random 1 KiB accesses on a 320 GB/s part, so the block copy is the right thing to attack first. The 1.34x says the copy was costing about a quarter of the run.",
+  "next_if_anyone_wants_it": "the warp-cooperative fill_block (32 threads, block in registers, __syncwarp instead of __syncthreads) is the remaining big lever; it is an algorithm-level rewrite of the same function that was just measured to matter"
+}

@@ -748,6 +748,44 @@ ILP is a measured negative in both variants, for opposite reasons: the
 interpreter variant spills the register file (0.82x at 2, 0.36x at 4), and the
 JIT is already issue-bound at 48 registers.
 
+### Tesla T4 (sm_75): Argon2id, and the block copy
+
+`src/sass/nvidiaT4_argon2id.sass` is the shipped `src/cuda/cuda_argon2.cu` kernel
+for `sm_75`. The device source is sliced straight out of the shipped file, so the
+baseline really is the baseline; only the block copy is swapped for `_opt`.
+
+| variant | what changed | H/s on one T4 | vs shipped |
+|---|---|---:|---:|
+| shipped | 8-byte scalar copies, `prev`/`ref` read twice | 714.98 | 1.00x |
+| **`_opt`** | 16-byte `uint4` copies, `prev^ref` kept in shared | **960.22** | **1.34x** |
+
+m=19456, t=2, p=1 (the real parameters), 64 concurrent hashes (1.19 GiB
+resident) x 8 reps. Both variants produce the **identical 32-byte tag**, checked
+before timing.
+
+The permutation is byte-identical in both — it is the algorithm, and it was
+already cooperative (one block per CUDA block, 64 threads, shared `sR`). Only
+the traffic around it changed:
+
+1. **16-byte vectors instead of 8-byte scalars.** 64 threads cover a 1 KiB block
+   in one iteration instead of two, and a warp request becomes 512 B instead of
+   256 B.
+2. **`prev^ref` is kept in a second shared array**, so the final xor does not
+   re-read `prev` and `ref`. The shipped form reads 2 KiB and then re-reads the
+   same 2 KiB; on a random-access workload that second read is L2 traffic, and it
+   is now gone.
+
+Where the time goes: 38,912 blocks per hash x 3 KiB of random traffic is 139 MB
+per hash, so at 715 H/s the T4 is moving ~102 GB/s of random 1 KiB accesses on a
+320 GB/s part. The copy was costing about a quarter of the run.
+
+Two things this did **not** fix, both visible in the ptxas report: the kernel is
+at the **255-register wall** and already spills 6 bytes, which caps occupancy on
+a memory-latency-bound kernel; and only 32 of the 64 threads do G work in each
+half-phase. The real remaining lever is the warp-cooperative `fill_block` — 32
+threads, the whole block in registers, `__syncwarp` instead of `__syncthreads` —
+which is a rewrite of that function rather than a copy-path change.
+
 ### Against the GPUs
 
 | machine | argon2id hashes/s | hashx hashes/s |

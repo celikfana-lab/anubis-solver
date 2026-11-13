@@ -133,6 +133,24 @@ instead of `allowed_extensions`, the manifest lives under
 is not supported (use a separate manifest without it). The host itself is
 unchanged — the framing protocol is identical.
 
+## Configuration
+
+| variable | effect |
+|---|---|
+| `ANUBIS_THREADS` | pin the worker count (`ANUBIS_THREADS=1` for a single-threaded number, or on a busy machine) |
+| `ANUBIS_LIB_DIR` | where `libanubis_solver.so` lives, if not the repository root |
+
+## Footprint
+
+The host is a Python process, so it costs more RAM than it needs to: **36.3 MB of
+RSS**, of which ~30 MB is CPython rather than the solver. CPU is 205 ns per
+SHA-256 hash on one thread (the native SHA-NI kernel), against 597 ns for Anubis's
+in-page module — see [`../SPEED.md`](../SPEED.md#what-uses-less-ram-and-what-uses-less-cpu).
+
+A native host written in C instead of Python would be a few megabytes; the protocol
+is thirty lines and the library is already there. That is the obvious next step for
+this directory and the one number here clearly left on the table.
+
 ## Security
 
 - The host runs with your privileges. Only the extension ID listed in

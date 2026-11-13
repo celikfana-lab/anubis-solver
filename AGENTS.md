@@ -28,6 +28,9 @@ python3 tools/bench_tiers.py
 python3 tools/bench_gpu.py
 python3 tools/bench_argon2_gpu.py  # ANUBIS_GPU_ARGON2=1 for the GPU
 python3 tools/bench_hashx_gpu.py   # ANUBIS_GPU_HASHX=1 for CUDA
+node tools/bench-endtoend.mjs      # the wall, 2 servers x 3 clients
+python3 tools/bench-server-resources.py   # RAM and CPU, from /proc
+node tools/bench-client-resources.mjs     # wasm vs native memory and CPU
 ```
 
 ## Layout
@@ -45,6 +48,10 @@ python3 tools/bench_hashx_gpu.py   # ANUBIS_GPU_HASHX=1 for CUDA
 | `anubis_solver.py` | Python library, requests client, CLI |
 | `docs/` | user and developer documentation |
 | `results/` | committed benchmark JSON |
+| `wasm/` | WebAssembly kernels (HashX in WAT, SHA-256 4-wide, Argon2id fill) + benchmarks |
+| `betterAnusbis/` | an Anubis-compatible PoW gate in one C file; links this library |
+| `firefox-extension/` | native messaging host so the browser uses `libanubis_solver.so` |
+| `beyond/`, `card/` | the hardware half: RTL, testbenches, QEMU PCI device + driver |
 
 ## Conventions
 

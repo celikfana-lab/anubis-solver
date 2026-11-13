@@ -138,6 +138,21 @@ normal solve still passes with it on.
 - **No `honeypot/network` policy rule** — there is no policy engine — so the flag is
   the difficulty bump above rather than a weight the rules interpret.
 
+## What it costs
+
+Measured from `/proc` while serving 300 challenge pages and 40 pass-challenge
+exchanges (`python3 tools/bench-server-resources.py` in the repository root):
+
+| | idle RSS | threads | CPU per page | CPU per verification |
+|---|---:|---:|---:|---:|
+| Anubis v1.28.3 (Go) | 45.7 MB | 17 | 900 µs | 2.75 ms |
+| **betterAnusbis** | **2.1 MB** | **1** | **500 µs** | **1.25 ms** |
+
+**22x less RAM and about half the CPU**, and neither grows under load: RSS after 300
+pages equals idle RSS and peak RSS never moved. The verification row is the engine
+difference — Anubis re-checks through its wasm module via wazero, this calls
+`libanubis_solver.so`.
+
 ## What it does not do
 
 - **No TLS.** Terminate TLS in front of it (nginx, caddy, stunnel) and it will

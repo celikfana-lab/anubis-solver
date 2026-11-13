@@ -205,6 +205,14 @@ it through a real server:
 
 All five solvers — including this one — are accepted by the live Anubis server.
 
+### What it costs to run
+
+The 4-wide kernel is not just faster, it is smaller: **0.13 MiB of linear memory**
+against **1.06 MiB** for the module Anubis ships, and 347 ns of CPU per hash against
+597 ns. `node tools/bench-client-resources.mjs` measures both from the module's own
+memory and the process's CPU time; the table is in
+[`../SPEED.md`](../SPEED.md#what-uses-less-ram-and-what-uses-less-cpu).
+
 ## The true test: a real Anubis server, four solvers
 
 `wasm/live-test.mjs` stands up against a running Anubis, solves each challenge

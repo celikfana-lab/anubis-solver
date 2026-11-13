@@ -49,6 +49,33 @@ assembly and optional GPU backends.
   shared library on its own.
 - **Every GPU hit is re-verified** with the CPU reference; a mismatch silently
   falls back, so a broken driver cannot produce an invalid proof.
+- **Seven language bindings** over the same `.so`: Node, Go, C#, R, Java, Rust
+  (hand-written FFI, no bindgen) and assembly on x86-64 and AArch64.
+- **WebAssembly kernels** with measured wins: SHA-256 four nonces wide at **2.1x**
+  Anubis's own module, HashX compiled to straight-line WAT at **6-8x**,
+  Argon2id at parity. All bit-exact against the C reference.
+- **Two ways to put the wall up**: `betterAnusbis/`, an Anubis-compatible gate in
+  one C file (all six algorithms, the honeypot included), and
+  `firefox-extension/`, which lets the browser solve with the native library over
+  native messaging — **10x** the in-page wasm at difficulty 20.
+- **`libanubis_solver.so` is 22x lighter than Anubis's server and half the CPU**
+  per request, measured from `/proc`.
+
+## Measured
+
+Every number below is measured on this machine and reproducible from the commands
+next to it; [`SPEED.md`](SPEED.md) has the full tables, the methodology and the
+results that came out negative.
+
+| | | how |
+|---|---|---|
+| SHA-256 in wasm, 4 nonces wide | **2.1x** Anubis's own module (3.9 vs 1.9 M hashes/s) | `cd wasm && make && node bench-sha256.mjs` |
+| HashX compiled to WAT | **6-8x** Anubis's module (2.7 vs 0.33 M hashes/s) | `cd wasm && node bench.mjs` |
+| Argon2id fill core | parity with Anubis (~1.8 µs/block) | `cd wasm && node bench-a2i.mjs` |
+| Browser, native library | **10x** the in-page wasm at difficulty 20 | `python3 firefox-extension/test-native.py` |
+| Gate server footprint | **22x less RAM**, ~2x less CPU per request | `python3 tools/bench-server-resources.py` |
+| Client memory | wasm kernel 0.13 MiB vs Anubis's 1.06 MiB | `node tools/bench-client-resources.mjs` |
+| The wall, end to end | six server x client combinations | `node tools/bench-endtoend.mjs` |
 
 ## Quick start
 
@@ -263,6 +290,9 @@ bindings/csharp/         C# bindings (P/Invoke, no NuGet)
 bindings/r/              R bindings (.Call shim)
 bindings/java/           Java bindings (JNI, no jars)
 bindings/rust/           Rust bindings (hand-written FFI, no deps)
+beyond/                  the hardware half: synthesizable RTL, 365-engine card,
+                         memory model, testbenches
+card/                    the same design as a PCIe card: QEMU device + Linux driver
 wasm/                   HashX compiled to WAT and the sha256 kernels, benchmarked
 betterAnusbis/          an Anubis-compatible PoW gate in one C file
 firefox-extension/      native messaging: the browser uses libanubis_solver.so

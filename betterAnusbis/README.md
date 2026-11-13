@@ -91,14 +91,61 @@ or per-user-agent rules, use Anubis — this is the "just put a wall here" tool.
 Difficulty 4 is a good default for a human-facing site (a few milliseconds of
 work); 12–16 is a wall worth having against a script.
 
+## The honeypot, ported from Anubis
+
+`internal/honeypot/naive` is one of Anubis's better ideas, so this does the same
+thing, with the same markup:
+
+1. Every challenge page carries a link inside `<script type="ignore">` — a browser
+   never renders it, a crawler that scrapes `href`s finds it:
+
+   ```html
+   <script type="ignore"><a href="/.within.website/x/cmd/anubis/api/honeypot/<id>/init">Don't click me</a></script>
+   ```
+
+2. Following it marks the network (IPv4 `/24`, IPv6 `/64`) as a crawler and starts
+   a **tarpit**: the server sleeps `min(hits², 1000)` ms before answering — Anubis's
+   exact curve — and the answer is a generated index page with 36 more trap links,
+   so a crawler that follows links keeps walking and keeps waiting.
+
+3. Hits are logged (`--honeypot-log FILE`) and, once a network passes 25 hits in the
+   one-hour window, its challenges get harder: **difficulty + 8 bits**. Anubis raises
+   a policy weight by 30 and lets its thresholds decide; with a single rule here,
+   +8 bits is the equivalent wall.
+
+Measured, from `./test-all-algorithms.sh`:
+
+```
+  trap link hidden in <script type="ignore"> PASS
+  tarpit ramps with hit count                PASS  (0.002225s -> 0.101272s)
+  maze page links further in                 PASS
+  trap hits are logged                       PASS  (10 hits logged)
+  flagged network gets a harder challenge    PASS  (4 -> 12)
+```
+
+`--no-honeypot` turns it off. Nothing about it is visible to a normal user, and a
+normal solve still passes with it on.
+
+### What differs from Anubis's
+
+- **Filler text is generated, not spintax.** Anubis fills its maze from
+  `spintext.txt` templates to read like real pages; this emits fixed-but-varied
+  index text. A crawler cannot tell the difference; a human reading over the
+  crawler's shoulder could.
+- **State is in memory**, a 4096-bucket table with a one-hour window, so it resets
+  with the process. Anubis stores it in its backends and can share it across
+  replicas.
+- **No `honeypot/network` policy rule** — there is no policy engine — so the flag is
+  the difficulty bump above rather than a weight the rules interpret.
+
 ## What it does not do
 
 - **No TLS.** Terminate TLS in front of it (nginx, caddy, stunnel) and it will
   happily sit behind it; `--target https://` would need a TLS client, which this
   does not implement, so targets are `http://`.
 - **No policy**: one rule for everything, no user-agent matching, no weighting.
-- **No honeypot, no imprint page, no `make-challenge` API.** `pass-challenge`,
-  `check` and `ping` are implemented.
+- **No imprint page, no `make-challenge` API.** `pass-challenge`, `check`, `ping`
+  and the honeypot are implemented.
 - **No TLS listener, no HTTP/2, no keep-alive.** It reads one request, answers it
   and closes — which is fine behind a real reverse proxy and keeps this readable.
 - **The in-page solver covers `fast`, `slow`, `sha256` and `metarefresh`.** For

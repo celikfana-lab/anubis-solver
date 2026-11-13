@@ -57,6 +57,58 @@ check metarefresh 1  node
 check argon2id    4  python
 check hashx       4  python
 
+# ---- honeypot -----------------------------------------------------------------
+echo
+echo "honeypot"
+pkill -x betterAnusbis 2>/dev/null; sleep 0.2
+rm -f /tmp/ba-hp-test.log
+setsid nohup ./betterAnusbis --listen ":$PORT" --target "http://127.0.0.1:$BACKEND_PORT" \
+    --algorithm sha256 --difficulty 4 --honeypot-log /tmp/ba-hp-test.log >/tmp/ba-hp.log 2>&1 &
+sleep 0.6
+page=$(curl -s -H "user-agent: crawler-probe" "http://127.0.0.1:$PORT/")
+trap=$(printf '%s' "$page" | grep -o 'honeypot/[a-f0-9]*/init' | head -1)
+if printf '%s' "$page" | grep -q '<script type="ignore">'; then
+  printf '  %-42s PASS\n' "trap link hidden in <script type=\"ignore\">"; PASS=$((PASS+1))
+else
+  printf '  %-42s FAIL\n' "trap link hidden in <script type=\"ignore\">"; FAIL=$((FAIL+1))
+fi
+
+if [ -n "$trap" ]; then
+  t1=$(curl -s -o /tmp/ba-maze1.html -w '%{time_total}' "http://127.0.0.1:$PORT/.within.website/x/cmd/anubis/api/$trap")
+  for _ in $(seq 1 8); do curl -s -o /dev/null "http://127.0.0.1:$PORT/.within.website/x/cmd/anubis/api/$trap"; done
+  t8=$(curl -s -o /tmp/ba-maze9.html -w '%{time_total}' "http://127.0.0.1:$PORT/.within.website/x/cmd/anubis/api/$trap")
+
+  # the tarpit sleeps count^2 ms, so hit 9 must be much slower than hit 1
+  if awk -v a="$t1" -v b="$t8" 'BEGIN{exit !(b > a*3)}'; then
+    printf '  %-42s PASS  (%ss -> %ss)\n' "tarpit ramps with hit count" "$t1" "$t8"; PASS=$((PASS+1))
+  else
+    printf '  %-42s FAIL  (%ss -> %ss)\n' "tarpit ramps with hit count" "$t1" "$t8"; FAIL=$((FAIL+1))
+  fi
+
+  if grep -q "Document index" /tmp/ba-maze9.html && [ "$(grep -o 'honeypot/[a-f0-9]*/' /tmp/ba-maze9.html | wc -l)" -gt 10 ]; then
+    printf '  %-42s PASS\n' "maze page links further in"; PASS=$((PASS+1))
+  else
+    printf '  %-42s FAIL\n' "maze page links further in"; FAIL=$((FAIL+1))
+  fi
+
+  if [ -s /tmp/ba-hp-test.log ]; then
+    printf '  %-42s PASS  (%s hits logged)\n' "trap hits are logged" "$(wc -l < /tmp/ba-hp-test.log)"; PASS=$((PASS+1))
+  else
+    printf '  %-42s FAIL\n' "trap hits are logged"; FAIL=$((FAIL+1))
+  fi
+
+  # past the threshold the network gets a harder challenge
+  for _ in $(seq 1 20); do curl -s -o /dev/null "http://127.0.0.1:$PORT/.within.website/x/cmd/anubis/api/$trap"; done
+  raised=$(curl -s -H "user-agent: crawler-probe" "http://127.0.0.1:$PORT/" | grep -o '"difficulty":[0-9]*' | head -1)
+  if [ "$raised" = '"difficulty":12' ]; then
+    printf '  %-42s PASS  (4 -> 12)\n' "flagged network gets a harder challenge"; PASS=$((PASS+1))
+  else
+    printf '  %-42s FAIL  (got %s)\n' "flagged network gets a harder challenge" "$raised"; FAIL=$((FAIL+1))
+  fi
+fi
+
+pkill -x betterAnusbis 2>/dev/null
+
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

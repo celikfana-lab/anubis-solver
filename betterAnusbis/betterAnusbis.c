@@ -62,6 +62,9 @@ typedef struct {
     int target_tls;
     char cookie_name[256];
     uint8_t secret[32];
+    int honeypot;                /* 1: render the trap link and run the tarpit */
+    const char *honeypot_log;    /* where to append trap hits, or NULL */
+    int flag_threshold;          /* trap hits in the window before the network is flagged */
 } config;
 
 static config cfg = {
@@ -71,6 +74,9 @@ static config cfg = {
     .difficulty = 4,
     .cookie_prefix = DEFAULT_COOKIE_PREFIX,
     .verbose = 0,
+    .honeypot = 1,               /* Anubis enables its honeypot by default too */
+    .honeypot_log = NULL,
+    .flag_threshold = 25,
 };
 
 static void logmsg(const char *fmt, ...) {
@@ -313,6 +319,180 @@ static int verify_answer(const char *algorithm, const char *random_data, unsigne
     }
     if (digest_out) snprintf(digest_out, digest_cap, "%s", rc == ANUBIS_OK ? out : "");
     return rc == ANUBIS_OK ? 1 : 0;
+}
+
+/* defined with the rest of the http helpers, used by the honeypot below */
+static void respond(int fd, int status, const char *reason, const char *content_type,
+                    const char *extra_headers, const char *body, size_t body_len);
+
+/* ------------------------------------------------------------ honeypot */
+
+/* Anubis's honeypot, as internal/honeypot/naive does it:
+ *
+ *   - every challenge page carries a link inside <script type="ignore">, which a
+ *     browser never renders and a crawler that parses HTML happily follows
+ *   - following it counts as a bot: the network (IPv4 /24, IPv6 /64) gets a hit,
+ *     the server sleeps min(count^2, 1000) ms before answering - a tarpit, so the
+ *     crawler spends its budget waiting - and the answer is a page of filler with
+ *     more links, so it keeps going
+ *   - hits are logged, and once a network has crossed the threshold its requests
+ *     get a harder challenge (Anubis raises a policy weight by 30; with no policy
+ *     engine here the analogue is difficulty +8 bits)
+ *
+ * The state is a fixed table with a one-hour window. No file, no daemon.
+ */
+#define HP_BUCKETS 4096
+#define HP_WINDOW 3600
+
+typedef struct {
+    uint64_t key;
+    int count;
+    time_t last;
+    int used;
+} hp_entry;
+
+static hp_entry hp_table[HP_BUCKETS];
+static pthread_mutex_t hp_lock = PTHREAD_MUTEX_INITIALIZER;
+static long long hp_hits_total;
+static long long hp_networks_flagged;
+
+/* IPv4 /24, IPv6 /64 as one 64-bit key (the IPv4 case leaves the top bits zero). */
+static uint64_t network_key(const char *ip) {
+    struct in_addr v4;
+    struct in6_addr v6;
+    if (strchr(ip, ':') == NULL) {
+        if (inet_pton(AF_INET, ip, &v4) != 1) return 0;
+        return (uint64_t)(ntohl(v4.s_addr) & 0xFFFFFF00u);
+    }
+    if (inet_pton(AF_INET6, ip, &v6) != 1) return 0;
+    uint64_t hi;
+    memcpy(&hi, &v6.s6_addr[0], 8);
+    return hi | (1ull << 63);           /* keep v6 keys out of the v4 range */
+}
+
+static void hp_record(const char *ip) {
+    if (!cfg.honeypot) return;
+    uint64_t key = network_key(ip);
+    if (!key) return;
+    time_t now = time(NULL);
+    pthread_mutex_lock(&hp_lock);
+    uint64_t slot = key % HP_BUCKETS;
+    for (int probe = 0; probe < 32; probe++) {
+        hp_entry *e = &hp_table[(slot + probe) % HP_BUCKETS];
+        if (e->used && e->key == key) {
+            if (now - e->last > HP_WINDOW) e->count = 0;
+            e->count++;
+            e->last = now;
+            hp_hits_total++;
+            pthread_mutex_unlock(&hp_lock);
+            goto report;
+        }
+        if (!e->used || now - e->last > HP_WINDOW) {
+            e->used = 1;
+            e->key = key;
+            e->count = 1;
+            e->last = now;
+            hp_hits_total++;
+            pthread_mutex_unlock(&hp_lock);
+            goto report;
+        }
+    }
+    pthread_mutex_unlock(&hp_lock);
+    return;
+
+report:
+    if (cfg.honeypot_log) {
+        FILE *f = fopen(cfg.honeypot_log, "a");
+        if (f) {
+            fprintf(f, "%ld %s %llu\n", (long)now, ip, (unsigned long long)key);
+            fclose(f);
+        }
+    }
+    if (cfg.verbose) logmsg("honeypot: hit from %s (network %llu)", ip, (unsigned long long)key);
+}
+
+/* Hits for this network inside the window, without counting a new one. */
+static int hp_count(const char *ip) {
+    if (!cfg.honeypot) return 0;
+    uint64_t key = network_key(ip);
+    if (!key) return 0;
+    time_t now = time(NULL);
+    int count = 0;
+    pthread_mutex_lock(&hp_lock);
+    uint64_t slot = key % HP_BUCKETS;
+    for (int probe = 0; probe < 32; probe++) {
+        hp_entry *e = &hp_table[(slot + probe) % HP_BUCKETS];
+        if (!e->used) break;
+        if (e->used && e->key == key) {
+            if (now - e->last <= HP_WINDOW) count = e->count;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&hp_lock);
+    if (count >= cfg.flag_threshold) {
+        pthread_mutex_lock(&hp_lock);
+        hp_networks_flagged++;
+        pthread_mutex_unlock(&hp_lock);
+    }
+    return count;
+}
+
+/* The tarpit: min(hits^2, 1000) ms, exactly Anubis's curve. */
+static void hp_tarpit(int count) {
+    long long ms = (long long)count * count;
+    if (ms > 1000) ms = 1000;
+    if (ms > 0) usleep((useconds_t)ms * 1000);
+}
+
+/* Filler for a maze page. Anubis fills it from spintax templates; plain
+ * generated text is enough to keep a crawler reading and costs nothing. */
+static const char *HP_FILLER[] = {
+    "The archive continues below. Each entry is cross-referenced with three others.",
+    "Index of documents. Links are stable and safe to follow.",
+    "This section was migrated in 2019 and kept for reference.",
+    "Related material may be found under the previous heading.",
+    "The appendix lists every revision with its editor and date.",
+    "Additional reading is collected at the end of each chapter.",
+    "Figures referenced in this chapter appear after the bibliography.",
+    "Corrections are noted inline where the record disagrees with the source.",
+};
+#define HP_FILLER_N (int)(sizeof HP_FILLER / sizeof HP_FILLER[0])
+
+static void honeypot_maze(int fd, const char *id, const char *stage, const char *ip, int count) {
+    size_t cap = 65536;
+    char *body = malloc(cap);
+    if (!body) { respond(fd, 500, "Internal Server Error", NULL, NULL, "oom", 3); return; }
+
+    size_t off = (size_t)snprintf(body, cap,
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"robots\" content=\"noindex,nofollow\">"
+        "<title>Document index</title><style>body{font:15px/1.7 Georgia,serif;max-width:52rem;"
+        "margin:3rem auto;padding:0 1rem;color:#222}a{color:#0645ad;text-decoration:none}"
+        "li{margin:.35rem 0}h2{font-size:1.05rem;margin:2rem 0 .5rem}</style></head><body>"
+        "<h1>Document index</h1>");
+
+    /* every page links further in, so a crawler that follows one follows all */
+    for (int section = 0; section < 6 && off + 2048 < cap; section++) {
+        off += (size_t)snprintf(body + off, cap - off, "<h2>Section %d</h2><ul>", section + 1);
+        for (int link = 0; link < 6 && off + 512 < cap; link++) {
+            uint8_t r[16];
+            char rid[33];
+            if (random_bytes(r, sizeof r) != 0) memset(r, 0, sizeof r);
+            hex_encode(r, sizeof r, rid);
+            off += (size_t)snprintf(body + off, cap - off,
+                "<li><a href=\"" API_PREFIX "honeypot/%s/%s\">%s</a></li>",
+                rid, stage ? stage : "maze", HP_FILLER[(section * 6 + link) % HP_FILLER_N]);
+        }
+        off += (size_t)snprintf(body + off, cap - off, "</ul>");
+    }
+    off += (size_t)snprintf(body + off, cap - off,
+        "<p><small>Entries: %d. This index is generated per request; nothing here is cached."
+        "</small></p></body></html>", count);
+
+    char extra[256];
+    snprintf(extra, sizeof extra, "X-Robots-Tag: noindex, nofollow\r\nX-Honeypot: %s\r\n", id);
+    respond(fd, 200, "OK", "text/html; charset=utf-8", extra, body, off);
+    free(body);
 }
 
 /* --------------------------------------------------------------- http io */
@@ -632,16 +812,16 @@ static const char *CHALLENGE_JS = R"JS(
 })();
 )JS";
 
-static void challenge_page(int fd, const char *id, const char *random_data, const char *metadata_json,
-                           const char *test_cookie) {
+static void challenge_page(int fd, const char *id, const char *random_data,
+                           const char *metadata_json, const char *test_cookie, int difficulty) {
     char payload[2048];
     snprintf(payload, sizeof payload,
              "{\"rules\":{\"algorithm\":\"%s\",\"difficulty\":%d},"
              "\"challenge\":{\"issuedAt\":\"%lld\",\"metadata\":%s,\"id\":\"%s\","
              "\"method\":\"%s\",\"randomData\":\"%s\",\"policyRuleHash\":\"rule-0\","
              "\"difficulty\":%d,\"spent\":false,\"extensions\":null}}",
-             cfg.algorithm, cfg.difficulty, (long long)time(NULL), metadata_json, id,
-             cfg.algorithm, random_data, cfg.difficulty);
+             cfg.algorithm, difficulty, (long long)time(NULL), metadata_json, id,
+             cfg.algorithm, random_data, difficulty);
 
     size_t cap = strlen(payload) + strlen(CHALLENGE_JS) + 4096;
     char *body = malloc(cap);
@@ -666,7 +846,21 @@ static void challenge_page(int fd, const char *id, const char *random_data, cons
              "u.searchParams.set(\"id\",\"%s\");u.searchParams.set(\"response\",\"\");u.searchParams.set(\"nonce\",\"0\");"
              "u.searchParams.set(\"redir\",location.pathname);document.getElementById(\"manual\").href=u.toString();})();</script>"
              "</body></html>",
-             cfg.algorithm, cfg.difficulty, API_PREFIX, id, payload, CHALLENGE_JS, API_PREFIX, id);
+             cfg.algorithm, difficulty, API_PREFIX, id, payload, CHALLENGE_JS, API_PREFIX, id);
+
+    /* the honeypot link: inside <script type="ignore">, so no browser renders it
+     * but a crawler that parses HTML for hrefs finds it. Same markup Anubis uses,
+     * including the wording. */
+    if (cfg.honeypot) {
+        uint8_t trapb[16];
+        char trap[33];
+        if (random_bytes(trapb, sizeof trapb) != 0) memset(trapb, 0, sizeof trapb);
+        hex_encode(trapb, sizeof trapb, trap);
+        size_t used = strlen(body);
+        snprintf(body + used, cap > used ? cap - used : 0,
+                 "<script type=\"ignore\"><a href=\"" API_PREFIX "honeypot/%s/init\">"
+                 "Don't click me</a></script>", trap);
+    }
 
     char extra[512];
     snprintf(extra, sizeof extra,
@@ -838,10 +1032,39 @@ static void handle_connection(int fd, const char *client_ip) {
                 }
             }
         }
+    } else if (!strncmp(req.path, API_PREFIX "honeypot/",
+                        strlen(API_PREFIX) + strlen("honeypot/"))) {
+        /* a request to a path only the trap link points at. Count it, make the
+         * crawler wait, and hand it a page full of more trap links. */
+        const char *rest = req.path + strlen(API_PREFIX) + strlen("honeypot/");
+        char idbuf[64] = "trap";
+        const char *slash = strchr(rest, '/');
+        if (slash) {
+            size_t n = (size_t)(slash - rest);
+            if (n >= sizeof idbuf) n = sizeof idbuf - 1;
+            memcpy(idbuf, rest, n);
+            idbuf[n] = 0;
+        }
+        hp_record(client_ip);
+        int count = hp_count(client_ip);
+        if (cfg.verbose) logmsg("honeypot: maze for %s (hit %d in the window)", client_ip, count);
+        hp_tarpit(count);
+        honeypot_maze(fd, idbuf, slash ? slash + 1 : "init", client_ip, count);
     } else if (authenticated) {
         proxy_request(fd, &req, client_ip);
     } else {
         /* issue a challenge */
+        int difficulty = cfg.difficulty;
+        /* A network the honeypot has caught gets a harder challenge. Anubis adds
+         * weight 30 to its policy rule and lets the thresholds decide; with one
+         * rule here, +8 bits is the equivalent wall. */
+        int trap_hits = hp_count(client_ip);
+        if (trap_hits >= cfg.flag_threshold) {
+            difficulty = cfg.difficulty + 8 > 64 ? 64 : cfg.difficulty + 8;
+            if (cfg.verbose)
+                logmsg("honeypot: %s has %d trap hits, difficulty raised %d -> %d",
+                       client_ip, trap_hits, cfg.difficulty, difficulty);
+        }
         uint8_t rd[32];
         char rd_hex[65];
         if (random_bytes(rd, sizeof rd) != 0) { respond(fd, 500, "Internal Server Error", NULL, NULL, "entropy", 7); }
@@ -855,7 +1078,7 @@ static void handle_connection(int fd, const char *client_ip) {
                      "{\"Referer\":\"\",\"User-Agent\":\"%.200s\",\"X-Real-IP\":\"%s\"}",
                      ua ? ua : "", client_ip);
 
-            challenge_page(fd, id, rd_hex, metadata, id);
+            challenge_page(fd, id, rd_hex, metadata, id, difficulty);
         }
     }
 
@@ -927,6 +1150,8 @@ static void usage(FILE *out) {
         "  --difficulty N         difficulty; bits for sha256/argon2id/hashx,\n"
         "                         nibbles for fast/slow (default 4)\n"
         "  --cookie-prefix NAME   cookie prefix (default " DEFAULT_COOKIE_PREFIX ")\n"
+        "  --no-honeypot          disable the trap link and the tarpit\n"
+        "  --honeypot-log FILE    append one line per trap hit\n"
         "  -v, --verbose          log every request\n"
         "  -h, --help             this text\n"
         "  -V, --version          version\n"
@@ -946,6 +1171,8 @@ int main(int argc, char **argv) {
         if (!strcmp(a, "--algorithm") && next) { cfg.algorithm = next; i++; continue; }
         if (!strcmp(a, "--difficulty") && next) { cfg.difficulty = atoi(next); i++; continue; }
         if (!strcmp(a, "--cookie-prefix") && next) { cfg.cookie_prefix = next; i++; continue; }
+        if (!strcmp(a, "--no-honeypot")) { cfg.honeypot = 0; continue; }
+        if (!strcmp(a, "--honeypot-log") && next) { cfg.honeypot_log = next; i++; continue; }
         fprintf(stderr, "betterAnusbis: unknown option %s (try --help)\n", a);
         return 2;
     }

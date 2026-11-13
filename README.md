@@ -97,6 +97,51 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 
 ## Layout
 
+### Configuration: `make config`
+
+Before building, ask the machine what it is:
+
+```
+$ make config
+anubis-solver build configuration
+==================================================================
+1. GPU architecture
+   detected : Tesla T4 (7.5 -> sm_75)
+   target   : sm_75 (T4 / RTX 20xx)
+   SASS     : measured reference exists - 7 file(s) for sm_75
+              the build still compiles CUDA C for sm_75; the SASS is what
+              that compilation was measured against (see SPEED.md)
+   nvcc     : /usr/local/cuda/bin/nvcc
+
+2. CPU architecture
+   detected : x86_64
+
+3. CPU features
+   AVX2       yes
+   AVX-512F   no
+   SHA-NI     yes
+   ...
+   best SHA-256 path: src/cpu/shani.s (SHA-NI, 1 way) + src/cpu/avx2.s
+==================================================================
+wrote config.mk
+```
+
+It writes `config.mk` (generated, per machine, git-ignored), which sets the
+`-arch=` passed to `nvcc` and records which SIMD path is the fastest available.
+On a machine with no NVIDIA GPU it reports that and the CUDA backend is skipped;
+on a GPU with no shipped SASS it still builds, from the `.cu` sources, and says
+so rather than implying the SASS exists.
+
+Overrides win over detection:
+
+```
+make config CUDA_ARCH=sm_86 CPU_SIMD=avx2
+make config CONFIG_ARGS=--ask      # show the answers, confirm before writing
+```
+
+`make` prints a one-line reminder if `config.mk` is missing, and builds with
+defaults so nothing breaks for anyone who skips it.
+
 ```
 include/anubis-solver.h  public C/C++ API
 anubis_solver.py         Python library (ctypes), requests client, CLI

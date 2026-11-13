@@ -1,9 +1,27 @@
 CC      ?= cc
+PY      ?= python3
 CFLAGS  ?= -O3 -fPIC -Wall -Wextra
 NATIVE  ?= -march=native
 LDFLAGS ?= -shared -pthread
 INC     := -Isrc -Isrc/core -Isrc/hashx -Isrc/cpu -Isrc/cuda \
            -Isrc/levelzero -Isrc/vulkan -Isrc/opencl -Ithird_party/argon2
+
+# ---- build configuration --------------------------------------------------
+# `make config` answers three questions and writes config.mk:
+#   which GPU architecture (a T4 is sm_75), which CPU architecture (x86_64 or
+#   aarch64), and what that CPU supports (AVX2 / AVX-512 / SHA-NI, or NEON).
+# config.mk is generated, per-machine and git-ignored; overrides on the command
+# line win, e.g. make config CUDA_ARCH=sm_86 CPU_SIMD=avx2
+CONFIG_ARGS ?=
+-include config.mk
+ifeq ($(wildcard config.mk),)
+$(info [anubis] no config.mk yet - run 'make config' to detect GPU arch, CPU arch and SIMD)
+endif
+NVCC_ARCH := $(if $(CUDA_ARCH),-arch=$(CUDA_ARCH),)
+
+.PHONY: config
+config:
+	$(PY) tools/configure.py $(CONFIG_ARGS)
 
 # Optional CUDA backend (NVIDIA). Built when nvcc is available; the library
 # then links libcudart and prefers CUDA over Vulkan at runtime.
@@ -17,6 +35,7 @@ CFLAGS   += -DANUBIS_HAVE_CUDA
 # nvcc is the linker here; it rejects bare -pthread, so pass it to the host
 # compiler explicitly.
 LDFLAGS  := $(filter-out -pthread,$(LDFLAGS)) -Xcompiler -pthread -lcudart
+NVCC_LINK_ARCH := $(NVCC_ARCH)
 LINK      = $(NVCC)
 endif
 endif
@@ -92,7 +111,7 @@ $(BUILD)/%.o: src/%.c | $(BUILD)
 
 $(BUILD)/%.o: src/%.cu | $(BUILD)
 	@mkdir -p $(dir $@)
-	$(NVCC) -O3 -Xcompiler -fPIC $(INC) -c $< -o $@
+	$(NVCC) -O3 $(NVCC_ARCH) -Xcompiler -fPIC $(INC) -c $< -o $@
 
 $(BUILD)/%.o: src/%.s | $(BUILD)
 	@mkdir -p $(dir $@)

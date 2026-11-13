@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8"><title>cmp</title>
+<script type="module">
+try {
+  const code = `
+  @group(0) @binding(0) var<uniform> p: vec4<u32>;
+  @group(0) @binding(1) var<storage, read_write> o: array<u32, 16>;
+  @compute @workgroup_size(1)
+  fn main() {
+    let result = p.x; let imm = p.y;
+    let masked = result & imm;
+    o[0] = result; o[1] = imm; o[2] = masked;
+    o[3] = select(0u, 1u, (result & imm) == 0u);
+    o[4] = select(0u, 1u, masked == 0u);
+    o[5] = select(0u, 1u, masked != 0u);
+    o[6] = select(0u, 1u, result < imm);
+    o[7] = select(0u, 1u, (result & imm) != 0u);
+  }`;
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const device = await adapter.requestDevice();
+  const module = device.createShaderModule({ code });
+  const errs = (await module.getCompilationInfo()).messages.filter((m) => m.type === 'error');
+  if (errs.length) { window.__c = { error: errs.map((m) => m.message).join('; ') }; throw 0; }
+  const pbuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const obuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+  const mbuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const pipe = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+  const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
+    { binding: 0, resource: { buffer: pbuf } }, { binding: 1, resource: { buffer: obuf } }] });
+  device.queue.writeBuffer(pbuf, 0, new Uint32Array([0x708d718d, 0x00280024, 0, 0]));
+  const e = device.createCommandEncoder(); const pass = e.beginComputePass();
+  pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(1); pass.end();
+  device.queue.submit([e.finish()]);
+  const e2 = device.createCommandEncoder(); e2.copyBufferToBuffer(obuf, 0, mbuf, 0, 64); device.queue.submit([e2.finish()]);
+  await mbuf.mapAsync(GPUMapMode.READ);
+  const u = Array.from(new Uint32Array(mbuf.getMappedRange().slice(0))); mbuf.unmap();
+  window.__c = { result: '0x' + u[0].toString(16), imm: '0x' + u[1].toString(16),
+    masked: '0x' + u[2].toString(16), eq: u[3], eq2: u[4], ne: u[5], lt: u[6], ne2: u[7],
+    expected: { masked: '0x80004', eq: 0, eq2: 0, ne: 1, lt: 0, ne2: 1 } };
+} catch (e) { window.__c = { error: String(e) }; }
+</script>

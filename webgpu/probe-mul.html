@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8"><title>mul</title>
+<script type="module">
+try {
+  const code = await (await fetch('./probe-mul.wgsl')).text();
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const device = await adapter.requestDevice();
+  const module = device.createShaderModule({ code });
+  const errs = (await module.getCompilationInfo()).messages.filter((m) => m.type === 'error');
+  if (errs.length) { window.__m = { error: errs.map((m) => 'line ' + m.lineNum + ': ' + m.message).join('; ') }; throw 0; }
+  const obuf = device.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+  const mbuf = device.createBuffer({ size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const pipe = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+  const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: obuf } }] });
+  const e = device.createCommandEncoder(); const pass = e.beginComputePass();
+  pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(1); pass.end();
+  device.queue.submit([e.finish()]);
+  const e2 = device.createCommandEncoder(); e2.copyBufferToBuffer(obuf, 0, mbuf, 0, 256); device.queue.submit([e2.finish()]);
+  await mbuf.mapAsync(GPUMapMode.READ);
+  const u = Array.from(new Uint32Array(mbuf.getMappedRange().slice(0))); mbuf.unmap();
+  window.__m = { values: u, adapter: adapter.info ? adapter.info.architecture : '?' };
+} catch (e) { window.__m = { error: String(e) }; }
+</script>

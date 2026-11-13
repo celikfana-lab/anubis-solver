@@ -1,0 +1,37 @@
+<!doctype html><meta charset="utf-8"><title>dump</title>
+<script type="module">
+const code = await (await fetch('./hashx.wgsl')).text();
+const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+const device = await adapter.requestDevice();
+const module = device.createShaderModule({ code });
+const info = await module.getCompilationInfo();
+const errs = info.messages.filter((m) => m.type === 'error');
+if (errs.length) { window.__dump = { error: errs.map((m) => `line ${m.lineNum}: ${m.message}`) }; throw new Error('compile'); }
+const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const resultsSize = 16 + 8 * 4 + 64 * 4;
+const resultsBuf = device.createBuffer({ size: resultsSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+const readBuf = device.createBuffer({ size: resultsSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+  { binding: 0, resource: { buffer: paramsBuf } }, { binding: 1, resource: { buffer: resultsBuf } }] });
+device.queue.writeBuffer(resultsBuf, 0, new Uint32Array(resultsSize / 4));
+device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([0, 0, 0, 1]));
+const enc = device.createCommandEncoder();
+const pass = enc.beginComputePass(); pass.setPipeline(pipeline); pass.setBindGroup(0, bind);
+pass.dispatchWorkgroups(1); pass.end(); device.queue.submit([enc.finish()]);
+const e2 = device.createCommandEncoder(); e2.copyBufferToBuffer(resultsBuf, 0, readBuf, 0, resultsSize); device.queue.submit([e2.finish()]);
+await readBuf.mapAsync(GPUMapMode.READ);
+const u32 = new Uint32Array(readBuf.getMappedRange().slice(0)); readBuf.unmap();
+const words = Array.from(u32.slice(12, 12 + 16));
+const result = u32[12 + 16] >>> 0;
+window.__dump = { nonce: u32[4], total: u32[0],
+  regs: words.map((w, i) => (i % 2 ? words[i - 1] | 0 : 0)).map((_, i) => i % 2 ? '' : '')
+           .filter(Boolean) };
+// assemble u64s as hex for comparison
+const hex = [];
+for (let k = 0; k < 8; k++) {
+  const lo = words[2 * k] >>> 0, hi = words[2 * k + 1] >>> 0;
+  hex.push((BigInt(hi) << 32n | BigInt(lo)).toString(16).padStart(16, '0'));
+}
+window.__dump = { nonce: u32[4], total: u32[0], result: '0x' + result.toString(16).padStart(8, '0'), regs: hex.join(' ') };
+</script>

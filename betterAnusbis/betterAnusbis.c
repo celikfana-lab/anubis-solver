@@ -37,6 +37,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
 #include "anubis-solver.h"
 
 /* ----------------------------------------------------------------- config */
@@ -65,6 +68,12 @@ typedef struct {
     int honeypot;                /* 1: render the trap link and run the tarpit */
     const char *honeypot_log;    /* where to append trap hits, or NULL */
     int flag_threshold;          /* trap hits in the window before the network is flagged */
+    const char *tls_cert;        /* PEM certificate chain, enables the HTTPS listener */
+    const char *tls_key;         /* PEM private key */
+    const char *policy_file;     /* optional policy, see policy_load() */
+    int stateful;                /* keep issued challenges so they cannot be replayed */
+    int target_insecure;         /* skip backend certificate verification */
+    const char *web_dir;         /* where the wasm kernels are served from */
 } config;
 
 static config cfg = {
@@ -77,6 +86,12 @@ static config cfg = {
     .honeypot = 1,               /* Anubis enables its honeypot by default too */
     .honeypot_log = NULL,
     .flag_threshold = 25,
+    .tls_cert = NULL,
+    .tls_key = NULL,
+    .policy_file = NULL,
+    .stateful = 1,               /* a spent challenge stays spent, like Anubis */
+    .target_insecure = 0,
+    .web_dir = NULL,
 };
 
 static void logmsg(const char *fmt, ...) {
@@ -321,9 +336,95 @@ static int verify_answer(const char *algorithm, const char *random_data, unsigne
     return rc == ANUBIS_OK ? 1 : 0;
 }
 
-/* defined with the rest of the http helpers, used by the honeypot below */
-static void respond(int fd, int status, const char *reason, const char *content_type,
+/* One connection: a socket, and an OpenSSL session when the listener is HTTPS. */
+typedef struct {
+    int fd;
+    void *ssl;                    /* SSL *, or NULL for plain HTTP */
+} conn;
+
+static SSL_CTX *server_ctx;       /* the listener's context, once TLS is on */
+
+static ssize_t conn_read(conn *c, void *buf, size_t n);
+static ssize_t conn_write(conn *c, const void *buf, size_t n);
+static ssize_t send_all(conn *c, const void *buf, size_t n);
+static void respond(conn *c, int status, const char *reason, const char *content_type,
                     const char *extra_headers, const char *body, size_t body_len);
+static void respond_redirect(conn *c, const char *location, const char *extra_headers);
+
+/* ------------------------------------------- issued challenges (state) */
+
+/* Anubis keeps a spent flag; the stateless id trick (hex(randomData).issued-at)
+ * cannot. With state on, an id is looked up, checked, and retired on use, which is
+ * what "state verification" means here. The table is fixed: 4096 entries, one per
+ * challenge, expiring with the cookie window. */
+#define CH_BUCKETS 4096
+typedef struct {
+    char id[80];
+    char rd[65];
+    int difficulty;
+    time_t issued;
+    int spent;
+    int used;
+} ch_entry;
+
+static ch_entry ch_table[CH_BUCKETS];
+static pthread_mutex_t ch_lock = PTHREAD_MUTEX_INITIALIZER;
+static long long ch_issued, ch_accepted, ch_replayed, ch_expired;
+
+static void ch_issue(const char *id, const char *rd, int difficulty) {
+    if (!cfg.stateful) return;
+    time_t now = time(NULL);
+    uint32_t h = 2166136261u;
+    for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    pthread_mutex_lock(&ch_lock);
+    for (int probe = 0; probe < 32; probe++) {
+        ch_entry *e = &ch_table[(h + (uint32_t)probe) % CH_BUCKETS];
+        if (!e->used || now - e->issued > COOKIE_TTL) {
+            snprintf(e->id, sizeof e->id, "%s", id);
+            snprintf(e->rd, sizeof e->rd, "%s", rd);
+            e->difficulty = difficulty;
+            e->issued = now;
+            e->spent = 0;
+            e->used = 1;
+            ch_issued++;
+            pthread_mutex_unlock(&ch_lock);
+            return;
+        }
+        if (!strcmp(e->id, id)) {          /* re-issued: refresh it */
+            snprintf(e->rd, sizeof e->rd, "%s", rd);
+            e->difficulty = difficulty;
+            e->issued = now;
+            e->spent = 0;
+            pthread_mutex_unlock(&ch_lock);
+            return;
+        }
+    }
+    pthread_mutex_unlock(&ch_lock);        /* table full: the stateless path covers us */
+}
+
+/* 1 accepted (and retired), 0 unknown, -1 expired, -2 already spent */
+static int ch_take(const char *id, char *rd_out, size_t rd_cap, int *difficulty_out) {
+    time_t now = time(NULL);
+    uint32_t h = 2166136261u;
+    for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    int rc = 0;
+    pthread_mutex_lock(&ch_lock);
+    for (int probe = 0; probe < 32; probe++) {
+        ch_entry *e = &ch_table[(h + (uint32_t)probe) % CH_BUCKETS];
+        if (!e->used) break;
+        if (strcmp(e->id, id) != 0) continue;
+        if (now - e->issued > COOKIE_TTL) { rc = -1; ch_expired++; break; }
+        if (e->spent) { rc = -2; ch_replayed++; break; }
+        e->spent = 1;
+        snprintf(rd_out, rd_cap, "%s", e->rd);
+        if (difficulty_out) *difficulty_out = e->difficulty;
+        ch_accepted++;
+        rc = 1;
+        break;
+    }
+    pthread_mutex_unlock(&ch_lock);
+    return rc;
+}
 
 /* ------------------------------------------------------------ honeypot */
 
@@ -458,10 +559,10 @@ static const char *HP_FILLER[] = {
 };
 #define HP_FILLER_N (int)(sizeof HP_FILLER / sizeof HP_FILLER[0])
 
-static void honeypot_maze(int fd, const char *id, const char *stage, const char *ip, int count) {
+static void honeypot_maze(conn *c, const char *id, const char *stage, const char *ip, int count) {
     size_t cap = 65536;
     char *body = malloc(cap);
-    if (!body) { respond(fd, 500, "Internal Server Error", NULL, NULL, "oom", 3); return; }
+    if (!body) { respond(c, 500, "Internal Server Error", NULL, NULL, "oom", 3); return; }
 
     size_t off = (size_t)snprintf(body, cap,
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -491,7 +592,7 @@ static void honeypot_maze(int fd, const char *id, const char *stage, const char 
 
     char extra[256];
     snprintf(extra, sizeof extra, "X-Robots-Tag: noindex, nofollow\r\nX-Honeypot: %s\r\n", id);
-    respond(fd, 200, "OK", "text/html; charset=utf-8", extra, body, off);
+    respond(c, 200, "OK", "text/html; charset=utf-8", extra, body, off);
     free(body);
 }
 
@@ -507,11 +608,29 @@ typedef struct {
     size_t body_len;
 } request;
 
-static ssize_t send_all(int fd, const void *buf, size_t n) {
+static ssize_t conn_read(conn *c, void *buf, size_t n) {
+    if (!c->ssl) return read(c->fd, buf, n);
+    int r = SSL_read((SSL *)c->ssl, buf, (int)n);
+    if (r <= 0) {
+        int err = SSL_get_error((SSL *)c->ssl, r);
+        if (err == SSL_ERROR_ZERO_RETURN) return 0;
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) return -1;
+        return r;
+    }
+    return r;
+}
+
+static ssize_t conn_write(conn *c, const void *buf, size_t n) {
+    if (!c->ssl) return write(c->fd, buf, n);
+    int r = SSL_write((SSL *)c->ssl, buf, (int)n);
+    return r <= 0 ? -1 : r;
+}
+
+static ssize_t send_all(conn *c, const void *buf, size_t n) {
     const char *p = buf;
     size_t sent = 0;
     while (sent < n) {
-        ssize_t w = write(fd, p + sent, n - sent);
+        ssize_t w = conn_write(c, p + sent, n - sent);
         if (w <= 0) {
             if (errno == EINTR) continue;
             return -1;
@@ -521,10 +640,10 @@ static ssize_t send_all(int fd, const void *buf, size_t n) {
     return (ssize_t)sent;
 }
 
-static int read_headers(int fd, char *buf, size_t cap) {
+static int read_headers(conn *c, char *buf, size_t cap) {
     size_t used = 0;
     while (used + 1 < cap) {
-        ssize_t r = read(fd, buf + used, cap - 1 - used);
+        ssize_t r = conn_read(c, buf + used, cap - 1 - used);
         if (r <= 0) return used > 0 ? (int)used : -1;
         used += (size_t)r;
         buf[used] = 0;
@@ -610,7 +729,7 @@ static const char *query_param(const char *query, const char *name, char *out, s
     return NULL;
 }
 
-static void respond(int fd, int status, const char *reason, const char *content_type,
+static void respond(conn *c, int status, const char *reason, const char *content_type,
                     const char *extra_headers, const char *body, size_t body_len) {
     char head[2048];
     int n = snprintf(head, sizeof head,
@@ -624,11 +743,11 @@ static void respond(int fd, int status, const char *reason, const char *content_
                      "\r\n",
                      status, reason, content_type ? content_type : "text/plain; charset=utf-8",
                      body_len, extra_headers ? extra_headers : "");
-    if (n > 0) send_all(fd, head, (size_t)n);
-    if (body && body_len) send_all(fd, body, body_len);
+    if (n > 0) send_all(c, head, (size_t)n);
+    if (body && body_len) send_all(c, body, body_len);
 }
 
-static void respond_redirect(int fd, const char *location, const char *extra_headers) {
+static void respond_redirect(conn *c, const char *location, const char *extra_headers) {
     char head[4096];
     int n = snprintf(head, sizeof head,
                      "HTTP/1.1 302 Found\r\n"
@@ -638,7 +757,7 @@ static void respond_redirect(int fd, const char *location, const char *extra_hea
                      "%s"
                      "\r\n",
                      location, extra_headers ? extra_headers : "");
-    if (n > 0) send_all(fd, head, (size_t)n);
+    if (n > 0) send_all(c, head, (size_t)n);
 }
 
 /* ------------------------------------------------------------ the proxy */
@@ -661,11 +780,55 @@ static int connect_target(void) {
     return fd;
 }
 
-static void proxy_request(int fd, const request *req, const char *client_ip) {
-    int up = connect_target();
+/* TLS to the backend, for --target https://. Verification is on by default;
+ * --target-insecure exists for self-signed internal backends and says so in the
+ * log, so nobody turns it on by accident. */
+static int target_connect(conn *up) {
+    int fd = connect_target();
+    if (fd < 0) return -1;
+    up->fd = fd;
+    up->ssl = NULL;
+    if (!cfg.target_tls) return fd;
+
+    static SSL_CTX *client_ctx;
+    if (!client_ctx) {
+        client_ctx = SSL_CTX_new(TLS_client_method());
+        if (!client_ctx) { close(fd); return -1; }
+        SSL_CTX_set_min_proto_version(client_ctx, TLS1_2_VERSION);
+        if (cfg.target_insecure) {
+            SSL_CTX_set_verify(client_ctx, SSL_VERIFY_NONE, NULL);
+        } else {
+            SSL_CTX_set_verify(client_ctx, SSL_VERIFY_PEER, NULL);
+            SSL_CTX_set_default_verify_paths(client_ctx);
+        }
+    }
+    SSL *ssl = SSL_new(client_ctx);
+    if (!ssl) { close(fd); return -1; }
+    SSL_set_fd(ssl, fd);
+    SSL_set_tlsext_host_name(ssl, cfg.target_host);
+    if (SSL_connect(ssl) != 1) {
+        logmsg("TLS to the target %s failed", cfg.target_host);
+        SSL_free(ssl);
+        close(fd);
+        return -1;
+    }
+    if (!cfg.target_insecure && SSL_get_verify_result(ssl) != X509_V_OK) {
+        logmsg("target certificate did not verify: %s",
+               X509_verify_cert_error_string(SSL_get_verify_result(ssl)));
+        SSL_free(ssl);
+        close(fd);
+        return -1;
+    }
+    up->ssl = ssl;
+    return fd;
+}
+
+static void proxy_request(conn *c, const request *req, const char *client_ip) {
+    conn up_c = {.fd = -1, .ssl = NULL};
+    int up = target_connect(&up_c);
     if (up < 0) {
         const char *msg = "betterAnusbis: cannot reach the target\n";
-        respond(fd, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
+        respond(c, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
         return;
     }
 
@@ -696,8 +859,8 @@ static void proxy_request(int fd, const request *req, const char *client_ip) {
     off += (size_t)snprintf(head + off, sizeof head - off,
                             "X-Real-IP: %s\r\nX-Forwarded-For: %s\r\nConnection: close\r\n\r\n",
                             client_ip, client_ip);
-    if (send_all(up, head, off) < 0) { close(up); return; }
-    if (req->body_len && send_all(up, req->body, req->body_len) < 0) { close(up); return; }
+    if (send_all(&up_c, head, off) < 0) { close(up); return; }
+    if (req->body_len && send_all(&up_c, req->body, req->body_len) < 0) { close(up); return; }
 
     /* read the whole reply, then hand it back (simple, and bounded) */
     size_t cap = 65536, used = 0;
@@ -711,12 +874,13 @@ static void proxy_request(int fd, const request *req, const char *client_ip) {
             if (!bigger) break;
             reply = bigger;
         }
-        ssize_t r = read(up, reply + used, cap - 1 - used);
+        ssize_t r = conn_read(&up_c, reply + used, cap - 1 - used);
         if (r <= 0) break;
         used += (size_t)r;
     }
+    if (up_c.ssl) { SSL_shutdown((SSL *)up_c.ssl); SSL_free((SSL *)up_c.ssl); }
     close(up);
-    if (used) send_all(fd, reply, used);
+    if (used) send_all(c, reply, used);
     free(reply);
 }
 
@@ -786,33 +950,57 @@ static const char *CHALLENGE_JS = R"JS(
     }, wait+50);
     return;
   }
-  if(algo!=="fast"&&algo!=="slow"&&algo!=="sha256"&&algo!=="wasm-sha256"){
+  // Our own kernels, served next to the page. Same ABI as the modules Anubis
+  // ships: data_ptr / set_data_length / anubis_work / result_hash_*.
+  const KERNELS={sha256:"sha256_pow_batch.wasm","wasm-sha256":"sha256_pow_batch.wasm",
+                 argon2id:"argon2id_pow.wasm",hashx:"hashx_pow.wasm"};
+  async function solveWithWasm(){
+    const name=KERNELS[algo];
+    if(!name) return null;
+    say("loading the "+algo+" kernel");
+    const bytes=await (await fetch("/.within.website/x/cmd/anubis/api/static/anubis/"+name)).arrayBuffer();
+    const {instance}=await WebAssembly.instantiate(bytes,{anubis:{anubis_update_nonce:()=>{}}});
+    const ex=instance.exports;
+    const raw=hex2bytes(ch.randomData);
+    new Uint8Array(ex.memory.buffer).set(raw,ex.data_ptr());
+    ex.set_data_length(raw.length);
+    const t0=performance.now();
+    const nonce=ex.anubis_work(diff,0,1)>>>0;
+    const ms=performance.now()-t0;
+    const digest=new Uint8Array(ex.memory.buffer,ex.result_hash_ptr(),ex.result_hash_size());
+    return {hash:tohex(digest),nonce,ms};
+  }
+
+  if(algo==="sha256"||algo==="wasm-sha256"||algo==="argon2id"||algo==="hashx"){
+    solveWithWasm().then(r=>{
+      if(r){ say("solved with nonce "+r.nonce+" in "+r.ms.toFixed(0)+" ms"); pass(r.hash,r.nonce,r.ms); }
+      else if(algo==="sha256"||algo==="wasm-sha256"){ solveInJs(); }
+      else { say(algo+" could not load its kernel, use the anubis_fetch CLI or the Firefox extension"); }
+    }).catch(e=>{
+      if(algo==="sha256"||algo==="wasm-sha256"){ solveInJs(); }
+      else { say(algo+" kernel failed to load: "+e); }
+    });
+    return;
+  }
+  if(algo!=="fast"&&algo!=="slow"){
     say(algo+" needs a native or WebAssembly solver - use the anubis_fetch CLI or the Firefox extension");
     return;
   }
-  const t0=performance.now();
-  if(algo==="fast"||algo==="slow"){
+  solveInJs();
+
+  function solveInJs(){
+    const t0=performance.now();
     const enc=new TextEncoder();
     for(let nonce=0;;nonce++){
       const d=sha256bytes(enc.encode(ch.randomData+nonce));
       if(lz(d)>=diff*4){ say("solved with nonce "+nonce); pass(tohex(d),nonce,performance.now()-t0); return; }
       if((nonce&8191)===0) say("trying nonce "+nonce);
     }
-  } else {
-    const base=hex2bytes(ch.randomData), le=base[base.length-1]>=128;
-    for(let nonce=0;;nonce++){
-      const msg=new Uint8Array(base.length+4); msg.set(base);
-      if(le){msg[base.length]=nonce&255;msg[base.length+1]=(nonce>>>8)&255;msg[base.length+2]=(nonce>>>16)&255;msg[base.length+3]=(nonce>>>24)&255;}
-      else  {msg[base.length]=(nonce>>>24)&255;msg[base.length+1]=(nonce>>>16)&255;msg[base.length+2]=(nonce>>>8)&255;msg[base.length+3]=nonce&255;}
-      const d=sha256bytes(msg);
-      if(lz(d)>=diff){ say("solved with nonce "+nonce); pass(tohex(d),nonce,performance.now()-t0); return; }
-      if((nonce&8191)===0) say("trying nonce "+nonce);
-    }
   }
 })();
 )JS";
 
-static void challenge_page(int fd, const char *id, const char *random_data,
+static void challenge_page(conn *c, const char *id, const char *random_data,
                            const char *metadata_json, const char *test_cookie, int difficulty) {
     char payload[2048];
     snprintf(payload, sizeof payload,
@@ -825,7 +1013,7 @@ static void challenge_page(int fd, const char *id, const char *random_data,
 
     size_t cap = strlen(payload) + strlen(CHALLENGE_JS) + 4096;
     char *body = malloc(cap);
-    if (!body) { respond(fd, 500, "Internal Server Error", NULL, NULL, "oom", 3); return; }
+    if (!body) { respond(c, 500, "Internal Server Error", NULL, NULL, "oom", 3); return; }
 
     snprintf(body, cap,
              "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -866,24 +1054,158 @@ static void challenge_page(int fd, const char *id, const char *random_data,
     snprintf(extra, sizeof extra,
              "Set-Cookie: %s-cookie-verification=%s; Path=/; SameSite=Lax\r\n",
              cfg.cookie_prefix, test_cookie ? test_cookie : id);
-    respond(fd, 200, "OK", "text/html; charset=utf-8", extra, body, strlen(body));
+    respond(c, 200, "OK", "text/html; charset=utf-8", extra, body, strlen(body));
     free(body);
+}
+
+/* -------------------------------------------------------------- policy */
+
+/* One rule per line, first match wins:
+ *
+ *   allow     ua contains Googlebot
+ *   allow     path prefix /health
+ *   allow     net 10.0.0.0/8
+ *   deny      ua contains AhrefsBot
+ *   challenge ua contains curl difficulty 12
+ *   default   challenge difficulty 12
+ *
+ * Matching is literal: "contains", "prefix" or "is", on the user agent, the path,
+ * a header, or an IPv4/IPv6 CIDR. No regular expressions - a policy language is
+ * the thing this project is avoiding.
+ */
+#define MAX_RULES 64
+typedef enum { RULE_ALLOW, RULE_DENY, RULE_CHALLENGE } rule_action;
+typedef enum { SEL_UA, SEL_PATH, SEL_HEADER, SEL_NET } rule_selector;
+
+typedef struct {
+    rule_action action;
+    rule_selector selector;
+    int match;                  /* 1 = contains, 2 = prefix, 3 = is */
+    char value[128];
+    char header[64];
+    int difficulty;             /* 0 = the global default */
+    int v4;                     /* for SEL_NET */
+    uint32_t net_v4, mask_v4;
+    uint8_t net_v6[16], mask_v6[16];
+} rule;
+
+static rule rules[MAX_RULES];
+static int rule_count;
+static int default_action = RULE_CHALLENGE;
+static int default_difficulty;
+
+static uint64_t network_key(const char *ip);
+
+static int rule_matches(const rule *r, const request *req, const char *client_ip) {
+    const char *subject = NULL;
+    if (r->selector == SEL_UA) subject = header_value(req, "User-Agent");
+    else if (r->selector == SEL_PATH) subject = req->path;
+    else if (r->selector == SEL_HEADER) subject = header_value(req, r->header);
+
+    if (r->selector == SEL_NET) {
+        uint64_t key = network_key(client_ip);
+        if (r->v4) return ((uint32_t)key & r->mask_v4) == r->net_v4;
+        return 0;               /* IPv6 CIDR matching is deliberately not claimed */
+    }
+    if (!subject) return 0;
+    if (r->match == 1) return strstr(subject, r->value) != NULL;
+    if (r->match == 2) return strncmp(subject, r->value, strlen(r->value)) == 0;
+    return strcmp(subject, r->value) == 0;
+}
+
+/* Returns the action to take, and sets *difficulty to the rule's own or the global. */
+static rule_action policy_decide(const request *req, const char *client_ip, int *difficulty) {
+    *difficulty = default_difficulty ? default_difficulty : cfg.difficulty;
+    for (int i = 0; i < rule_count; i++) {
+        if (!rule_matches(&rules[i], req, client_ip)) continue;
+        if (rules[i].difficulty > 0) *difficulty = rules[i].difficulty;
+        return rules[i].action;
+    }
+    return (rule_action)default_action;
+}
+
+static void policy_load(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) { logmsg("cannot read the policy %s, challenging everything", path); return; }
+    char line[512];
+    while (fgets(line, sizeof line, f)) {
+        char *hash = strchr(line, '#');
+        if (hash) *hash = 0;
+        char action[32] = "", sel[64] = "", how[32] = "", value[128] = "";
+        int difficulty = 0;
+        int n = sscanf(line, "%31s %63s %31s %127s", action, sel, how, value);
+        if (n < 2) continue;
+        if (!strcmp(action, "default")) {
+            default_action = (!strcmp(sel, "allow")) ? RULE_ALLOW
+                             : (!strcmp(sel, "deny")) ? RULE_DENY : RULE_CHALLENGE;
+            char *d = strstr(line, "difficulty");
+            if (d && sscanf(d, "difficulty %d", &difficulty) == 1) default_difficulty = difficulty;
+            continue;
+        }
+        if (rule_count >= MAX_RULES) { logmsg("policy: more than %d rules, ignoring the rest", MAX_RULES); break; }
+        rule r = {0};
+        if (!strcmp(action, "allow")) r.action = RULE_ALLOW;
+        else if (!strcmp(action, "deny")) r.action = RULE_DENY;
+        else if (!strcmp(action, "challenge")) r.action = RULE_CHALLENGE;
+        else continue;
+
+        if (!strcmp(sel, "ua")) r.selector = SEL_UA;
+        else if (!strcmp(sel, "path")) r.selector = SEL_PATH;
+        else if (!strcmp(sel, "net")) { r.selector = SEL_NET; }
+        else if (!strncmp(sel, "header:", 7)) {
+            r.selector = SEL_HEADER;
+            snprintf(r.header, sizeof r.header, "%s", sel + 7);
+        } else continue;
+
+        if (r.selector == SEL_NET) {
+            char netstr[128];
+            snprintf(netstr, sizeof netstr, "%s", how);
+            char *slash = strchr(netstr, '/');
+            struct in_addr a;
+            if (slash && inet_pton(AF_INET, netstr, &a) == 0) {
+                struct in_addr b;
+                *slash = 0;
+                if (inet_pton(AF_INET, netstr, &b) == 1) {
+                    int bits = atoi(slash + 1);
+                    if (bits < 0) bits = 0;
+                    if (bits > 32) bits = 32;
+                    r.v4 = 1;
+                    r.mask_v4 = bits == 0 ? 0 : 0xFFFFFFFFu << (32 - bits);
+                    r.net_v4 = ntohl(b.s_addr) & r.mask_v4;
+                    rules[rule_count++] = r;
+                }
+            }
+            continue;
+        }
+
+        if (!strcmp(how, "contains")) r.match = 1;
+        else if (!strcmp(how, "prefix")) r.match = 2;
+        else if (!strcmp(how, "is")) r.match = 3;
+        else continue;
+        snprintf(r.value, sizeof r.value, "%s", value);
+        char *d = strstr(line, "difficulty");
+        if (d && sscanf(d, "difficulty %d", &r.difficulty) == 1) { /* per-rule */ }
+        rules[rule_count++] = r;
+    }
+    fclose(f);
+    logmsg("policy: %d rule(s) from %s, default %s", rule_count, path,
+           default_action == RULE_ALLOW ? "allow" : default_action == RULE_DENY ? "deny" : "challenge");
 }
 
 /* ------------------------------------------------------------ the routes */
 
-static void handle_connection(int fd, const char *client_ip) {
+static void handle_connection(conn *c, const char *client_ip) {
     char *raw = malloc(MAX_HEADER + 1);
-    if (!raw) { close(fd); return; }
-    int n = read_headers(fd, raw, MAX_HEADER + 1);
-    if (n <= 0) { free(raw); close(fd); return; }
+    if (!raw) { close(c->fd); return; }
+    int n = read_headers(c, raw, MAX_HEADER + 1);
+    if (n <= 0) { free(raw); close(c->fd); return; }
     raw[n] = 0;
 
     request req;
     if (parse_request(raw, &req) != 0) {
-        respond(fd, 400, "Bad Request", NULL, NULL, "bad request\n", 12);
+        respond(c, 400, "Bad Request", NULL, NULL, "bad request\n", 12);
         free(raw);
-        close(fd);
+        close(c->fd);
         return;
     }
 
@@ -898,7 +1220,7 @@ static void handle_connection(int fd, const char *client_ip) {
             size_t got = already < content_length ? already : content_length;
             if (got) memcpy(req.body, hdr_end + 4, got);
             while (got < content_length) {
-                ssize_t r = read(fd, req.body + got, content_length - got);
+                ssize_t r = conn_read(c, req.body + got, content_length - got);
                 if (r <= 0) break;
                 got += (size_t)r;
             }
@@ -915,10 +1237,46 @@ static void handle_connection(int fd, const char *client_ip) {
         authenticated = verify_token(cookie_value);
 
     if (!strcmp(req.path, API_PREFIX "ping")) {
-        respond(fd, 200, "OK", NULL, NULL, "pong\n", 5);
+        respond(c, 200, "OK", NULL, NULL, "pong\n", 5);
     } else if (!strcmp(req.path, API_PREFIX "check")) {
-        if (authenticated) respond(fd, 200, "OK", NULL, NULL, "ok\n", 3);
-        else respond(fd, 401, "Unauthorized", NULL, NULL, "challenge required\n", 19);
+        if (authenticated) respond(c, 200, "OK", NULL, NULL, "ok\n", 3);
+        else respond(c, 401, "Unauthorized", NULL, NULL, "challenge required\n", 19);
+    } else if (!strncmp(req.path, API_PREFIX "static/anubis/", strlen(API_PREFIX) + 14)) {
+        /* the browser's kernels: our own builds, dropped in --web */
+        const char *name = req.path + strlen(API_PREFIX) + 14;
+        if (strchr(name, '/') || strstr(name, "..")) {
+            respond(c, 404, "Not Found", NULL, NULL, "no\n", 3);
+        } else {
+            char path[1024];
+            snprintf(path, sizeof path, "%s/%s", cfg.web_dir ? cfg.web_dir : "web", name);
+            FILE *f = fopen(path, "rb");
+            if (!f) {
+                respond(c, 404, "Not Found", NULL, NULL, "no such kernel\n", 15);
+            } else {
+                fseek(f, 0, SEEK_END);
+                long len = ftell(f);
+                fseek(f, 0, SEEK_SET);
+                char *blob = len > 0 && len < (8 << 20) ? malloc((size_t)len) : NULL;
+                if (!blob || fread(blob, 1, (size_t)len, f) != (size_t)len) {
+                    free(blob);
+                    fclose(f);
+                    respond(c, 500, "Internal Server Error", NULL, NULL, "read\n", 5);
+                } else {
+                    fclose(f);
+                    respond(c, 200, "OK", "application/wasm", "Cache-Control: max-age=86400\r\n",
+                            blob, (size_t)len);
+                    free(blob);
+                }
+            }
+        }
+    } else if (!strcmp(req.path, API_PREFIX "state")) {
+        char body[512];
+        int n = snprintf(body, sizeof body,
+                         "{\"stateful\":%s,\"issued\":%lld,\"accepted\":%lld,"
+                         "\"replayed\":%lld,\"expired\":%lld}\n",
+                         cfg.stateful ? "true" : "false", ch_issued, ch_accepted,
+                         ch_replayed, ch_expired);
+        respond(c, 200, "OK", "application/json", NULL, body, (size_t)n);
     } else if (!strcmp(req.path, API_PREFIX "pass-challenge")) {
         char id_buf[1024], response_buf[1024], nonce_buf[64], redir_buf[2048], elapsed_buf[64];
         const char *id = query_param(req.query, "id", id_buf, sizeof id_buf);
@@ -956,7 +1314,7 @@ static void handle_connection(int fd, const char *client_ip) {
 
         if (!id || (need_work && (!response || !nonce_s))) {
             const char *msg = "betterAnusbis: pass-challenge needs id, response and nonce\n";
-            respond(fd, 400, "Bad Request", NULL, NULL, msg, strlen(msg));
+            respond(c, 400, "Bad Request", NULL, NULL, msg, strlen(msg));
         } else {
 
             /* metarefresh: no hashing, just elapsed time and the challenge echoed
@@ -982,22 +1340,44 @@ static void handle_connection(int fd, const char *client_ip) {
                         snprintf(extra, sizeof extra,
                                  "Set-Cookie: %s=%s; Path=/; Max-Age=%d; SameSite=Lax\r\n",
                                  cfg.cookie_name, token, COOKIE_TTL);
-                        respond_redirect(fd, redir && *redir ? (redir[0] == '/' ? redir : "/") : "/", extra);
+                        respond_redirect(c, redir && *redir ? (redir[0] == '/' ? redir : "/") : "/", extra);
                         logmsg("metarefresh passed (waited %lld ms)", waited);
                     } else {
-                        respond(fd, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
+                        respond(c, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
                     }
                 } else {
                     char msg[512];
                     snprintf(msg, sizeof msg,
                              "betterAnusbis: metarefresh wants a %lld ms wait and the challenge "
                              "echoed as ?challenge=<randomData>\n", wait_ms);
-                    respond(fd, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
+                    respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
                 }
                 goto done;
             }
 
-            if (!have_challenge) {
+            if (cfg.stateful) {
+                char stored[65];
+                int stored_difficulty = 0;
+                int rc = ch_take(id, stored, sizeof stored, &stored_difficulty);
+                if (rc == 1) {
+                    valid = verify_answer(cfg.algorithm, stored, nonce, stored_difficulty,
+                                          digest, sizeof digest);
+                    if (valid && strcasecmp(response, digest) != 0) {
+                        logmsg("rejecting: response %s is not the digest %s for nonce %llu",
+                               response, digest, nonce);
+                        valid = 0;
+                    }
+                } else if (rc == -2) {
+                    logmsg("rejecting: challenge %s was already spent", id);
+                    const char *msg = "betterAnusbis: that challenge was already used\n";
+                    respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
+                    goto done;
+                } else if (rc == -1) {
+                    logmsg("rejecting: challenge %s expired", id);
+                } else {
+                    logmsg("rejecting: id %s is not a challenge we issued", id);
+                }
+            } else if (!have_challenge) {
                 logmsg("rejecting: id %s is not a challenge we issued", id);
             } else if (issued_at && time(NULL) - issued_at > COOKIE_TTL) {
                 logmsg("rejecting: challenge %s expired", id);
@@ -1015,18 +1395,18 @@ static void handle_connection(int fd, const char *client_ip) {
                 const char *msg =
                     "betterAnusbis: that answer did not verify\n"
                     "  the challenge id, the response and the nonce have to match\n";
-                respond(fd, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
+                respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
             } else {
                 char token[2048];
                 if (sign_token(token, sizeof token, id) != 0) {
-                    respond(fd, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
+                    respond(c, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
                 } else {
                     char extra[2300];
                     snprintf(extra, sizeof extra,
                              "Set-Cookie: %s=%s; Path=/; Max-Age=%d; SameSite=Lax\r\n"
                              "Set-Cookie: %s-cookie-verification=; Path=/; Max-Age=0\r\n",
                              cfg.cookie_name, token, COOKIE_TTL, cfg.cookie_prefix);
-                    respond_redirect(fd, redir && *redir ? (redir[0] == '/' ? redir : "/") : "/", extra);
+                    respond_redirect(c, redir && *redir ? (redir[0] == '/' ? redir : "/") : "/", extra);
                     logmsg("challenge passed (nonce %llu, %s, difficulty %d)", nonce,
                            cfg.algorithm, cfg.difficulty);
                 }
@@ -1049,12 +1429,24 @@ static void handle_connection(int fd, const char *client_ip) {
         int count = hp_count(client_ip);
         if (cfg.verbose) logmsg("honeypot: maze for %s (hit %d in the window)", client_ip, count);
         hp_tarpit(count);
-        honeypot_maze(fd, idbuf, slash ? slash + 1 : "init", client_ip, count);
+        honeypot_maze(c, idbuf, slash ? slash + 1 : "init", client_ip, count);
     } else if (authenticated) {
-        proxy_request(fd, &req, client_ip);
+        proxy_request(c, &req, client_ip);
     } else {
-        /* issue a challenge */
+        /* issue a challenge — unless the policy says otherwise */
         int difficulty = cfg.difficulty;
+        int policy_difficulty = 0;
+        rule_action action = policy_decide(&req, client_ip, &policy_difficulty);
+        if (action == RULE_ALLOW) {
+            proxy_request(c, &req, client_ip);
+            goto done;
+        }
+        if (action == RULE_DENY) {
+            const char *msg = "betterAnusbis: denied by policy\n";
+            respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
+            goto done;
+        }
+        if (policy_difficulty > 0) difficulty = policy_difficulty;
         /* A network the honeypot has caught gets a harder challenge. Anubis adds
          * weight 30 to its policy rule and lets the thresholds decide; with one
          * rule here, +8 bits is the equivalent wall. */
@@ -1067,7 +1459,7 @@ static void handle_connection(int fd, const char *client_ip) {
         }
         uint8_t rd[32];
         char rd_hex[65];
-        if (random_bytes(rd, sizeof rd) != 0) { respond(fd, 500, "Internal Server Error", NULL, NULL, "entropy", 7); }
+        if (random_bytes(rd, sizeof rd) != 0) { respond(c, 500, "Internal Server Error", NULL, NULL, "entropy", 7); }
         else {
             hex_encode(rd, sizeof rd, rd_hex);
             char id[128];
@@ -1078,7 +1470,8 @@ static void handle_connection(int fd, const char *client_ip) {
                      "{\"Referer\":\"\",\"User-Agent\":\"%.200s\",\"X-Real-IP\":\"%s\"}",
                      ua ? ua : "", client_ip);
 
-            challenge_page(fd, id, rd_hex, metadata, id, difficulty);
+            ch_issue(id, rd_hex, difficulty);
+            challenge_page(c, id, rd_hex, metadata, id, difficulty);
         }
     }
 
@@ -1086,13 +1479,32 @@ done:
     free(req.headers);
     free(req.body);
     free(raw);
-    close(fd);
+    close(c->fd);
 }
 
 /* ------------------------------------------------------------- main loop */
 
+typedef struct {
+    int fd;
+    int tls;
+} accepted;
+
 static void *thread_main(void *arg) {
-    int fd = (int)(intptr_t)arg;
+    accepted a = *(accepted *)arg;
+    free(arg);
+    int fd = a.fd;
+    conn c = {.fd = fd, .ssl = NULL};
+    if (a.tls && server_ctx) {
+        SSL *ssl = SSL_new(server_ctx);
+        SSL_set_fd(ssl, fd);
+        if (SSL_accept(ssl) != 1) {
+            if (cfg.verbose) logmsg("TLS handshake failed from fd %d", fd);
+            SSL_free(ssl);
+            close(fd);
+            return NULL;
+        }
+        c.ssl = ssl;
+    }
     struct sockaddr_storage peer;
     socklen_t plen = sizeof peer;
     char ip[64] = "0.0.0.0";
@@ -1102,7 +1514,11 @@ static void *thread_main(void *arg) {
         else if (peer.ss_family == AF_INET6)
             inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&peer)->sin6_addr, ip, sizeof ip);
     }
-    handle_connection(fd, ip);
+    handle_connection(&c, ip);
+    if (c.ssl) {
+        SSL_shutdown((SSL *)c.ssl);
+        SSL_free((SSL *)c.ssl);
+    }
     return NULL;
 }
 
@@ -1152,6 +1568,12 @@ static void usage(FILE *out) {
         "  --cookie-prefix NAME   cookie prefix (default " DEFAULT_COOKIE_PREFIX ")\n"
         "  --no-honeypot          disable the trap link and the tarpit\n"
         "  --honeypot-log FILE    append one line per trap hit\n"
+        "  --tls-cert FILE        serve HTTPS with this PEM certificate chain\n"
+        "  --tls-key FILE         ...and this PEM private key\n"
+        "  --policy FILE          rule file (allow/deny/challenge), see README\n"
+        "  --stateless            do not keep issued challenges (they can be replayed)\n"
+        "  --web DIR              serve the wasm kernels from here\n"
+        "  --target-insecure      do not verify the backend certificate (testing only)\n"
         "  -v, --verbose          log every request\n"
         "  -h, --help             this text\n"
         "  -V, --version          version\n"
@@ -1172,6 +1594,12 @@ int main(int argc, char **argv) {
         if (!strcmp(a, "--difficulty") && next) { cfg.difficulty = atoi(next); i++; continue; }
         if (!strcmp(a, "--cookie-prefix") && next) { cfg.cookie_prefix = next; i++; continue; }
         if (!strcmp(a, "--no-honeypot")) { cfg.honeypot = 0; continue; }
+        if (!strcmp(a, "--tls-cert") && next) { cfg.tls_cert = next; i++; continue; }
+        if (!strcmp(a, "--tls-key") && next) { cfg.tls_key = next; i++; continue; }
+        if (!strcmp(a, "--policy") && next) { cfg.policy_file = next; i++; continue; }
+        if (!strcmp(a, "--stateless")) { cfg.stateful = 0; continue; }
+        if (!strcmp(a, "--web") && next) { cfg.web_dir = next; i++; continue; }
+        if (!strcmp(a, "--target-insecure")) { cfg.target_insecure = 1; continue; }
         if (!strcmp(a, "--honeypot-log") && next) { cfg.honeypot_log = next; i++; continue; }
         fprintf(stderr, "betterAnusbis: unknown option %s (try --help)\n", a);
         return 2;
@@ -1195,6 +1623,7 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (cfg.policy_file) policy_load(cfg.policy_file);
     parse_target(cfg.target);
     snprintf(cfg.cookie_name, sizeof cfg.cookie_name, "%s-auth", cfg.cookie_prefix);
     if (random_bytes(cfg.secret, sizeof cfg.secret) != 0) {
@@ -1209,6 +1638,32 @@ int main(int argc, char **argv) {
         fprintf(stderr, "betterAnusbis: --listen wants ADDR:PORT\n");
         return 2;
     }
+    if ((cfg.tls_cert && !cfg.tls_key) || (!cfg.tls_cert && cfg.tls_key)) {
+        fprintf(stderr, "betterAnusbis: --tls-cert and --tls-key go together\n");
+        return 2;
+    }
+    int use_tls = cfg.tls_cert != NULL;
+    if (use_tls) {
+        OPENSSL_init_ssl(0, NULL);
+        server_ctx = SSL_CTX_new(TLS_server_method());
+        if (!server_ctx) { fprintf(stderr, "betterAnusbis: SSL_CTX_new failed\n"); return 1; }
+        SSL_CTX_set_min_proto_version(server_ctx, TLS1_2_VERSION);
+        if (SSL_CTX_use_certificate_chain_file(server_ctx, cfg.tls_cert) != 1) {
+            fprintf(stderr, "betterAnusbis: cannot load the certificate %s\n", cfg.tls_cert);
+            ERR_print_errors_fp(stderr);
+            return 1;
+        }
+        if (SSL_CTX_use_PrivateKey_file(server_ctx, cfg.tls_key, SSL_FILETYPE_PEM) != 1) {
+            fprintf(stderr, "betterAnusbis: cannot load the key %s\n", cfg.tls_key);
+            ERR_print_errors_fp(stderr);
+            return 1;
+        }
+        if (SSL_CTX_check_private_key(server_ctx) != 1) {
+            fprintf(stderr, "betterAnusbis: certificate and key do not match\n");
+            return 1;
+        }
+    }
+
     int srv = socket(AF_INET6, SOCK_STREAM, 0);
     if (srv < 0) { perror("socket"); return 1; }
     int one = 1;
@@ -1217,10 +1672,10 @@ int main(int argc, char **argv) {
     if (bind(srv, (struct sockaddr *)&addr, sizeof addr) != 0) { perror("bind"); return 1; }
     if (listen(srv, 128) != 0) { perror("listen"); return 1; }
 
-    logmsg("betterAnusbis " VERSION " listening on %s -> %s (%s, difficulty %d)",
-           cfg.listen, cfg.target, cfg.algorithm, cfg.difficulty);
-    logmsg("open http://127.0.0.1:%d/ and the challenge page solves it for you",
-           ntohs(addr.sin6_port));
+    logmsg("betterAnusbis " VERSION " listening on %s (%s) -> %s (%s, difficulty %d)",
+           cfg.listen, use_tls ? "https" : "http", cfg.target, cfg.algorithm, cfg.difficulty);
+    logmsg("open %s://127.0.0.1:%d/ and the challenge page solves it for you",
+           use_tls ? "https" : "http", ntohs(addr.sin6_port));
 
     for (;;) {
         int fd = accept(srv, NULL, NULL);
@@ -1229,10 +1684,15 @@ int main(int argc, char **argv) {
             perror("accept");
             break;
         }
+        accepted *a = malloc(sizeof *a);
+        if (!a) { close(fd); continue; }
+        a->fd = fd;
+        a->tls = use_tls;
         pthread_t t;
-        if (pthread_create(&t, NULL, thread_main, (void *)(intptr_t)fd) == 0) {
+        if (pthread_create(&t, NULL, thread_main, a) == 0) {
             pthread_detach(t);
         } else {
+            free(a);
             close(fd);
         }
     }

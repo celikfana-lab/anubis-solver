@@ -138,6 +138,75 @@ normal solve still passes with it on.
 - **No `honeypot/network` policy rule** — there is no policy engine — so the flag is
   the difficulty bump above rather than a weight the rules interpret.
 
+## The browser solves every algorithm, with no native code
+
+The page loads **our own wasm kernels** from the server itself
+(`/.within.website/x/cmd/anubis/api/static/anubis/<name>.wasm`, `--web DIR`) and
+drives them through the same ABI Anubis's modules use — `data_ptr`,
+`set_data_length`, `anubis_work`, `result_hash_*`:
+
+| algorithm | kernel | size | digest vs Anubis's own module |
+|---|---|---:|---|
+| `sha256` | `sha256_pow_batch.wasm` (four nonces wide) | 38.7 KB | exact, and **1.8-2.1x faster** |
+| `argon2id` | `argon2id_pow.wasm` (vendored reference, m=19456 t=2 p=1) | 16.6 KB | **identical** |
+| `hashx` | `hashx_pow.wasm` (our interpreter, LGPL part of this repo) | 16.7 KB | **identical** |
+
+`fast`, `slow` and `metarefresh` are solved inline in JS, so a page needs no
+network round trip for the cheap algorithms.
+
+Verified end to end through the served kernels: `hashx` solves in milliseconds and
+`argon2id` in seconds — Argon2id is ~160 ms per hash here because this compiles the
+*reference* fill rather than a SIMD-optimised one, which is slower than Anubis's
+Rust build and is stated rather than hidden.
+
+## Policy
+
+`--policy FILE`, one rule per line, first match wins:
+
+```
+allow     path prefix /health          # never challenge this
+allow     net 10.0.0.0/8               # the office is trusted
+deny      ua contains AhrefsBot        # well-known bad crawler
+challenge ua contains curl difficulty 16
+default   challenge difficulty 4
+```
+
+Selectors: `ua`, `path`, `header:<name>`, `net` (IPv4 CIDR). Matches: `contains`,
+`prefix`, `is`. Actions: `allow` (proxy straight through), `deny` (403),
+`challenge` (with an optional per-rule `difficulty`).
+
+Measured on the running server: `AhrefsBot` → 403, `curl` UA → difficulty 16,
+anyone else → difficulty 4, `/health` → proxied with no challenge at all.
+
+**No regular expressions.** A policy *language* is the thing this project exists to
+avoid; literal matching covers what a site owner actually writes.
+
+## State verification
+
+Challenges are kept server-side (`ch_table`, 4096 entries, expiring with the cookie
+window) and **retired on use**, so a solved challenge cannot be replayed:
+
+```
+  first pass:  302 (redirect + cookie)
+  replay:      403 betterAnusbis: that challenge was already used
+```
+
+`GET .../api/state` reports the counters (`issued`, `accepted`, `replayed`,
+`expired`). `--stateless` restores the old stateless id encoding — the trade is in
+the design notes above.
+
+## HTTPS
+
+```bash
+./betterAnusbis --target https://backend.internal --tls-cert cert.pem --tls-key key.pem
+```
+
+The listener speaks TLS 1.2+ with your certificate, and the backend hop can be TLS
+too (verified against the system trust store; `--target-insecure` exists for a
+self-signed internal backend and says so when it uses it). Verified: HTTPS
+challenge page, full solve and pass over TLS, and plain HTTP to the TLS port fails
+the handshake as it should.
+
 ## What it costs
 
 Measured from `/proc` while serving 300 challenge pages and 40 pass-challenge

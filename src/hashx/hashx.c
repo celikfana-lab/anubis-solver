@@ -1747,7 +1747,27 @@ void hashx_program_asm_x86(const hashx_program* program) {
 /* See LICENSE for licensing information */
 
 
-#if defined(__SIZEOF_INT128__)
+#if defined(HASHX_NO_INT128)
+/* WebAssembly has no 128-bit multiply, and compiler-rt's __multi3 is not part of a
+ * freestanding wasm build, so build these from 32-bit halves. Same results, and it
+ * keeps the file buildable for wasm32 without a runtime library. */
+static FORCE_INLINE uint64_t umulh(uint64_t a, uint64_t b) {
+	const uint64_t am = 0xFFFFFFFFu, bm = 0xFFFFFFFFu;
+	const uint64_t al = a & am, ah = a >> 32;
+	const uint64_t bl = b & bm, bh = b >> 32;
+	const uint64_t p0 = al * bl, p1 = al * bh, p2 = ah * bl, p3 = ah * bh;
+	const uint64_t mid = (p0 >> 32) + (p1 & bm) + (p2 & bm);
+	return p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
+}
+static FORCE_INLINE int64_t smulh(int64_t a, int64_t b) {
+	uint64_t hi = umulh((uint64_t)a, (uint64_t)b);
+	if (a < 0) hi -= (uint64_t)b;
+	if (b < 0) hi -= (uint64_t)a;
+	return (int64_t)hi;
+}
+#define HAVE_UMULH
+#define HAVE_SMULH
+#elif defined(__SIZEOF_INT128__)
 typedef unsigned __int128 uint128_t;
 typedef __int128 int128_t;
 static FORCE_INLINE uint64_t umulh(uint64_t a, uint64_t b) {

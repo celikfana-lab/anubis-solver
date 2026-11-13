@@ -161,8 +161,14 @@ cd betterAnusbis && make
 
 All six algorithms are gated and verified (fast, slow, sha256, argon2id, hashx,
 metarefresh), `./test-all-algorithms.sh` asserts the protected page comes back for
-each, and tampering gets a 403. Anubis has the policy engine, the honeypot and the
-rule language; this has `--target`.
+each, and tampering gets a 403.
+
+It also has the pieces a real deployment asks for: a **policy file** (allow /
+deny / challenge on user agent, path, header or IPv4 CIDR, with per-rule
+difficulty), **HTTPS** on both the listener and the backend hop, **single-use
+challenges** so a solve cannot be replayed, and **wasm kernels served to the page**
+so the browser solves `argon2id` and `hashx` with no native code — our modules'
+digests are identical to Anubis's own.
 
 ### The browser, using the real library
 

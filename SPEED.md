@@ -16,7 +16,7 @@ times slower.
 | Build | `-O3 -march=native`, AVX2 8-way + SHA-NI assembly kernels |
 | Threads | 1 (pinned with `taskset -c 0`) |
 | Run | `python3 tools/bench_tiers.py --reps 7`, measured 2026-11-11 |
-| GPU | Intel Iris Xe (Vulkan), used where noted |
+| GPU | Intel Iris Xe (Vulkan, and OpenCL through Intel NEO where noted) |
 | Raw data | [`results/speed-tiers.json`](results/speed-tiers.json) |
 
 The host runs a `powersave` governor on a laptop, so its frequency is not
@@ -261,9 +261,65 @@ package `libze-dev`); the loader is `dlopen`ed, so the library still loads on
 machines without an Intel GPU. At runtime it needs the Intel Level Zero
 driver (`libze_intel_gpu.so.1`) and IGC for SPIR-V compilation.
 
-`tools/bench_gpu.py` compares auto / Level Zero / Vulkan / CPU and verifies
-every digest against hashlib. Raw data:
+`tools/bench_gpu.py` compares auto / Level Zero / Vulkan / OpenCL / CPU and
+verifies every digest against hashlib. Raw data:
 [`results/levelzero-irisxe.json`](results/levelzero-irisxe.json).
+
+## Intel GPU: OpenCL (NEO + IGC)
+
+The portable OpenCL backend was wired for SHA-256 in 2026-11-13 and is the
+**last** GPU link in the chain (CUDA, Level Zero, Vulkan, OpenCL, CPU): it is
+used when no vendor backend answers, or when `ANUBIS_OPENCL=1` asks for it by
+name. On this laptop Vulkan answers, so OpenCL only takes over with that
+variable set, which is also the only way to see it in the tables below.
+
+End-to-end, through the actual protocol rather than a harness: an
+Anubis-compatible gate issued the challenge, the CLI solved it, the protected
+page came back, and the digest was checked against hashlib.
+
+| difficulty 26 `sha256`, 64-byte `randomData` | solve | hashes/s |
+|---|---:|---:|
+| OpenCL (Intel NEO, 96 EUs) | 236 ms | 268 M |
+| OpenCL, run 2 | 296 ms | 260 M |
+| Vulkan, same GPU | ~4 s | ~70 M |
+| CPU, 4 threads (CLI default) | 3.6 s | 19.5 M |
+| CPU, 4 threads, run 2 | 9.1 s | 19.6 M |
+| CPU, 1 thread (`bench_gpu.py`) | | 5.0-5.6 M |
+
+That is 13x the CLI's four threads and roughly 47x one thread. The gap to
+Vulkan is the interesting one: same silicon, 3.7x the throughput. The likely
+reason is that the OpenCL kernel is a plain 32-bit 64-round loop while the GLSL
+one carries `uvec2` 64-bit emulation, but that has not been isolated by
+measurement, so treat it as a hypothesis and not a finding.
+
+Steady-state dispatch cost, `ANUBIS_OPENCL_DEBUG=1` and a 4 Mi work-item chunk:
+
+| chunk | time | rate |
+|---|---:|---:|
+| 4,194,304 nonces, warm | 14.3-15.5 ms | 270-293 MH/s |
+| first dispatch after idle | 50-190 ms | clock ramp, not the kernel |
+
+Per-backend rows from `python3 tools/bench_gpu.py`, 2026-11-13, MH/s:
+
+| workload | auto | vulkan | opencl | cpu (1 thread) |
+|---|---:|---:|---:|---:|
+| `fast` d6 | 84.0 | 93.9 | 77.4 | 5.8 |
+| `fast` d7 | 104.0 | 73.0 | 149.0 | 5.3 |
+| `sha256` b24 | 49.6 | 60.0 | 141.1 | 5.0 |
+| `sha256` b26 | 59.2 | 78.1 | 179.9 | 5.6 |
+
+Short workloads understate the GPU: each of those rows pays the cold first
+dispatch. Read the `level zero` row from that same run with even more care,
+because Level Zero is not compiled in here (no `level_zero/ze_api.h`), so that
+row ends up at the OpenCL fallback and reports 76-178 MH/s.
+
+Two things this backend needed before it could measure anything at all: its
+`clCreateBuffer` was being called with the size and flags arguments swapped, so
+no device buffer existed and every search returned "exhausted" without hashing;
+and it dispatched one lane per workgroup with a blocking transfer per chunk
+(14 MH/s). Devices that report themselves as CPUs (pocl) are refused, since the
+AVX2 kernels beat them. Raw data:
+[`results/intel-xe-opencl-2026-11-13.json`](results/intel-xe-opencl-2026-11-13.json).
 
 ## Argon2id on CUDA (opt-in)
 

@@ -326,14 +326,16 @@ anubis_solver.py         Python library (ctypes), requests client, CLI
 src/core/anubis_solver.c   C core: hashing, search loop, backend dispatch
 src/hashx/hashx.c/.h       HashX generator, interpreter, x86-64/AArch64 JITs
 src/cpu/*.s                AVX2, SHA-NI, AVX-512 and NEON SHA-256 kernels
-src/cuda/*.cu              CUDA backends (SHA-256, Argon2id, HashX)
+src/cuda/*.cu              CUDA backends (SHA-256, Argon2id, HashX), see
+                           src/cuda/README.md
 src/levelzero/*.c          Level Zero backends
 src/levelzero/*.cl         their OpenCL C kernels (embedded SPIR-V)
 src/vulkan/vulkan.c        Vulkan backends
 src/vulkan/*.comp          their GLSL kernels (embedded SPIR-V)
 src/opencl/                portable OpenCL host (not wired yet)
 src/sass/                  NVIDIA SASS for the Tesla T4 SHA-256 kernel, and the
-                           Kaggle job that produces and benchmarks it
+                           Kaggle job that produces and benchmarks it; see
+                           src/sass/README.md
 third_party/argon2/      reference Argon2id (CC0-1.0 / Apache-2.0)
 tests/                   unit, local end-to-end, version matrix, CVE harness
 examples/                samples in every supported language + run_all.sh

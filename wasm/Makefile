@@ -8,7 +8,7 @@ REPO    ?= ..
 HASHES  ?= 2000000
 OFFICIAL ?= /media/miku6/kubuntu_2404/home/miku/DOWN/pyani/anubis/web/static/wasm
 
-all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm argon2_fill_simd.wasm argon2_fill_c.wasm
+all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm argon2_fill_simd.wasm argon2_fill_c.wasm sha256_pow.wasm
 
 hashx_jit.wat: $(REPO)/tools/gen_hashx_wat.py $(REPO)/beyond/vectors/hx_vectors.hex
 	python3 $(REPO)/tools/gen_hashx_wat.py --out wasm/hashx_jit.wat
@@ -25,6 +25,20 @@ argon2_fill.wat: $(REPO)/tools/gen_argon2_wat.py
 
 # the recommended Argon2id kernel: C, -O3, no -msimd128 (measured slower)
 # wasm-ld comes from the lld package; point WASMLD at it if it is not on PATH
+# our sha256 PoW kernel: same ABI as the modules Anubis ships
+sha256_pow.wasm: sha256_pow.c
+	clang --target=wasm32 -O3 -nostdlib -Wl,--no-entry -Wl,--export-memory \
+	      -Wl,--export=data_ptr -Wl,--export=set_data_length \
+	      -Wl,--export=result_hash_ptr -Wl,--export=result_hash_size \
+	      -Wl,--export=anubis_work -o sha256_pow.wasm sha256_pow.c
+	@ls -l sha256_pow.wasm
+
+# needs a running Anubis: anubis -bind 127.0.0.1:8923 \
+#   -target http://127.0.0.1:8001 -policy-fname policy.yaml \
+#   -cookie-secure=false -use-remote-address
+live: sha256_pow.wasm
+	node live-test.mjs --url $${ANUBIS_URL:-http://127.0.0.1:8923/} --runs $${RUNS:-8}
+
 argon2_fill_c.wasm: compiler/fill.c
 	clang --target=wasm32 -O3 -nostdlib -Wl,--no-entry -Wl,--export=fill_block \
 	      -Wl,--export-memory -o argon2_fill_c.wasm compiler/fill.c
@@ -83,4 +97,4 @@ clean:
 	      argon2_fill.wasm argon2_fill.wat argon2_fill_simd.wasm argon2_fill_simd.wat \
 	      argon2_fill_c.wasm
 
-.PHONY: all bench a2i vectors compare serve clean
+.PHONY: all bench a2i vectors compare live serve clean

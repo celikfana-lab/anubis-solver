@@ -159,6 +159,62 @@ HashX case, where removing the interpreter was the whole 6×. For a fixed numeri
 kernel the compiler is at least as fast, 7× smaller, and maintainable — so use it,
 and spend the parallel budget on nonces.
 
+## The true test: a real Anubis server, four solvers
+
+A benchmark proves nothing on its own — the server is the judge. `wasm/live-test.mjs`
+requests a challenge from a running Anubis, solves it four different ways, and only
+counts a solve as a solve if the `pass-challenge` call is accepted **and** the
+follow-up request returns the protected page.
+
+Server: **Anubis v1.28.3, built from source here**, one rule
+(`user_agent_regex: ".+"`, `algorithm: sha256`, `difficulty: 12`) in front of a
+static page containing the string `PAST THE WALL`. Public hosts serve
+`metarefresh` at difficulty 1, which measures nothing; a controlled server pins the
+algorithm and the difficulty so the four solvers face identical work.
+
+```bash
+make sha256_pow.wasm   # our kernel
+make live              # 8 runs per solver, every one verified by the server
+```
+
+Measured, 8 runs each, all 32 solves accepted:
+
+| solver | median | rate | accepted |
+|---|---:|---:|---|
+| **official Anubis `sha256.wasm`** | 5.8 ms | **710 kH/s** | 8/8 |
+| **our `sha256_pow.wasm`** (C, clang -O3) | 6.8 ms | **471 kH/s** | 8/8 |
+| `crypto.createHash` (native, sync) | 20.6 ms | 168 kH/s | 8/8 |
+| `crypto.subtle.digest` (native, async) | 86.2 ms | 24.5 kH/s | 8/8 |
+
+**The native JS API is the slow path here.** That is the opposite of the intuition,
+so it is worth being precise about why: these hashes are 36 bytes. At that size the
+per-call overhead of a native API dwarfs the hash itself — `createHash` costs ~6 µs
+per call against a ~1.4 µs hash, and `subtle.digest` chains a promise per nonce and
+costs ~40 µs. A wasm module keeps the whole scan loop inside wasm and pays neither.
+
+The rates are what the server actually demanded: difficulty 12 means the nonce
+found varies with luck, so ms alone would compare luck. `hashes/s` is computed from
+the nonces actually scanned.
+
+### Our kernel vs the official one: 0.66×
+
+471 kH/s against 710 kH/s. The first version of `sha256_pow.c` was **200 kH/s**
+(0.28×) because it built the 64-word message schedule in a stack array; the fix was
+the classic one — a rolling 16-word schedule with the 64 rounds fully unrolled, so
+`w` stays in registers and `K[i]` becomes an immediate. That took it to 471 kH/s
+and the module from 3.1 KB to 17.5 KB, which is the trade the official build also
+made.
+
+Closing the last 1.5× would mean the 4-way interleaved schedule OpenSSL and the
+official build use. It is a real gap, and it is stated rather than hidden: our
+kernel is 0.66× the official one, not equal to it.
+
+### What changed in the fetcher
+
+`tools/anubis_fetch.js` now solves `sha256` with this kernel instead of
+`crypto.createHash`, which is the measured 2.8× (168 → 471 kH/s) and the reason to
+have written it. It falls back to `createHash` when the module is not built.
+
 ## The demo
 
 ```bash

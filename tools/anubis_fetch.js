@@ -230,13 +230,50 @@ export function solveNibbles(challengeText, difficulty) {
  * Byte order: big-endian, except when the challenge ends in a byte >= 0x80, which
  * is the same rule the C engine applies (src/core/anubis_solver.c sets use_le
  * that way) so the two implementations agree on every deployment.
+ *
+ * The work is done by `../wasm/sha256_pow.wasm`: the same C kernel, compiled with
+ * clang. Measured against a live Anubis server (wasm/live-test.mjs), it does
+ * 471 kH/s where `crypto.createHash` per nonce does 168 kH/s and
+ * `crypto.subtle.digest` per nonce does 24 kH/s. Per-call overhead dominates at
+ * this input size (36 bytes), so a native API is the *slow* path here — verified,
+ * not assumed. Falls back to createHash when the module is not built.
  */
-export function solveBits(challengeHex, difficulty) {
-  const raw = Buffer.from(challengeHex, 'hex');
-  const littleEndian = raw.length > 0 && raw[raw.length - 1] >= 0x80;
-  const started = process.hrtime.bigint();
-  const nonceBuf = Buffer.alloc(4);
+let sha256Module = null;
 
+/** Load the wasm SHA-256 kernel once, or return null if it is not built. */
+async function loadSha256() {
+  if (sha256Module !== null) return sha256Module;
+  try {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const path = fileURLToPath(new URL('../wasm/sha256_pow.wasm', import.meta.url));
+    const { instance } = await WebAssembly.instantiate(readFileSync(path), {
+      anubis: { anubis_update_nonce: () => {} },
+    });
+    sha256Module = instance.exports;
+  } catch {
+    sha256Module = false;
+  }
+  return sha256Module;
+}
+
+export async function solveBits(challengeHex, difficulty) {
+  const raw = Buffer.from(challengeHex, 'hex');
+  const started = process.hrtime.bigint();
+  const ex = await loadSha256();
+
+  if (ex) {
+    const buf = new Uint8Array(ex.memory.buffer);
+    buf.set(raw, ex.data_ptr());
+    ex.set_data_length(raw.length);
+    const nonce = ex.anubis_work(difficulty, 0, 1);
+    const digest = Buffer.from(new Uint8Array(ex.memory.buffer, ex.result_hash_ptr(), 32));
+    return { nonce, response: digest.toString('hex'), elapsedMs: msSince(started) };
+  }
+
+  // fallback: the native API, ~3x slower per hash at this input size
+  const littleEndian = raw.length > 0 && raw[raw.length - 1] >= 0x80;
+  const nonceBuf = Buffer.alloc(4);
   for (let nonce = 0; nonce < MAX_NONCE_SCAN; nonce++) {
     if (littleEndian) nonceBuf.writeUInt32LE(nonce >>> 0, 0);
     else nonceBuf.writeUInt32BE(nonce >>> 0, 0);
@@ -249,14 +286,15 @@ export function solveBits(challengeHex, difficulty) {
 }
 
 /** Solve one parsed challenge with the algorithm it names. */
-export function solveChallenge(challenge) {
+export async function solveChallenge(challenge) {
   const algorithm = String(challenge.algorithm ?? '').toLowerCase();
   const difficulty = Number(challenge.difficulty ?? 0);
   if (algorithm === 'fast' || algorithm === 'slow') {
     return { algorithm, difficulty, ...solveNibbles(challenge.randomData, difficulty) };
   }
   if (algorithm === 'sha256' || algorithm === 'wasm-sha256') {
-    return { algorithm, difficulty, ...solveBits(challenge.randomData, difficulty) };
+    // solveBits may load the wasm kernel on first use
+    return { algorithm, difficulty, ...(await solveBits(challenge.randomData, difficulty)) };
   }
   if (algorithm === 'metarefresh') {
     throw new Error(
@@ -367,7 +405,7 @@ export async function anubisFetch(url, opts = {}) {
       continue; // re-GET the original URL with the cookie we just earned
     }
 
-    const result = solveChallenge(challenge);
+    const result = await solveChallenge(challenge);
     const params = new URLSearchParams({
       response: result.response,
       nonce: String(result.nonce),

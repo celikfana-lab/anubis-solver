@@ -73,7 +73,7 @@ results that came out negative.
 | HashX compiled to WAT | **6-8x** Anubis's module (1.9-2.7 vs 0.30-0.35 M hashes/s) | `cd wasm && node bench.mjs` |
 | Argon2id fill core | parity with Anubis (~1.8 µs/block) | `cd wasm && node bench-a2i.mjs` |
 | Browser, native library | **10x** the in-page wasm at difficulty 20 | `python3 firefox-extension/test-native.py` |
-| Gate server footprint | **22x less RAM**, ~2x less CPU per request | `python3 tools/bench-server-resources.py` |
+| Gate server footprint | **~21x less RAM** (2.1 vs 44-46 MB), ~1.9x less CPU per request | `python3 tools/bench-server-resources.py` |
 | Client memory | wasm kernel 0.13 MiB vs Anubis's 1.06 MiB | `node tools/bench-client-resources.mjs` |
 | The wall, end to end | six server x client combinations | `node tools/bench-endtoend.mjs` |
 

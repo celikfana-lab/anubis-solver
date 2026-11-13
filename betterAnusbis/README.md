@@ -145,10 +145,10 @@ exchanges (`python3 tools/bench-server-resources.py` in the repository root):
 
 | | idle RSS | threads | CPU per page | CPU per verification |
 |---|---:|---:|---:|---:|
-| Anubis v1.28.3 (Go) | 45.7 MB | 17 | 900 µs | 2.75 ms |
-| **betterAnusbis** | **2.1 MB** | **1** | **500 µs** | **1.25 ms** |
+| Anubis v1.28.3 (Go) | 44-46 MB | 17-19 | 870-900 µs | 2.3-2.8 ms |
+| **betterAnusbis** | **2.1 MB** | **1** | **470-500 µs** | **1.25 ms** |
 
-**22x less RAM and about half the CPU**, and neither grows under load: RSS after 300
+**~21x less RAM and about half the CPU**, and neither grows under load: RSS after 300
 pages equals idle RSS and peak RSS never moved. The verification row is the engine
 difference — Anubis re-checks through its wasm module via wazero, this calls
 `libanubis_solver.so`.

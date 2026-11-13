@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
 """bench-server-resources.py — RAM and CPU for Anubis vs betterAnusbis.
 
-Reads /proc/<pid>/{status,stat}, so the numbers are the kernel's. Drives 300
-challenge pages and 40 full pass-challenge exchanges against each server (the pass
-row includes the server's proof-of-work verification).
+Reads /proc/<pid>/{status,stat}, so the numbers are the kernel's, not an estimate.
+Two phases per server: 300 challenge pages, then 40 full pass-challenge exchanges
+(the second includes the server's proof-of-work verification).
 
-    python3 tools/bench-server-resources.py     # both servers must be running
-""": Anubis (Go) or betterAnusbis (C)?
-
-Reads /proc/<pid>/status and /proc/<pid>/stat, so the numbers are the kernel's,
-not an estimate. Two phases: serving challenge pages, and serving pass-challenge
-requests (which run the server's proof-of-work verification).
+    python3 tools/bench-server-resources.py     # both servers must be running:
+    #   /tmp/anubis -bind 127.0.0.1:8923 -target http://127.0.0.1:8002 ...
+    #   ./betterAnusbis --listen :8096 --target http://127.0.0.1:8002 ...
 """
 import json, os, subprocess, sys, time, urllib.parse, urllib.request, urllib.error
 
-def find(needle):
+def find(comm_name):
+    """The process whose executable is named comm_name.
+
+    Matching the command line was wrong: a shell that had cd'd into the directory
+    matched too, and the script happily measured the shell (3.6 MB, 1 thread, no
+    CPU). /proc/<pid>/comm is the kernel's own name for the executable.
+    """
     for pid in os.listdir('/proc'):
-        if not pid.isdigit(): continue
+        if not pid.isdigit() or int(pid) == os.getpid():
+            continue
         try:
-            cmd = open(f'/proc/{pid}/cmdline','rb').read().decode('utf8','replace')
-        except OSError: continue
-        if needle in cmd: return int(pid)
+            comm = open(f'/proc/{pid}/comm').read().strip()
+        except OSError:
+            continue
+        if comm == comm_name:
+            return int(pid)
     return None
 
 def rss_kb(pid):
@@ -79,13 +85,13 @@ class Native:
         try: self.p.stdin.close()
         except Exception: pass
 
-SERVERS = [('Anubis v1.28.3 (Go)', 8923, '/tmp/anubis'),
-           ('betterAnusbis (C)', 8096, './betterAnusbis')]
+SERVERS = [('Anubis v1.28.3 (Go)', 8923, 'anubis'),
+           ('betterAnusbis (C)', 8096, 'betterAnusbis')]
 N_PAGES, N_PASS = 300, 40
 
 rows = []
-for name, port, needle in SERVERS:
-    pid = find(needle)
+for name, port, comm_name in SERVERS:
+    pid = find(comm_name)
     if not pid:
         print(f'{name}: not running'); continue
     base = f'http://127.0.0.1:{port}/'

@@ -747,10 +747,10 @@ exchanges each:
 
 | server | idle RSS | threads | CPU per challenge page | CPU per verification |
 |---|---:|---:|---:|---:|
-| Anubis v1.28.3 (Go) | **45.7 MB** | 17 | 900 µs | 2.75 ms |
-| **betterAnusbis (C)** | **2.1 MB** | **1** | **500 µs** | **1.25 ms** |
+| Anubis v1.28.3 (Go) | **44-46 MB** | 17-19 | 870-900 µs | 2.3-2.8 ms |
+| **betterAnusbis (C)** | **2.1 MB** | **1** | **470-500 µs** | **1.25 ms** |
 
-**betterAnusbis uses 22x less RAM and about half the CPU.** Neither grows under
+**betterAnusbis uses ~21-22x less RAM and about half the CPU.** Neither grows under
 load: RSS after 300 pages equals idle RSS, and peak RSS (`VmHWM`) never moved, so
 neither server leaks per request. Anubis's 45.7 MB is its Go runtime and the
 machinery around it — six wasm modules are only ~200 KB of that, so this is the cost

@@ -333,6 +333,9 @@ src/levelzero/*.cl         their OpenCL C kernels (embedded SPIR-V)
 src/vulkan/vulkan.c        Vulkan backends
 src/vulkan/*.comp          their GLSL kernels (embedded SPIR-V)
 src/opencl/                portable OpenCL host (not wired yet)
+src/intel/xe/              Intel Xe (gen12lp) assembly for the SHA-256 kernel,
+                           assembled with IGA and verified against hashlib; see
+                           src/intel/xe/README.md
 src/sass/                  NVIDIA SASS for the Tesla T4 SHA-256 kernel, and the
                            Kaggle job that produces and benchmarks it; see
                            src/sass/README.md

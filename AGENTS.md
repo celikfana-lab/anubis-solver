@@ -46,6 +46,7 @@ webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see 
 | `src/hashx/hashx.c/.h` | HashX generator, interpreter, x86-64/AArch64 JITs (LGPL-3.0) |
 | `src/cpu/*.s` | hand-written SHA-256 kernels (AVX2, SHA-NI, AVX-512, NEON) |
 | `src/cuda/*.cu` | CUDA backends (SHA-256, Argon2id, HashX) |
+| `src/intel/xe/` | Intel Xe (gen12lp) assembly for the SHA-256 kernel, generated and checked by `tools/gen_xe_sha256.py` |
 | `src/levelzero/*.c` | Level Zero backends; kernels in `src/levelzero/*.cl` |
 | `src/vulkan/vulkan.c` | Vulkan backends; kernels in `src/vulkan/*.comp` |
 | `src/opencl/` | portable OpenCL host (not wired yet) |
@@ -95,6 +96,7 @@ webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see 
 | `src/levelzero/hashx_l0.spv(.h)`, `src/vulkan/hashx.spv(.h)` | clang/llvm-spirv and `glslangValidator` (see `docs/development.md`) |
 | `src/opencl/opencl_kernels.h` | re-embed the three `.cl` files |
 | `src/cpu/avx2.s`, `src/cpu/avx512.s` | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` |
+| `src/intel/xe/intelXe_sha256.xe` | `tools/gen_xe_sha256.py` (needs `IGA64` to assemble) |
 
 ## Pitfalls we hit
 

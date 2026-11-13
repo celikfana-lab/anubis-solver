@@ -154,10 +154,19 @@ drives them through the same ABI Anubis's modules use — `data_ptr`,
 `fast`, `slow` and `metarefresh` are solved inline in JS, so a page needs no
 network round trip for the cheap algorithms.
 
-Verified end to end through the served kernels: `hashx` solves in milliseconds and
-`argon2id` in seconds — Argon2id is ~160 ms per hash here because this compiles the
-*reference* fill rather than a SIMD-optimised one, which is slower than Anubis's
-Rust build and is stated rather than hidden.
+Verified end to end through the served kernels, and measured head to head against
+Anubis's own modules (one hash per call, warm):
+
+| kernel | ours | Anubis's | verdict |
+|---|---:|---:|---|
+| `hashx` | 0.13 ms/hash | 0.16 ms/hash | **1.26x faster** |
+| `argon2id` | 161 ms/hash | 72 ms/hash | **2.2x slower** |
+
+The digests are identical; the Argon2id *speed* is not. That module is built on the
+vendored **reference** implementation, whose `fill_block` expands its round over
+memory locations instead of registers, and that is the entire 2.2x.
+`SPEED.md#argon2id-in-wasm-the-block-is-at-parity-the-module-is-not` has the
+measurement and what fixing it involves.
 
 ## Policy
 

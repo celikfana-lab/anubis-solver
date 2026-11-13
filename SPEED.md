@@ -739,6 +739,27 @@ Hand-written WAT paid for HashX because a challenge-defined program must be
 interpreted or code-generated, and removing the interpreter was the whole 6x.
 Where there is no interpreter, use a compiler.
 
+### Argon2id in wasm: the block is at parity, the module is not
+
+Two different artifacts, and they do not have the same verdict — conflating them is
+how a "parity" claim became misleading:
+
+| artifact | what it is | vs Anubis | note |
+|---|---|---|---|
+| `argon2_fill_c.wasm` | the **block function** alone (1 KiB), clang `-O3` | **parity**: 1.76 µs/block against their 1.81-1.97 | 16 words in registers, unrolled |
+| `argon2id_pow.wasm` | the **whole hash** (H0, 38,912 block fills, H′), Anubis ABI | **2.2x slower**: 161 ms against 72 ms | built on the vendored *reference* driver |
+
+The reference driver's `fill_block` works through `unsigned long long v[128]` with
+`BLAKE2_ROUND_NOMSG` expanding over memory locations, so the round cannot keep its
+16 words in registers — that is the whole 2.2x, and it is not a compiler flag.
+`-funroll-loops` makes it *worse* (179 ms), which was tested rather than assumed.
+
+Anubis's 72 ms is 38,912 blocks at 1.85 µs — their driver adds essentially nothing
+over its own fill. Ours spends 68 ms in the same fill and 93 ms in the reference
+driver's memory-based version of it. Closing that means writing the Argon2 driver
+(H0, index_alpha, the passes, H′) around the register-resident fill that already
+exists, not tuning the build.
+
 ### What uses less RAM, and what uses less CPU
 
 Same two servers, same three clients, read from `/proc` (the kernel's numbers, not

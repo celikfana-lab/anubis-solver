@@ -24,6 +24,10 @@ rtl/
               hashx_top.v         PRF, program, finalisation
   mem/        lpddr6_model.v      behavioural LPDDR6 model
               lpddr6_if.v         1 KiB block <-> 32-byte packet adaptor
+              hbm3_model.v        one HBM3/HBM3e link: BW, latency, byte credits
+              hbm3e_mem.v         eight HBM3e stacks, blk%8 routing, N lanes
+  top/        anubis_argon2_card.v  THE 365-ENGINE CHIP: engine array, 8x HBM3e,
+                                    BAR0 and UART wired together
   periph/     uart_tx.v           8N1 serial transmitter
               uart_log.v          console: banner, and a HIT line per solve
               axil_regs.v         BAR0 register file on AXI4-Lite (the PCIe side)
@@ -390,6 +394,33 @@ Contexts, not engines, hide the latency: a block costs `max(133, 350/K)` engine
 cycles, so K=2 floors at 175 and K=3 reaches the datapath's 133. Filling 9.82 TB/s
 therefore needs 484 engines at K=2 but only 365 at K=3 — the difference is DRAM,
 not silicon.
+
+## The card: 365 engines, 8x HBM3e
+
+`rtl/top/anubis_argon2_card.v` is the design point from the scaling study as a
+single top: **365 engines, 3 hashes each (1,095 in flight), 3 request lanes,
+8 HBM3e stacks, plus the BAR0 register block and the UART console.**
+
+```bash
+make card-argon2       # fast wiring check: BAR0 -> start -> engines -> memory
+make card-argon2-max   # the real thing: NENG=365, LAT=350, CYC=133
+```
+
+```
+card: NENG=365 x KCTX=3 = 1095 hashes in flight, 8 HBM3e stacks, 3 lanes
+  BAR0 ID=a0b15c01, busy=1 done=0, console started
+  400 cycles: 773 blocks, 1094 requests (2.735/cycle), 9779.2 B/cycle of 9824
+  throughput: 70122 hashes/s at 1 GHz, collisions=642 overflow=0
+```
+
+That is 9,779 B/cycle of the 9,824 available (99.5%) and 70,122 hashes/s at
+1 GHz, measured through the card's own BAR0 rather than from the model's back
+door. The block cost is the measured cost of `argon2_fill`, so this top proves
+the wiring and the cycle budget, not 365 paralleled permutations: 365 real
+copies of the datapath is ~68 M generic cells and cannot be simulated. The real
+datapath is verified on its own — `tb_argon2_fill` against the reference block,
+`tb_argon2_engine` against argon2-cffi, and `make vlreal` solving a real
+challenge.
 
 ## Notes / next steps
 

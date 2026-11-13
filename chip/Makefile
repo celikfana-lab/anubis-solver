@@ -38,6 +38,10 @@ ARGON := rtl/argon2/argon2_fill.v rtl/argon2/argon2_index.v rtl/argon2/argon2_ad
 HASHX := rtl/hashx/sipround.v rtl/hashx/hashx_prf.v rtl/hashx/hashx_exec.v \
          rtl/hashx/hashx_top.v
 PERIPH := rtl/periph/uart_tx.v rtl/periph/uart_log.v rtl/periph/axil_regs.v
+# the whole card: engine array + eight HBM3e stacks + BAR0 + UART
+CARD := rtl/top/anubis_argon2_card.v rtl/argon2/argon2_mpipe.v \
+        rtl/mem/hbm3e_mem.v rtl/mem/hbm3_model.v \
+        rtl/periph/uart_tx.v rtl/periph/uart_log.v rtl/periph/axil_regs.v
 HASHX_REF := ../src/hashx
 ENGINE := rtl/argon2/argon2_engine.v $(ARGON) $(HASH)
 
@@ -45,11 +49,11 @@ ENGINE := rtl/argon2/argon2_engine.v $(ARGON) $(HASH)
 # name: dependencies | vector generator
 TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
        tb_h_prime tb_h0 tb_argon2_addr tb_argon2_index tb_argon2_engine \
-       tb_hashx tb_uart tb_axil
+       tb_hashx tb_uart tb_axil tb_argon2_card
 
   .PHONY: all sim $(TBS) run-all pow argon blake2b stream hprime h0 addr index engine \
         hashx solve solve-hashx mpipe vectors vl64 vlreal synth area clean \
-        sync hbm3e-capacity hbm3e-mpipe
+        sync hbm3e-capacity hbm3e-mpipe card-argon2 card-argon2-max
 .DEFAULT_GOAL := all
 
 all: sim
@@ -214,6 +218,29 @@ hbm3e-capacity: $(B)/tb_hbm3e_capacity
 #   make -B hbm3e-mpipe MP_NENG=236 MP_CYC=260 MP_NSTACK=8
 hbm3e-mpipe: $(B)/tb_hbm3e_mpipe
 	$(V) $(B)/tb_hbm3e_mpipe
+
+# ---- the card: 365 engines x 3 contexts behind eight HBM3e stacks -----------
+# This is the design point from SPEED.md as one synthesizable top. The fast
+# default test only checks the wiring; the real configuration is the -max target.
+CARD_NENG ?= 365
+CARD_KCTX ?= 3
+
+$(B)/tb_argon2_card: tb/tb_argon2_card.v $(CARD) | $(B)
+	$(IVERILOG) -g2012 -o $@ tb/tb_argon2_card.v $(CARD)
+
+card-argon2: $(B)/tb_argon2_card
+	$(V) $(B)/tb_argon2_card
+
+$(B)/tb_argon2_card_max: tb/tb_argon2_card.v $(CARD) | $(B)
+	$(IVERILOG) -g2012 -Ptb_argon2_card.NENG=$(CARD_NENG) \
+	  -Ptb_argon2_card.KCTX=$(CARD_KCTX) \
+	  -Ptb_argon2_card.LAT=350 -Ptb_argon2_card.CYC=133 \
+	  -Ptb_argon2_card.WARMUP=600 -Ptb_argon2_card.WINDOW=400 \
+	  -o $@ tb/tb_argon2_card.v $(CARD)
+
+# the real 365-engine chip; several minutes of Icarus
+card-argon2-max: $(B)/tb_argon2_card_max
+	$(V) $(B)/tb_argon2_card_max
 
 # ---- Verilator ------------------------------------------------------------
 # Compiling the RTL to C++ is ~1000x faster than Icarus here: 0.17 s instead of

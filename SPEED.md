@@ -391,7 +391,7 @@ measured, the clock is assumed. No static timing analysis has been run, so
 
 | | |
 |---|---|
-| RTL | `chip/rtl/` — SHA-256 PoW, full Argon2id, full HashX |
+| RTL | `chip/rtl/` — SHA-256 PoW, full Argon2id, full HashX, eight-stack HBM3e, and the 365-engine card top in `rtl/top/` |
 | Simulator | Icarus Verilog 12.0 (function), Verilator 5.020 (single-hash speed) |
 | Machine | 56-core Xeon, Ubuntu 24.04 |
 | Run | `make -C chip remote-sim`, `make -C chip remote-mpipe`, 2026-11-12 |
@@ -541,6 +541,39 @@ So the honest range for a 1 GHz, 365-engine, eight-HBM3e design is
 **46.6–70.4 k hashes/s** — 8–12× the single-HBM3 design and 26–40× the measured
 2x T4 pair.
 
+### The card: 365 engines
+
+`chip/rtl/top/anubis_argon2_card.v` is that design point as a single Verilog
+top: the 365-engine array, the three request lanes, the eight HBM3e stacks, the
+PCIe BAR0 register block and the UART console, wired together.
+`make -C chip card-argon2-max` builds it and drives it through BAR0 the way a
+host would.
+
+```
+card: NENG=365 x KCTX=3 = 1095 hashes in flight, 8 HBM3e stacks, 3 lanes
+  BAR0 ID=a0b15c01, busy=1 done=0, console started
+  400 cycles: 773 blocks, 1094 requests (2.735/cycle), 9779.2 B/cycle of 9824
+  throughput: 70122 hashes/s at 1 GHz, collisions=642 overflow=0
+```
+
+| | |
+|---|---|
+| engines | 365 x 3 contexts = 1,095 hashes in flight |
+| memory | 8 x 1,228 B/cycle = **9.82 TB/s** |
+| measured | **9,779 B/cycle (99.5%), 2.735 requests/cycle** |
+| throughput | **70,122 hashes/s at 1 GHz**; 46,582 at a 75% DRAM derate |
+| block cost | 133 cycles — the measured cost of `argon2_fill` |
+| datapath area | 365 x 186,594 = **68.1 M generic yosys cells**, 6.0 M flops of block registers |
+| die estimate | 12–25 mm² of logic at 12 nm, before the eight HBM PHYs |
+
+One caveat, stated plainly: the engine array in that top is `argon2_mpipe`,
+which charges each block the measured 133 cycles rather than instantiating 365
+copies of `argon2_fill` — 68 M cells, which no simulator here will take. The
+wiring and the cycle budget are therefore proven at 365 engines, while the
+arithmetic is proven separately: per block against the reference, per hash
+against argon2-cffi, and once end to end by `make vlreal` solving a real
+challenge.
+
 ### Against the GPUs
 
 | machine | argon2id hashes/s | hashx hashes/s |
@@ -564,8 +597,8 @@ silicon genuinely wins, because the core has no memory to wait on.
 
 - **The memory is the machine.** 40 engines are ~7.5 M generic yosys cells and
   already saturate one HBM3 stack; the stack and its PHY cost far more than the
-  logic does. The eight-stack design needs 365 engines (~68 M cells, and 8 PHYs)
-  to use its 9.82 TB/s. That is Argon2id working as designed.
+  logic does. The eight-stack design needs 365 engines (68.1 M cells, and eight
+  PHYs) to use its 9.82 TB/s. That is Argon2id working as designed.
 - **The eight-stack number depends on K=3.** At two contexts per engine the
   floor is 175 cycles/block and the same 9.82 TB/s needs 484 engines instead of
   365, for the same 70,426 hashes/s. Nothing else in the design changes.

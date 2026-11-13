@@ -649,5 +649,42 @@
     ],
     "hashes_per_s_derived": 70282,
     "bugs_found_fixing_the_counter": "blocks_done used a nonblocking +1 per completing context, so simultaneous completions collapsed into one; it now tallies a blocking temp and adds it once per edge. The earlier 25,699 result was unaffected (exactly 1 block/cycle) but every config above one block/cycle read low."
+  },
+  "the_card_365_engines": {
+    "rtl": "chip/rtl/top/anubis_argon2_card.v (engine array + 8x HBM3e + BAR0 + UART)",
+    "testbench": "chip/tb/tb_argon2_card.v, in TBS/sim as a fast wiring check",
+    "command": "make -C chip card-argon2-max   (NENG=365, KCTX=3, LAT=350, CYC=133)",
+    "measured": {
+      "hashes_in_flight": 1095,
+      "window_cycles": 400,
+      "blocks": 773,
+      "requests_per_cycle": 2.735,
+      "bpc": 9779.2,
+      "pct_of_9824": 99.5,
+      "hashes_per_s": 70122,
+      "clock_hz": 1000000000,
+      "bar0_id": "a0b15c01",
+      "response_overflow": 0,
+      "collisions_absorbed": 642
+    },
+    "area": {
+      "per_engine_cells": 186594,
+      "engines": 365,
+      "datapath_cells": 68106810,
+      "block_registers_flops": 5980160,
+      "die_estimate_mm2_at_12nm": "12-25",
+      "note": "generic yosys cells from the single-engine synth, multiplied by 365; not a synthesis run of the whole chip"
+    },
+    "what_this_proves_and_what_it_does_not": [
+      "proves: BAR0 -> start pulse -> 365-engine array -> 3 lanes -> 8 stacks -> id-tagged responses all work together, at 99.5% of the memory's bandwidth, through the card's own register interface",
+      "does not prove: 365 paralleled permutations. argon2_mpipe charges each block the measured 133 cycles; 365 real argon2_fill copies is 68.1 M cells and is not simulable here",
+      "the real datapath is verified separately: tb_argon2_fill against the reference block, tb_argon2_engine against argon2-cffi, make vlreal solving a real challenge"
+    ],
+    "when_the_design_is_off_the_optimum": {
+      "fewer_lanes": "1 lane -> 25,699 hashes/s (36% of the memory)",
+      "two_contexts": "484 engines for the same 70,426 hashes/s; the latency floor is 350/2 = 175 cycles/block",
+      "more_engines": "550 engines -> 70,518 hashes/s: +0.13% for 50% more silicon",
+      "realistic_dram": "75% link efficiency -> 46,582 hashes/s"
+    }
   }
 }

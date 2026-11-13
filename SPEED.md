@@ -685,6 +685,40 @@ Against the 2x Tesla T4 pair measured earlier: Argon2id **40x** (70,122 vs
 1,759) and HashX **2.1x** (224 M vs 108.5 M). A Pi 5 reaches ~10.1 MH/s of
 SHA-256 on its NEON/SHA-2 path, so 128 lanes are ~190x that.
 
+### Tesla T4 (sm_75): the SHA-256 kernel and its SASS
+
+`beyond/asm/nvidiaT4_sha256.sass` is the shipped `src/cuda/cuda_sha256.cu` kernel
+compiled for `sm_75` and disassembled with `nvdisasm -c`;
+`nvidiaT4_sha256_opt.sass` is the same algorithm with the block assembly moved
+out of local memory. Built and run by `beyond/tools/kaggle_t4_sass.py` on a Tesla
+T4 (40 SMs, 1590 MHz, CUDA 13.0).
+
+| kernel | instruction lines | stack frame | registers | MH/s |
+|---|---:|---:|---:|---:|
+| shipped | 2,024 | 96 B | 64 | 1,348 – 1,749 |
+| **optimised** | 1,436 / hash | **0 B** | 40 | **2,390 – 2,412** |
+
+Both kernels are verified word-for-word against a CPU compression before timing
+(difficulty 0, so every nonce is a hit). 33.5 M nonces x 5 reps.
+
+The shipped kernel builds the message block in an `unsigned char[64]`: zero 64
+bytes, write the nonce, patch the length, then read all 16 words back through
+`load_be32`. That is **96 bytes of local memory per thread**. The optimised one
+builds `W[0..15]` in registers — for the `sha256` family (u32 nonce, one tail
+block) `W1 = 0x80000000`, `W2..W14 = 0` and `W15` = bit length are constant per
+challenge and are not rebuilt. Result: **1.4–1.8x**, and the run-to-run variance
+goes away with the local traffic.
+
+**ILP is a measured negative.** One, two and four nonces per thread measure
+2,390 / 2,412 / 2,407 MH/s. The SM is issue-throughput-bound, not latency-bound,
+so ILP buys nothing — and ILP=1 uses 40 registers instead of 64 or 128, i.e.
+full occupancy. The right choice is no ILP at all.
+
+Scope: the shipped kernel serves both the decimal-nonce (`fast`/`slow`) and
+u32-nonce (`sha256`) families through a runtime branch; this optimisation is the
+`sha256` family. The decimal path can be specialised the same way, but its digit
+conversion still costs, so it is not claimed here.
+
 ### Against the GPUs
 
 | machine | argon2id hashes/s | hashx hashes/s |

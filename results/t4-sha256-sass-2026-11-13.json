@@ -1,0 +1,51 @@
+{
+  "title": "SHA-256 PoW kernel compiled for sm_75 (Tesla T4): shipped vs optimised",
+  "date": "2026-11-13",
+  "how": "Kaggle notebook on a Tesla T4 (40 SMs, 1590 MHz, CUDA 13.0 / nvcc 13.0.88), built and run by beyond/tools/kaggle_t4_sass.py",
+  "artifacts": {
+    "shipped_sass": "beyond/asm/nvidiaT4_sha256.sass",
+    "optimised_sass": "beyond/asm/nvidiaT4_sha256_opt.sass",
+    "source": "beyond/asm/sha256_sm75_kernels.cu (both kernels, device code only)",
+    "job": "beyond/tools/kaggle_t4_sass.py"
+  },
+  "compiler_report": {
+    "shipped": {
+      "registers": 64,
+      "stack_frame_bytes": 96,
+      "spill_bytes": 0,
+      "instruction_lines": 2024
+    },
+    "optimised": {
+      "registers": 40,
+      "stack_frame_bytes": 0,
+      "spill_bytes": 0,
+      "instruction_lines_per_hash": 1436
+    }
+  },
+  "measured": {
+    "shape": "33,554,432 nonces x 5 reps, one tail block per nonce, T4",
+    "shipped_mhps_range": [
+      1347.97,
+      1748.9
+    ],
+    "optimised_mhps": {
+      "ilp1": 2390.33,
+      "ilp2": 2412.25,
+      "ilp4": 2407.22
+    },
+    "speedup_range": [
+      1.38,
+      1.77
+    ],
+    "correctness": "both kernels verified word-for-word against a CPU compression before timing (difficulty 0 so every nonce is a hit)"
+  },
+  "what_was_changed": [
+    "the shipped kernel builds the message block in a local unsigned char[64]: zero 64 bytes, write the nonce, patch the length, then read all 16 words back through load_be32 - 96 bytes of local memory per thread",
+    "the optimised kernel builds W[0..15] in registers; for the sha256 family (u32 nonce, one tail block) W1=0x80000000, W2..W14=0 and W15=bit length are constant for a challenge and are not rebuilt",
+    "rotations use __funnelshift_r so ptxas emits SHF; the hit test is shared so only the compression path differs"
+  ],
+  "negative_result": "ILP does not help on this kernel: 1, 2 and 4 nonces per thread measure 2,390 / 2,412 / 2,407 MH/s. The SM is issue-throughput-bound, not latency-bound, so ILP=1 is right - it also uses 40 registers instead of 64/128, i.e. full occupancy.",
+  "why_the_shipped_number_varies": "1,348-1,749 MH/s across runs because the 96-byte stack frame is local-memory traffic whose cost depends on L1/L2 state. The register-only kernel measures the same 2.4 GH/s every run.",
+  "caveat": "the shipped kernel supports both the decimal-nonce (fast/slow) and u32-nonce (sha256) families with a runtime branch; the optimisation is specific to the sha256 family. The decimal path can be specialised the same way but the digit conversion still costs, so it was not measured here.",
+  "not_done": "the optimised kernel is not wired into src/cuda/cuda_sha256.cu; that needs a GPU to validate the library path end to end, which this repo's test suite can do on a T4 runner."
+}

@@ -739,6 +739,52 @@ Hand-written WAT paid for HashX because a challenge-defined program must be
 interpreted or code-generated, and removing the interpreter was the whole 6x.
 Where there is no interpreter, use a compiler.
 
+### The wall, end to end: two servers x three clients
+
+The combinations asked for, both against a real backend on the same machine, all
+six verified by the protected page coming back (`node tools/bench-endtoend.mjs`,
+difficulty 20, 6 runs per cell):
+
+| server | client | server + network (6 runs) | client throughput |
+|---|---|---:|---:|
+| Anubis v1.28.3 | Anubis's own wasm | 7.5 ms | 1.67 M hashes/s |
+| Anubis v1.28.3 | our wasm, 4 nonces wide | 7.0 ms | 3.04 M hashes/s |
+| Anubis v1.28.3 | **native `.so`** (Firefox) | 7.3 ms | **19.73 M hashes/s** |
+| betterAnusbis (C) | Anubis's own wasm | 7.9 ms | 1.67 M hashes/s |
+| betterAnusbis (C) | our wasm, 4 nonces wide | 7.2 ms | 3.04 M hashes/s |
+| betterAnusbis (C) | **native `.so`** (Firefox) | 7.5 ms | **19.73 M hashes/s** |
+
+**The server is not the differentiator.** Every cell pays 7.0-7.9 ms for one round
+trip, the server's verification and the redirect — Anubis and a ~1,000-line C server
+are indistinguishable. The 400 ms that separate the slowest combination from the
+fastest belong entirely to the client.
+
+Client throughput is measured in isolation (difficulty 21, warm, total hashes over
+total time) because a *cell* measurement is luck: the nonce that satisfies a fixed
+difficulty is exponentially distributed, so with six samples the median swings by
+2-3x. That is not a shortcut — the first version of this table reported the same
+client at 899 kH/s against one server and 1571 kH/s against the other, which is
+impossible and was the measurement, not the server.
+
+Put the two measured halves together and the expected time to the page is
+`2^difficulty / rate + overhead`:
+
+| difficulty | Anubis wasm | our wasm (4-wide) | native `.so` |
+|---|---:|---:|---:|
+| 12 (4 k hashes) | 10.5 ms | 9.3 ms | **8.2 ms** |
+| 16 (65 k hashes) | 47 ms | 30 ms | **11 ms** |
+| 20 (1.0 M hashes) | 636 ms | 353 ms | **61 ms** |
+
+At difficulty 12 the wall is the HTTP round trip and nothing else: every client is
+within 2 ms. The client only starts to matter around difficulty 16, and by
+difficulty 20 the native path is **10x ahead** of Anubis's own wasm. That is the
+whole argument for the Firefox extension and for using the library instead of the
+browser.
+
+Anubis's server-side verification is itself wasm (its Go server runs the same module
+through wazero), which is why its overhead is not lower than a C server's; the two
+are indistinguishable here.
+
 ### Tesla T4 (sm_75): the SHA-256 kernel and its SASS
 
 `src/sass/nvidiaT4_sha256.sass` is the shipped `src/cuda/cuda_sha256.cu` kernel

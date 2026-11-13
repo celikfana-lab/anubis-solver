@@ -172,6 +172,11 @@ Same 2 M hashes, same challenge, Node 26. And the three implementations — our 
 engine, our compiled WAT, Anubis's Rust module — agree on the nonce *and* the
 digest for the same work, which is what `wasm/verify.mjs` checks:
 
+End-to-end, both servers against the three clients (Anubis's wasm, our
+wasm, and the native library) is in
+[SPEED.md](SPEED.md#the-wall-end-to-end-two-servers-x-three-clients):
+`node tools/bench-endtoend.mjs`.
+
 ```bash
 cd wasm
 make && make bench        # the benchmark above

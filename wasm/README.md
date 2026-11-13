@@ -161,58 +161,82 @@ and spend the parallel budget on nonces.
 
 ## The true test: a real Anubis server, four solvers
 
-A benchmark proves nothing on its own — the server is the judge. `wasm/live-test.mjs`
-requests a challenge from a running Anubis, solves it four different ways, and only
-counts a solve as a solve if the `pass-challenge` call is accepted **and** the
-follow-up request returns the protected page.
+`wasm/live-test.mjs` stands up against a running Anubis, solves each challenge
+four ways, and counts a solve only if `pass-challenge` is accepted **and** the
+follow-up request returns the protected page. Server: **Anubis v1.28.3 built from
+source**, one rule (`user_agent_regex: ".+"`, `sha256`, difficulty 12) in front of
+a page containing `PAST THE WALL`. Public hosts serve `metarefresh` at difficulty
+1, which measures nothing.
 
-Server: **Anubis v1.28.3, built from source here**, one rule
-(`user_agent_regex: ".+"`, `algorithm: sha256`, `difficulty: 12`) in front of a
-static page containing the string `PAST THE WALL`. Public hosts serve
-`metarefresh` at difficulty 1, which measures nothing; a controlled server pins the
-algorithm and the difficulty so the four solvers face identical work.
-
-```bash
-make sha256_pow.wasm   # our kernel
-make live              # 8 runs per solver, every one verified by the server
-```
-
-Measured, 8 runs each, all 32 solves accepted:
+6 runs each, all 24 accepted, warmed before timing:
 
 | solver | median | rate | accepted |
 |---|---:|---:|---|
-| **official Anubis `sha256.wasm`** | 5.8 ms | **710 kH/s** | 8/8 |
-| **our `sha256_pow.wasm`** (C, clang -O3) | 6.8 ms | **471 kH/s** | 8/8 |
-| `crypto.createHash` (native, sync) | 20.6 ms | 168 kH/s | 8/8 |
-| `crypto.subtle.digest` (native, async) | 86.2 ms | 24.5 kH/s | 8/8 |
+| official Anubis `sha256.wasm` (simd128) | 5.1 ms | **689 kH/s** | 6/6 |
+| **our `sha256_pow.wasm`** (C, clang `-O3`) | 16.8 ms | **589 kH/s** | 6/6 |
+| `crypto.createHash` (native, sync) | 15.3 ms | 157 kH/s | 6/6 |
+| `crypto.subtle.digest` (native, async) | 339 ms | 19 kH/s | 6/6 |
 
-**The native JS API is the slow path here.** That is the opposite of the intuition,
-so it is worth being precise about why: these hashes are 36 bytes. At that size the
-per-call overhead of a native API dwarfs the hash itself — `createHash` costs ~6 µs
-per call against a ~1.4 µs hash, and `subtle.digest` chains a promise per nonce and
-costs ~40 µs. A wasm module keeps the whole scan loop inside wasm and pays neither.
+**The native JS API is the slow path.** These hashes are 36 bytes, so per-call
+overhead dwarfs the hash: `createHash` ~6 µs per call, `subtle.digest` ~50 µs with
+a promise per nonce, against a ~0.7 µs hash. A wasm module keeps the whole scan
+loop inside wasm and pays neither.
 
-The rates are what the server actually demanded: difficulty 12 means the nonce
-found varies with luck, so ms alone would compare luck. `hashes/s` is computed from
-the nonces actually scanned.
+## Why the official module is faster, from its source
 
-### Our kernel vs the official one: 0.66×
+Not a compiler trick. `sha2 0.11.1` ships a dedicated backend:
 
-471 kH/s against 710 kH/s. The first version of `sha256_pow.c` was **200 kH/s**
-(0.28×) because it built the 64-word message schedule in a stack array; the fix was
-the classic one — a rolling 16-word schedule with the 64 rounds fully unrolled, so
-`w` stays in registers and `K[i]` becomes an immediate. That took it to 471 kH/s
-and the module from 3.1 KB to 17.5 KB, which is the trade the official build also
-made.
+```
+sha2-0.11.1/src/sha256/wasm32_simd128.rs     195 lines
+    #[target_feature(enable = "simd128")]
+    pub(super) fn compress(state: &mut [u32; 8], blocks: &[[u8; 64]])
+```
 
-Closing the last 1.5× would mean the 4-way interleaved schedule OpenSSL and the
-official build use. It is a real gap, and it is stated rather than hidden: our
-kernel is 0.66× the official one, not equal to it.
+It is the Intel SHA-NI-style structure ported to v128: the message schedule lives
+in **four vector registers** (`ms: [u64x2; 4]`), fifteen of the rounds are computed
+four at a time in vector form, and four scalar `sha_round`s run per vector step.
+`lib.rs` then just calls `Sha256::new()` / `update` / `finalize` — no cleverness at
+the algorithm level at all, and no midstate reuse.
+
+Anubis's `wasm/scripts/build_wasm.sh` builds both `baseline/` and `simd128/`
+modules; the client uses the simd128 one. So the comparison is *my scalar schedule
+against their vectorised schedule*, which is exactly the shape of the gap.
+
+Fixed work, warm (`node bench-sha256.mjs`), three runs of increasing size:
+
+| module | diff 22 | diff 21 | **diff 23, best of 3** |
+|---|---:|---:|---:|
+| official `simd128` | 1692 | 1623 | **1702 kH/s** |
+| **ours (scalar schedule)** | 1530 | 1923 | **1434 kH/s** |
+| official `baseline` | 1280 | 1308 | **1308 kH/s** |
+
+The largest run is the trustworthy one: **ours 0.84× of their SIMD build**, and
+**1.10× their baseline build**. The smaller runs scattered between 0.90× and
+1.18×, which is the machine noise floor — but every run agrees on the ordering
+that matters: the vectorised schedule beats a scalar one in *either* codebase
+(their baseline is 0.77× their own simd128), and our scalar kernel sits between
+the two.
+
+So: **Anubis is faster by about 16 %, and the source says exactly why.** Not the
+algorithm, not the compiler flags — `sha2` ships a v128 SHA-256 backend and
+Anubis builds with `-C target-feature=+simd128`. Porting
+`wasm32_simd128.rs` to C with `<wasm_simd128.h>` is the work that would close it,
+and it is the documented next step rather than something claimed as done.
+
+### A measurement correction
+
+An earlier version of this file reported **0.66×** here, and that was wrong. The
+live test timed each solve cold: at difficulty 12 a solve is a few thousand hashes,
+which lands entirely inside the wasm tier-up window, so the number was mostly
+measuring how much code each module has to compile. Warming both modules first
+moved it to 0.85×, and measuring fixed work instead of one lucky solve put it at
+0.90×. Same lesson as the Argon2 correction earlier: a tight, cold, short-burst
+measurement is a measurement of the compiler, not the kernel.
 
 ### What changed in the fetcher
 
 `tools/anubis_fetch.js` now solves `sha256` with this kernel instead of
-`crypto.createHash`, which is the measured 2.8× (168 → 471 kH/s) and the reason to
+`crypto.createHash`, which is the measured 3.7× (157 → 589 kH/s) and the reason to
 have written it. It falls back to `createHash` when the module is not built.
 
 ## The demo

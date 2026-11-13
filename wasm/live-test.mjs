@@ -107,6 +107,17 @@ async function webCryptoSolver(challenge, difficulty) {
 const officialSolve = await wasmModule(join(OFFICIAL, 'sha256.wasm'));
 const ourSolve = await wasmModule(join(HERE, 'sha256_pow.wasm'));
 
+// warm-up: one solve at an easy difficulty so the tier-up compiler has finished
+// before anything is timed. Without this, a difficulty-12 solve measures mostly
+// the baseline compiler tier.
+const WARM = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
+officialSolve(WARM, 8);
+ourSolve(WARM, 8);
+for (let i = 0; i < 2; i++) {
+  nodeCryptoSolver(WARM, 8);
+  await webCryptoSolver(WARM, 8);
+}
+
 const SOLVERS = [
   ['official wasm',   (c, d) => officialSolve(c, d)],
   ['our wasm',        (c, d) => ourSolve(c, d)],
@@ -151,7 +162,8 @@ for (const [name, solve] of SOLVERS) {
     const ms = rows.map((r) => r.ms).sort((a, b) => a - b)[Math.floor(rows.length / 2)];
     const hashes = rows.reduce((a, r) => a + r.n, 0);
     const seconds = rows.reduce((a, r) => a + r.ms, 0) / 1000;
-    results.push({ name, ok, ms, hashes, hps: hashes / seconds, rows });
+    const rates = rows.map((r) => r.n / (r.ms / 1000));
+    results.push({ name, ok, ms, hashes, hps: hashes / seconds, rows, rates });
     console.log(`  ${name.padEnd(14)} ${ms.toFixed(1).padStart(7)} ms (median)  ` +
                 `${(hashes / seconds / 1000).toFixed(1).padStart(7)} kH/s  ` +
                 `${ok ? 'accepted by the server' : 'REJECTED'}  ` +

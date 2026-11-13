@@ -137,13 +137,65 @@ static int has_enough_zero_bits(const uint8_t *h, uint32_t difficulty) {
     return 1;
 }
 
+/* One padded message block, built once per challenge: for inputs that fit in a
+ * single block with their padding (len + 4 <= 55, which covers every Anubis
+ * challenge in practice) the only per-nonce work is four byte writes and one
+ * compression. */
+static uint8_t blk[64];
+static uint32_t blk_npos;
+static int blk_fast;
+
+static void build_block_template(uint32_t len, int le) {
+    blk_fast = 0;
+    if (len + 4 > 55) return;
+    for (uint32_t i = 0; i < len; i++) blk[i] = buf[i];
+    blk[len + 4] = 0x80;              /* padding starts after the 4 nonce bytes */
+    for (uint32_t i = len + 5; i < 64; i++) blk[i] = 0;
+    const uint32_t bits = (len + 4) * 8;
+    blk[63] = (uint8_t)bits; blk[62] = (uint8_t)(bits >> 8);
+    blk[61] = (uint8_t)(bits >> 16); blk[60] = (uint8_t)(bits >> 24);
+    blk_npos = len;
+    (void)le;
+    blk_fast = 1;
+}
+
 uint32_t anubis_work(uint32_t difficulty, uint32_t nonce, uint32_t iterand) {
     if (iterand == 0) iterand = 1;
-    uint8_t input[BUF_MAX + 4];
     const uint32_t len = buf_len;
-    for (uint32_t i = 0; i < len; i++) input[i] = buf[i];
     /* nonce byte order follows the challenge's last byte */
     const int le = len > 0 && buf[len - 1] >= 0x80;
+
+    build_block_template(len, le);
+    if (blk_fast) {
+        for (;;) {
+            uint8_t *n = blk + blk_npos;
+            if (le) {
+                n[0] = (uint8_t)nonce;         n[1] = (uint8_t)(nonce >> 8);
+                n[2] = (uint8_t)(nonce >> 16); n[3] = (uint8_t)(nonce >> 24);
+            } else {
+                n[0] = (uint8_t)(nonce >> 24); n[1] = (uint8_t)(nonce >> 16);
+                n[2] = (uint8_t)(nonce >> 8);  n[3] = (uint8_t)nonce;
+            }
+            uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                             0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+            uint32_t w[16];
+            for (int i = 0; i < 16; i++)
+                w[i] = (uint32_t)blk[4 * i] << 24 | (uint32_t)blk[4 * i + 1] << 16 |
+                       (uint32_t)blk[4 * i + 2] << 8 | blk[4 * i + 3];
+            compress(h, w);
+            for (int i = 0; i < 8; i++) {
+                result[4 * i] = (uint8_t)(h[i] >> 24);
+                result[4 * i + 1] = (uint8_t)(h[i] >> 16);
+                result[4 * i + 2] = (uint8_t)(h[i] >> 8);
+                result[4 * i + 3] = (uint8_t)h[i];
+            }
+            if (has_enough_zero_bits(result, difficulty)) return nonce;
+            nonce += iterand;
+        }
+    }
+
+    uint8_t input[BUF_MAX + 4];
+    for (uint32_t i = 0; i < len; i++) input[i] = buf[i];
     for (;;) {
         uint8_t *n = input + len;
         if (le) {

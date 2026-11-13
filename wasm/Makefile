@@ -8,7 +8,7 @@ REPO    ?= ..
 HASHES  ?= 2000000
 OFFICIAL ?= /media/miku6/kubuntu_2404/home/miku/DOWN/pyani/anubis/web/static/wasm
 
-all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm argon2_fill_simd.wasm
+all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm argon2_fill_simd.wasm argon2_fill_c.wasm
 
 hashx_jit.wat: $(REPO)/tools/gen_hashx_wat.py $(REPO)/beyond/vectors/hx_vectors.hex
 	python3 $(REPO)/tools/gen_hashx_wat.py --out wasm/hashx_jit.wat
@@ -22,6 +22,13 @@ demo/hashx_jit.wasm: hashx_jit.wasm
 
 argon2_fill.wat: $(REPO)/tools/gen_argon2_wat.py
 	python3 $(REPO)/tools/gen_argon2_wat.py --out wasm/argon2_fill.wat
+
+# the recommended Argon2id kernel: C, -O3, no -msimd128 (measured slower)
+# wasm-ld comes from the lld package; point WASMLD at it if it is not on PATH
+argon2_fill_c.wasm: compiler/fill.c
+	clang --target=wasm32 -O3 -nostdlib -Wl,--no-entry -Wl,--export=fill_block \
+	      -Wl,--export-memory -o argon2_fill_c.wasm compiler/fill.c
+	@ls -l argon2_fill_c.wasm
 
 argon2_fill_simd.wat: $(REPO)/tools/gen_argon2_wat_simd.py
 	python3 $(REPO)/tools/gen_argon2_wat_simd.py --out wasm/argon2_fill_simd.wat
@@ -73,6 +80,7 @@ serve: all
 
 clean:
 	rm -f compiler/fill_*.wasm hashx_jit.wasm hashx_jit.wat demo/hashx_jit.wasm \
-	      argon2_fill.wasm argon2_fill.wat argon2_fill_simd.wasm argon2_fill_simd.wat
+	      argon2_fill.wasm argon2_fill.wat argon2_fill_simd.wasm argon2_fill_simd.wat \
+	      argon2_fill_c.wasm
 
 .PHONY: all bench a2i vectors compare serve clean

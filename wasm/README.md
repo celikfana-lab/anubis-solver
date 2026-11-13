@@ -91,80 +91,73 @@ Three things fall out of that:
 3. **We are already at parity with what ships.** Within noise of the official
    module, whose figure is a whole hash and ours is the mixing loop only.
 
-## So: raw WAT or C? — all three levers, measured
+## So: raw WAT or C? — measured, with C
 
-Four implementations of the same block function, all bit-exact against the C
-reference, warmed and measured twice: cache-resident, and memory-bound over the
-19 MiB arena a real hash uses. Best of three passes each.
+Six implementations of the same block function, all bit-exact against vectors
+compiled from the vendored C reference. Interleaved rounds, median of five, both
+regimes (a sequential sweep drifts with wasm tier-up and GC and flips the
+ranking — that mistake is documented below).
 
 | implementation | cache-resident | memory-bound | module size |
 |---|---:|---:|---:|
-| WAT, scalar (generated) | 1.40 µs | 2.55 µs | 26,859 B |
-| **WAT, v128 hand-written** | 2.21 µs | 2.45 µs | 35,292 B |
-| **rustc, scalar** | 2.08 µs | **1.90 µs** | **3,742 B** |
-| rustc, `+simd128` | 2.10 µs | 2.33 µs | 5,784 B |
+| WAT, scalar (generated) | 1.53 µs | 1.70 µs | 26,859 B |
+| **clang C, `-O3`** | 1.53 µs | **1.76 µs** | **3,683 B** |
+| rustc, scalar | 1.55 µs | 1.77 µs | 3,742 B |
+| WAT, v128 hand-written | 1.71 µs | 1.95 µs | 35,292 B |
+| rustc, `+simd128` | 1.97 µs | 2.21 µs | 5,784 B |
+| clang C, `-O3 -msimd128` | 2.02 µs | 2.32 µs | 6,173 B |
 | official Anubis baseline | — | 1.81–1.97 µs | 35,813 B |
 
-### 1. Explicit `v128`: it works, and it is not worth it
+**Answer: write C.** Not because it is faster — it is within 4 % of the
+hand-written WAT, inside the noise — but because it is **7× smaller** for that
+same speed, and because it is the version a person can maintain:
 
-`tools/gen_argon2_wat_simd.py` emits the round with two u64 per vector register.
-The column G's pair exactly — `G(i,i+4,i+8,i+12)` for i=0,1 is one vector G over
-`(q0,q2,q4,q6)` — and the diagonal G's need the same alignr-style shuffles the C
-SSE2 path uses. It is bit-exact on all three trials (128/128 words).
-
-**And it buys nothing**: 2.45 µs against 2.55 µs scalar in the memory-bound
-regime, inside the run-to-run noise. Halving the multiply count does not help
-because the kernel is not multiply-bound in the way the op count suggests — every
-round also round-trips 16 words through memory, and the shuffles for `fBlaMka`'s
-unsigned 32×32→64 multiply cost most of what the vector lanes save.
-
-One thing it *did* need: `i64x2.extmul_low_i32x4_u`. Rust's stable
-`core::arch::wasm32` exposes only the **signed** variant, so a Rust intrinsics
-version cannot express fBlaMka without a correction sequence that erases the win.
-In WAT the unsigned opcode is one instruction. That is the one place in this whole
-exercise where hand-written WAT could do something Rust could not — and it still
-was not faster.
-
-### 2. The memory access pattern: no headroom
-
-The same fill_block, 15,000 blocks, working set swept from 16 KiB to the real
-19 MiB (`node bench-memory.mjs`):
-
-```
-16 KiB   1.72 µs/block      1 MiB   1.86     16 MiB  1.60
-64 KiB   1.90 µs/block      4 MiB   1.89     19 MiB  1.62
+```bash
+cd wasm
+make argon2_fill_c.wasm        # the chosen kernel
+node bench-compiler.mjs        # the table above
 ```
 
-**Flat.** Argon2id is called memory-hard, and it is — for the whole 19 MiB
-hash — but a single 1 KiB block mixes three blocks (3 KiB of traffic in ~1.6 µs
-= under 2 GB/s), so the arithmetic dominates and the cache does not matter.
-There is nothing to prefetch your way out of, which is why no reordering was
-written: the measurement said not to bother.
+`wasm/argon2_fill_c.wasm` is built from `compiler/fill.c` by clang at `-O3`.
 
-### 3. Threads across nonces: the real win
+### What the measurements actually rule out
 
-`p=1` inside a hash is fixed by the challenge, so parallelism goes *across*
-nonces — which is why the official module takes an `iterand` parameter. Each
-nonce is an independent 19 MiB hash, so this scales:
+**`-msimd128` is a pessimisation, twice.** clang 2.32 µs against 1.76 scalar;
+rustc 2.21 against 1.77. Two independent compilers, the same conclusion: their
+auto-vectoriser does not help this kernel, it hurts. Not enabling it is a measured
+decision, not an oversight.
 
-```
- 1 worker    8.5 hashes/s
- 2 workers  17.9 hashes/s    2.11x   (ideal 2x)
- 4 workers  31.9 hashes/s    3.75x   (ideal 4x)
-```
+**Hand-written `v128` does not win either.** `tools/gen_argon2_wat_simd.py` pairs
+two u64 per register — the column G's pair exactly, the diagonals need the same
+alignr-style shuffles as the C SSE2 path — and it is bit-exact. It lands at
+1.95 µs: slower than plain C. Halving the multiply count does not help because
+every round round-trips 16 words through memory, and the `fBlaMka` shuffles cost
+most of what the lanes save.
 
-`node bench-threads.mjs` — near-linear, and the only lever with real headroom.
-Worker startup is included, so this understates it slightly at these hash counts.
-In a browser this is Web Workers; a tab gets one per core.
+That exercise did surface one real thing: `fBlaMka` needs the **unsigned** 32×32→64
+multiply, `i64x2.extmul_low_i32x4_u`. Rust's stable `core::arch::wasm32` exposes
+only the signed form, so a Rust intrinsics kernel cannot express it without a
+correction sequence that erases the win. clang's `wasm_simd128.h` has it; WAT has
+it. Worth knowing before writing Argon2 SIMD in Rust.
 
-### The answer
+**The memory access pattern has no headroom.** Sweeping the working set from
+16 KiB to the real 19 MiB leaves the per-block time flat (1.60–1.90 µs):
+one `fill_block` moves 3 KiB in ~1.6 µs, under 2 GB/s, so arithmetic dominates and
+the cache does not matter. No reordering was written, because the measurement said
+not to.
 
-**Write C or Rust, and spend the parallel budget on nonces.** Hand-written WAT is
-worth it only where a compiler *cannot express* the optimisation — a
+**Threads across nonces are the only real lever.** `p=1` inside a hash is fixed by
+the challenge, so parallelism goes across nonces — which is why the official module
+takes an `iterand`. 1 → 2 → 4 workers scales 2.11× / 3.75× (31.9 hashes/s at 4),
+near-linear, worker startup included.
+
+### The rule
+
+Hand-written WAT pays only where a compiler **cannot express** the optimisation: a
 challenge-defined program that must be interpreted or code-generated, which is the
-HashX case and where removing the interpreter was the whole 6×. For a fixed
-numeric kernel: the compiler is 7× smaller for the same speed, its scheduling is
-free, and here even a hand-written vector kernel did not beat it.
+HashX case, where removing the interpreter was the whole 6×. For a fixed numeric
+kernel the compiler is at least as fast, 7× smaller, and maintainable — so use it,
+and spend the parallel budget on nonces.
 
 ## The demo
 

@@ -708,37 +708,36 @@ difficulty-16 challenge, and they return the **same nonce (180078) and the same
 digest** — the official module is 7-9x slower on the same work. Three
 implementations (our C engine, our WAT, Anubis's Rust) agreeing is the evidence.
 
-### WebAssembly: Argon2id, and a correction
+### WebAssembly: Argon2id, six implementations
 
-An earlier entry here claimed the WAT port of Argon2id's fill core was 3.5-4.5x
-slower than the official module. That number was an artifact: the WAT side was
-timed cold and cache-resident (three fixed 1 KiB blocks, one pass, wasm still on
-its baseline tier) against a warm memory-bound whole hash. Re-measured properly —
-warm, best of three, references scattered across the 19 MiB arena:
+The Argon2id fill core, ported six ways and checked bit-exact against vectors
+compiled from the vendored C reference. Interleaved rounds, median of five:
 
 | implementation | cache-resident | memory-bound | size |
 |---|---:|---:|---:|
-| hand-written WAT | 1.59 us | 1.61 us | 26,859 B |
-| rustc -> wasm (scalar) | 1.49 us | 1.74 us | 3,742 B |
-| rustc -> wasm (+simd128) | 1.94 us | 2.20 us | 5,784 B |
+| WAT, scalar (generated) | 1.53 us | 1.70 us | 26,859 B |
+| clang C, -O3 | 1.53 us | 1.76 us | 3,683 B |
+| rustc, scalar | 1.55 us | 1.77 us | 3,742 B |
+| WAT, v128 hand-written | 1.71 us | 1.95 us | 35,292 B |
+| rustc, +simd128 | 1.97 us | 2.21 us | 5,784 B |
+| clang C, -O3 -msimd128 | 2.02 us | 2.32 us | 6,173 B |
 | official Anubis baseline | - | 1.81-1.97 us | 35,813 B |
-| official Anubis simd128 | - | 1.82-2.00 us | 35,593 B |
 
-(all per 1 KiB block; repeat runs of the same binary vary 1.6-2.3 us, so treat
-differences under ~30% as noise)
+Three conclusions, all measured rather than argued:
 
-Conclusions that survive the noise:
+- **write C**: within 4% of hand-written WAT (inside the noise) and 7x smaller.
+- **`-msimd128` hurts**, in clang and in rustc. Their auto-vectoriser loses to
+  plain scalar on this kernel.
+- **hand-written v128 loses too** (1.95 us): every round round-trips 16 words
+  through memory, and the unsigned 32x32->64 multiplies fBlaMka needs cost ~4
+  shuffles each in wasm SIMD.
 
-- hand-written WAT is **not worth it** for this kernel: same speed as rustc's
-  output within noise, 7x larger.
-- `+simd128` auto-vectorisation is a **pessimisation** here (2.20 vs 1.74 us).
-- we are already at parity with the shipped module, so there is no big win left
-  in instruction scheduling — the remaining levers are explicit v128 intrinsics
-  and the memory access pattern.
+The parallel lever is real and elsewhere: p=1 is fixed by the challenge, so
+threads go across nonces - 2.11x on 2 workers, 3.75x on 4.
 
-Hand-written WAT paid off for HashX because a challenge-defined program must be
+Hand-written WAT paid for HashX because a challenge-defined program must be
 interpreted or code-generated, and removing the interpreter was the whole 6x.
-Where there is no interpreter, the compiler's scheduling is free.
+Where there is no interpreter, use a compiler.
 
 ### Tesla T4 (sm_75): the SHA-256 kernel and its SASS
 

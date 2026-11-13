@@ -46,6 +46,8 @@ const CASES = [
   ['WAT, v128 (hand)', fileURLToPath(new URL('./argon2_fill_simd.wasm', import.meta.url))],
   ['rustc, scalar', fileURLToPath(new URL('./compiler/fill_scalar.wasm', import.meta.url))],
   ['rustc, +simd128', fileURLToPath(new URL('./compiler/fill_simd.wasm', import.meta.url))],
+  ['clang C, -O3 (chosen)', fileURLToPath(new URL('./argon2_fill_c.wasm', import.meta.url))],
+  ['clang C, -O3 -msimd128', fileURLToPath(new URL('./compiler/fill_c_simd.wasm', import.meta.url))],
 ];
 
 const blockAddr = (b) => ARENA + (b % BLOCKS_M) * 1024;
@@ -103,19 +105,39 @@ function timeMemoryBound(ex) {
   return best;
 }
 
-console.log(`Argon2id fill_block — ${BLOCKS} blocks x 3 passes, best of three, all four correct\n`);
-console.log('  implementation            cache-resident      memory-bound (19 MiB)');
-const rows = [];
+const ROUNDS = 5;
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+
+const impls = [];
 for (const [label, path] of CASES) {
   const ex = await prepare(path);
-  const ok = verify(ex) ? 'correct' : 'WRONG';
-  const resident = timeResident(ex);
-  const bound = timeMemoryBound(ex);
-  rows.push({ label, resident, bound, bytes: readFileSync(path).length, ok });
-  console.log(`  ${label.padEnd(22)} ${(resident / 1000).toFixed(2).padStart(6)} us/block   ` +
-              `${(bound / 1000).toFixed(2).padStart(6)} us/block   ${String(readFileSync(path).length).padStart(6)} B  ${ok}`);
+  impls.push({ label, ex, bytes: readFileSync(path).length, ok: verify(ex), resident: [], bound: [] });
 }
-const bestBound = Math.min(...rows.map((r) => r.bound));
+
+// interleaved rounds, median per implementation: a sequential sweep lets wasm
+// tier-up and GC drift the ranking, which is what made earlier runs disagree
+for (let r = 0; r < ROUNDS; r++) {
+  for (const im of impls) {
+    im.resident.push(timeResident(im.ex));
+    im.bound.push(timeMemoryBound(im.ex));
+  }
+  // one warm-up GC pause between rounds where the runtime exposes it
+  if (global.gc) global.gc();
+}
+
+console.log(`Argon2id fill_block — ${BLOCKS} blocks, ${ROUNDS} interleaved rounds, median\n`);
+console.log('  implementation              cache-resident   memory-bound (19 MiB)     size');
+const rows = impls.map((im) => ({
+  label: im.label, bytes: im.bytes, ok: im.ok,
+  resident: median(im.resident), bound: median(im.bound),
+}));
+for (const r of rows) {
+  console.log(`  ${r.label.padEnd(26)} ${(r.resident / 1000).toFixed(2).padStart(6)} us/block  ` +
+              `${(r.bound / 1000).toFixed(2).padStart(8)} us/block  ${String(r.bytes).padStart(7)} B  ${r.ok ? 'correct' : 'WRONG'}`);
+}
+const best = Math.min(...rows.map((r) => r.bound));
 console.log('\n  relative to the fastest memory-bound implementation:');
-for (const r of rows) console.log(`    ${r.label.padEnd(22)} ${(r.bound / bestBound).toFixed(2)}x   ` +
-  `(equivalently ${(1e9 / (r.bound * BLOCKS_PER_HASH)).toFixed(1)} hashes/s if this were the whole hash)`);
+for (const r of [...rows].sort((a, b) => a.bound - b.bound)) {
+  console.log(`    ${r.label.padEnd(26)} ${(r.bound / best).toFixed(2)}x   ` +
+    `(${(1e9 / (r.bound * BLOCKS_PER_HASH)).toFixed(1)} hashes/s if this were the whole hash)`);
+}

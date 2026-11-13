@@ -739,6 +739,50 @@ Hand-written WAT paid for HashX because a challenge-defined program must be
 interpreted or code-generated, and removing the interpreter was the whole 6x.
 Where there is no interpreter, use a compiler.
 
+### What uses less RAM, and what uses less CPU
+
+Same two servers, same three clients, read from `/proc` (the kernel's numbers, not
+an estimate). Servers serving 300 challenge pages and 40 full pass-challenge
+exchanges each:
+
+| server | idle RSS | threads | CPU per challenge page | CPU per verification |
+|---|---:|---:|---:|---:|
+| Anubis v1.28.3 (Go) | **45.7 MB** | 17 | 900 µs | 2.75 ms |
+| **betterAnusbis (C)** | **2.1 MB** | **1** | **500 µs** | **1.25 ms** |
+
+**betterAnusbis uses 22x less RAM and about half the CPU.** Neither grows under
+load: RSS after 300 pages equals idle RSS, and peak RSS (`VmHWM`) never moved, so
+neither server leaks per request. Anubis's 45.7 MB is its Go runtime and the
+machinery around it — six wasm modules are only ~200 KB of that, so this is the cost
+of the runtime, not the challenges. betterAnusbis's 2.1 MB is the process: 32-byte
+secret, a 4096-entry honeypot table (~96 KB), and one thread per connection.
+
+The verification row is where the engines differ: Anubis re-checks each answer
+through its wasm module via wazero (2.75 ms), betterAnusbis calls
+`libanubis_solver.so` (1.25 ms).
+
+Clients, per hash of SHA-256 work:
+
+| client | memory | CPU per hash | implied rate |
+|---|---:|---:|---:|
+| Anubis `sha256.wasm` | 1.06 MiB linear | 637 ns | 1.57 M/s |
+| **our wasm, 4 nonces wide** | **0.13 MiB linear** | **364 ns** | 2.74 M/s |
+| **native `.so`, 1 thread** | 36.3 MB process RSS | **194 ns** | 5.15 M/s |
+
+The wasm numbers are the whole cost of the page's solver: linear memory is what the
+wasm instance allocates, and it is single-threaded so CPU time and wall time are the
+same. **Our kernel is 8x smaller in memory and 1.75x cheaper per hash** than the
+module Anubis ships — the 4-wide batching keeps one 64-byte block and a hand-rolled
+schedule, where the official module carries a general-purpose SHA-256 with more
+working state.
+
+The native row is a different shape of cost and is labelled as such: it is a separate
+process the user opted into, its RSS is mostly CPython (~30 MB of the 36.3 MB), and
+it uses the SHA-NI kernel. 194 ns is *one* thread; the default is four, which is
+where the ~20 M hashes/s wall-clock figure comes from. A native host written in C
+rather than Python would drop that RSS to a few MB — it is the one number in this
+document that is clearly left on the table.
+
 ### The wall, end to end: two servers x three clients
 
 The combinations asked for, both against a real backend on the same machine, all

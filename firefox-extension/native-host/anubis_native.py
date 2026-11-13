@@ -100,7 +100,10 @@ def main(argv: list[str]) -> int:
     def get_solver():
         nonlocal solver
         if solver is None:
-            solver = module.AnubisSolver()
+            # ANUBIS_THREADS pins the worker count; useful for benchmarks that need
+            # a single-threaded number, and on machines with a busy CPU
+            threads = os.environ.get("ANUBIS_THREADS")
+            solver = module.AnubisSolver(threads=int(threads) if threads else None)
             _log(
                 f"libanubis_solver {solver.version} · {solver.threads} threads · "
                 f"sha256 batch {solver.batch_width} · gpu {solver.gpu or 'none'}"

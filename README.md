@@ -191,15 +191,27 @@ manifest locations (Linux/macOS/Windows) and the add-on ID requirement.
 ### HashX compiled to WebAssembly
 
 A HashX program is fixed for a whole challenge, so it does not need to be
-interpreted. `tools/gen_hashx_wat.py` emits the 512-instruction program as
-straight-line WAT, `wat2wasm` assembles it, and the result beats the module
-Anubis itself ships:
+interpreted. This started as a build-time experiment — `tools/gen_hashx_wat.py`
+emits the 512-instruction program as straight-line WAT and `wat2wasm` assembles
+it — and it is now the **default path in the browser**: `wasm/hashx_jit.mjs` does
+the same derivation and emits the wasm bytes in plain JavaScript, so every
+challenge gets a compiled module with no toolchain involved, falling back to the
+interpreter only if the compile fails.
+
+| path | how | hashes/s | |
+|---|---|---:|---|
+| **`wasm/hashx_jit.mjs`** | compiled from the challenge, in the page | **2.9-3.2 M** | **7x the interpreter** |
+| `wasm/hashx_pow.wasm` | interpreted, same ABI as Anubis's module | 0.43-0.46 M | 1.18x official |
+| `baseline/hashx.wasm` (official) | interpreted in Rust | 0.37-0.44 M | |
+| `simd128/hashx.wasm` (official) | interpreted in Rust, SIMD build | 0.37-0.50 M | |
+
+The build-time artifact is still committed as the reference for one fixed
+challenge:
 
 | module | size | hashes/s | |
 |---|---:|---:|---|
-| **`wasm/hashx_jit.wasm`** (compiled WAT) | **10,232 B** | **2,060,938** | |
-| `baseline/hashx.wasm` (official Anubis) | 35,983 B | 329,083 | **6.26× slower** |
-| `simd128/hashx.wasm` (official Anubis) | 35,863 B | 350,914 | **5.87× slower** |
+| **`wasm/hashx_jit.wasm`** (compiled WAT, committed) | **10,232 B** | **2,060,938** | |
+| official `hashx.wasm`, either build | 35,9xx B | 329,083-350,914 | **5.9-6.3× slower** |
 
 Same 2 M hashes, same challenge, Node 26. And the three implementations — our C
 engine, our compiled WAT, Anubis's Rust module — agree on the nonce *and* the

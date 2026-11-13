@@ -148,8 +148,8 @@ drives them through the same ABI Anubis's modules use — `data_ptr`,
 | algorithm | kernel | size | digest vs Anubis's own module |
 |---|---|---:|---|
 | `sha256` | `sha256_pow_batch.wasm` (four nonces wide) | 38.7 KB | exact, and **1.8-2.1x faster** |
-| `argon2id` | `argon2id_pow.wasm` (vendored reference, m=19456 t=2 p=1) | 16.6 KB | **identical** |
-| `hashx` | `hashx_pow.wasm` (our interpreter, LGPL part of this repo) | 16.7 KB | **identical** |
+| `argon2id` | `argon2id_pow.wasm` (our register-resident fill, m=19456 t=2 p=1) | 13.9 KB | **exact, and 1.02-1.05x faster** |
+| `hashx` | compiled in the page from the challenge (`hashx_jit.mjs`), falling back to `hashx_pow.wasm` | 10.4 KB / 14.9 KB | **identical** |
 
 `fast`, `slow` and `metarefresh` are solved inline in JS, so a page needs no
 network round trip for the cheap algorithms.
@@ -159,14 +159,17 @@ Anubis's own modules (one hash per call, warm):
 
 | kernel | ours | Anubis's | verdict |
 |---|---:|---:|---|
-| `hashx` | 0.13 ms/hash | 0.16 ms/hash | **1.26x faster** |
-| `argon2id` | 161 ms/hash | 72 ms/hash | **2.2x slower** |
+| `hashx` (compiled in the page) | 0.34 µs/hash | 2.73 µs/hash | **7.9x faster** |
+| `hashx` (interpreter fallback) | 2.31 µs/hash | 2.73 µs/hash | **1.18x faster** |
+| `argon2id` | 65-75 ms/hash | 68-76 ms/hash | **1.02-1.05x faster** |
 
-The digests are identical; the Argon2id *speed* is not. That module is built on the
-vendored **reference** implementation, whose `fill_block` expands its round over
-memory locations instead of registers, and that is the entire 2.2x.
-`SPEED.md#argon2id-in-wasm-the-block-is-at-parity-the-module-is-not` has the
-measurement and what fixing it involves.
+The digests are identical, and both are now faster. Argon2id got there in two
+steps: the module had been built with `-ffreestanding`, which turns every 1 KiB
+block copy into a call to a byte-at-a-time `memcpy` (2.0x, and the whole of the
+"161 ms"), and the fill loop was then rewritten to keep each round in registers
+(`wasm/argon2_fill_fast.c`, another 1.25x).
+`SPEED.md#argon2id-in-wasm-why-it-was-2x-slower-and-what-fixed-it` has the
+measurements, including the flag variants that did not work.
 
 ## Policy
 

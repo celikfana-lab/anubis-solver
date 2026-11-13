@@ -12,11 +12,13 @@
  *   fast, slow   SHA-256(challenge || decimal nonce), leading zero NIBBLES
  *   sha256       SHA-256(raw challenge || u32 nonce), leading zero BITS
  *   metarefresh  follow the refresh, which is what proves a browser
+ *   hashx        compiled to wasm for this challenge by ../wasm/hashx_jit.mjs,
+ *                then searched in wasm - no interpreter, no toolchain
  *   argon2id     not implemented here - needs ~19 MiB of memory-hard work; the
- *   hashx        Python driver (tools/anubis_fetch.py) or the C engine does it
+ *                Python driver (tools/anubis_fetch.py) or the C engine does it
  *
- * For argon2id/hashx this module throws UnsupportedAlgorithmError; the DSH plugin
- * falls back to the Python driver when it is available, and says so when it is not.
+ * For argon2id this module throws UnsupportedAlgorithmError; the DSH plugin falls
+ * back to the Python driver when it is available, and says so when it is not.
  */
 
 import { createHash } from 'node:crypto';
@@ -294,6 +296,38 @@ export async function solveBits(challengeHex, difficulty) {
   throw new Error(`anubis: no bit solution in ${MAX_NONCE_SCAN} nonces`);
 }
 
+/**
+ * Solve a `hashx` challenge by compiling it.
+ *
+ * A HashX challenge is a 512-instruction program derived from the challenge
+ * bytes, so it can be compiled once and run as straight-line wasm instead of
+ * interpreted. ../wasm/hashx_jit.mjs does the derivation and emits the module
+ * bytes in pure JavaScript, which makes the compiled path the default one here
+ * rather than a demo: it is 7x the interpreter, which is itself 1.2x the module
+ * Anubis ships.
+ *
+ * The compile costs ~6 ms, which only pays from about difficulty 12 upwards
+ * (12 bits is ~4096 hashes, 1.3 ms interpreted against 0.82 ms compiled here
+ * after the build). It is done unconditionally because the alternative is
+ * shipping a second code path for the cheap case, and a real deployment's hashx
+ * difficulty is well above that line.
+ */
+async function solveHashX(randomData, difficulty) {
+  const { buildModule } = await import('../wasm/hashx_jit.mjs');
+  const challenge = Buffer.from(randomData, 'hex');
+  const bytes = buildModule(challenge);
+  const { instance } = await WebAssembly.instantiate(bytes, {});
+  const ex = instance.exports;
+  new Uint8Array(ex.memory.buffer).set(challenge, ex.data_ptr());
+  ex.set_data_length(challenge.length);
+  const started = process.hrtime.bigint();
+  const nonce = ex.anubis_work(difficulty, 0, 1) >>> 0;
+  const digest = Buffer.from(
+    new Uint8Array(ex.memory.buffer, ex.result_hash_ptr(), ex.result_hash_size()),
+  );
+  return { nonce, response: digest.toString('hex'), elapsedMs: msSince(started) };
+}
+
 /** Solve one parsed challenge with the algorithm it names. */
 export async function solveChallenge(challenge) {
   const algorithm = String(challenge.algorithm ?? '').toLowerCase();
@@ -304,6 +338,9 @@ export async function solveChallenge(challenge) {
   if (algorithm === 'sha256' || algorithm === 'wasm-sha256') {
     // solveBits may load the wasm kernel on first use
     return { algorithm, difficulty, ...(await solveBits(challenge.randomData, difficulty)) };
+  }
+  if (algorithm === 'hashx') {
+    return { algorithm, difficulty, ...(await solveHashX(challenge.randomData, difficulty)) };
   }
   if (algorithm === 'metarefresh') {
     throw new Error(

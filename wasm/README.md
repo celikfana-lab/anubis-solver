@@ -103,7 +103,7 @@ ranking — that mistake is documented below).
 | WAT, scalar (generated) | 1.53 µs | 1.70 µs | 26,859 B |
 | **clang C, `-O3`** | 1.53 µs | **1.76 µs** | **3,683 B** |
 | rustc, scalar | 1.55 µs | 1.77 µs | 3,742 B |
-| WAT, v128 hand-written | 1.71 µs | 1.95 µs | 35,292 B |
+| WAT, v128 hand-written (rewritten) | 1.21 µs | 1.53 µs | 39,887 B |
 | rustc, `+simd128` | 1.97 µs | 2.21 µs | 5,784 B |
 | clang C, `-O3 -msimd128` | 2.02 µs | 2.32 µs | 6,173 B |
 | official Anubis baseline | — | 1.81–1.97 µs | 35,813 B |
@@ -119,6 +119,9 @@ node bench-compiler.mjs        # the table above
 ```
 
 `wasm/argon2_fill_c.wasm` is built from `compiler/fill.c` by clang at `-O3`.
+The kernel that actually ships is the same round in `wasm/argon2_fill_fast.c`,
+which adds the rest of `fill_segment` around it so the whole Argon2id hash can be
+built without the reference implementation's memory-based block function.
 
 ### What the measurements actually rule out
 
@@ -127,12 +130,37 @@ rustc 2.21 against 1.77. Two independent compilers, the same conclusion: their
 auto-vectoriser does not help this kernel, it hurts. Not enabling it is a measured
 decision, not an oversight.
 
-**Hand-written `v128` does not win either.** `tools/gen_argon2_wat_simd.py` pairs
-two u64 per register — the column G's pair exactly, the diagonals need the same
-alignr-style shuffles as the C SSE2 path — and it is bit-exact. It lands at
-1.95 µs: slower than plain C. Halving the multiply count does not help because
-every round round-trips 16 words through memory, and the `fBlaMka` shuffles cost
-most of what the lanes save.
+**Hand-written `v128` does not win either, and now we know exactly why.** The
+rewritten `tools/gen_argon2_wat_simd.py` is bit-exact and lands at 1.21 µs/block
+resident against the scalar module's 1.32 (both measured inside wasm, 128/128
+vectors). But that is *resident*: with the real 19 MiB working set the same pair
+is 1.53 against 1.59, a tie. The round itself is the problem, and it is
+instruction-level:
+
+- `i64x2.extmul_low_i32x4_u` is **not** `vpmuludq`. It multiplies i32 lanes 0 and
+  1, which in the natural u64 layout are the two halves of *the same word*, so
+  each operand has to be gathered into lanes 0,1 first (`i8x16.shuffle`), and V8
+  lowers the extmul itself as `vpunpckldq` + `vpunpckldq` + `vpmuludq`. Four
+  shuffle-port uops per `fBlaMka`.
+- `rot24` is a `pshufb` whose mask V8 rematerialises inline; `rot16` becomes
+  `vpshuflw` + `vpshufhw`. 320 shuffle-port uops per block.
+
+On a CPU with one shuffle port that is the whole story: V8's TurboFan listing for
+the fill is 4,432 instructions of which 1,472 are shuffle-port uops, against 4,791
+instructions and **zero** shuffles for the scalar form. Measured rounds-only, in
+module, the v128 round is 1.31–1.49x the scalar round, and no restructuring
+changes that — the packing is the price of the 2-wide multiply.
+
+**What the v128 work did buy** is the plumbing: the copy and the final XOR
+unrolled to 64 `v128` steps with the `with_xor` branch hoisted, instead of
+128-iteration scalar loops. Scalar rounds on that plumbing measure 1.24 µs/block
+scattered against the scalar module's 1.59, and that is the fastest correct fill
+measured here. It is *not* shipped as the module because it does not transfer to
+C: both an unrolled/hoisted C version (1.06x the current module) and explicit
+`wasm_simd128.h` intrinsics under `-msimd128` (1.23x) came out slower, since
+`-msimd128` pessimises the round more than the plumbing saves. The 1 KiB copies
+that the shipped module uses are already `memory.copy`, which is the same idea by
+another route. `wasm/bench-fill-inmodule.mjs` reproduces every row.
 
 That exercise did surface one real thing: `fBlaMka` needs the **unsigned** 32×32→64
 multiply, `i64x2.extmul_low_i32x4_u`. Rust's stable `core::arch::wasm32` exposes
@@ -400,15 +428,30 @@ because `fetch()` is used for the modules.
 | `argon2_fill.wat`, `argon2_fill.wasm` | the Argon2id fill core, generated |
 | `verify-a2i.mjs`, `bench-a2i.mjs` | its correctness check and benchmark |
 | `ref_fill_vectors.c`, `fill_vectors.txt` | vectors from the vendored C reference |
+| `argon2_fill_fast.c` | the fill loop that ships: each round kept in registers |
+| `hashx_jit.mjs` | the runtime HashX compiler: derives the program, emits the wasm bytes |
+| `verify-jit.mjs` | its cross-check against the interpreter and the committed module |
+| `argon2id_pow.wasm` | the whole Argon2id hash in Anubis's ABI, 13.9 KB |
+| `hashx_pow.wasm` | HashX interpreter in Anubis's ABI, 14.9 KB |
+| `verify-a2i-module.mjs`, `verify-hashx-module.mjs` | whole-module checks against the official ones |
 
 `make` regenerates the WAT and the wasm; `make bench`, `make serve`, `make clean`.
+`make verify-module` is the one to run after touching a shipped kernel: it hands
+ten random challenges to the official Anubis modules and requires them to accept
+our answers, so a silently miscompiled build fails the test instead of shipping.
+(That happened once: `-ffreestanding` on the Argon2id module made every 1 KiB
+block copy a byte-at-a-time `memcpy` call and cost 2.0x. See
+[../SPEED.md](../SPEED.md#argon2id-in-wasm-why-it-was-2x-slower-and-what-fixed-it).)
 
 ## Limits, stated plainly
 
-- **One challenge, one program.** The WAT is generated for the challenge in
-  `beyond/vectors/hx_vectors.hex` case 0. A real deployment runs the generator
-  at challenge time; the generator is the JIT, WAT is its output. Nothing here
-  compiles arbitrary challenges *in the browser*.
+- **`hashx_jit.wasm` is one challenge's program.** The committed module is
+  generated for the challenge in `beyond/vectors/hx_vectors.hex` case 0, so it is
+  a demo artifact and a reference point. The general path is `hashx_jit.mjs`,
+  which does the same derivation and emission in JavaScript for whatever
+  challenge the server sends, with no toolchain. That is what `betterAnusbis`
+  runs, and it is 7x the interpreter; the committed wat/wasm pair is what a
+  build-time generator produces for a fixed challenge.
 - **The official numbers are this machine, one Node version** (26.13). Wasm
   engines differ a lot; wasmtime or V8 in a browser will not give identical
   numbers. The ratio is the interesting quantity, not the absolute rate.

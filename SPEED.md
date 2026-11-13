@@ -31,8 +31,15 @@ between algorithms is what matters.
 |---|---:|---|
 | `fast`, `slow` | ~8.3 M/s | AVX2 8-way, one SHA-256 compression per 8 candidates |
 | `sha256` (WASM) | ~8.0 M/s | same kernel, fixed 4-byte nonce tail |
-| `hashx` (WASM) | ~3.6 M/s | interpreted HashX program |
-| `argon2id` (WASM) | ~34/s | ~19 MiB and ~30 ms per hash |
+| `hashx` (WASM, compiled) | ~3.2 M/s | the challenge's program compiled to wasm in the page |
+| `hashx` (WASM, interpreted) | ~0.46 M/s | fallback when the compile cannot run |
+| `argon2id` (WASM) | ~15/s | 19,456 KiB and ~65 ms per hash |
+
+Correcting an earlier row here: this table used to say `hashx` was 3.6 M/s
+"interpreted". It is not. The interpreter measures 0.46 M/s and the 3.2-3.6 M/s
+figure is the compiled program, so the row was crediting the interpreter with
+the JIT's number. The interpreter is still 1.16x the module Anubis ships
+(0.456 M/s against 0.394 M/s), and the compiled path is 8.1x it.
 
 ## Tier tables
 
@@ -57,23 +64,27 @@ Anubis' documented light/medium/hard tiers (see the
 
 ### `hashx` (WASM)
 
+The browser now compiles the challenge's program to wasm before hashing it, so
+these are the compiled numbers with the interpreter in brackets:
+
 | tier | difficulty | expected hashes | expected time |
 |---|---:|---:|---:|
-| light | 7 | 128 | 0.2 ms |
-| medium | 15 | 32,768 | 15 ms |
-| hard | 20 | 1,048,576 | 294 ms |
+| light | 7 | 128 | 40 µs (281 µs) |
+| medium | 15 | 32,768 | 10.3 ms (72 ms) |
+| hard | 20 | 1,048,576 | 330 ms (2.3 s) |
 
 ### `argon2id` (WASM)
 
 | tier | difficulty | expected hashes | expected time |
 |---|---:|---:|---:|
-| light | 2 | 4 | 148 ms |
-| medium | 4 | 16 | 508 ms |
-| hard | 6 | 64 | 1.85 s |
+| light | 2 | 4 | 260 ms |
+| medium | 4 | 16 | 1.03 s |
+| hard | 6 | 64 | 4.1 s |
 
 `argon2id` is deliberately expensive per attempt, so its observed hashrate is
-~34/s per core — and each worker thread needs ~19 MiB, so 16 threads cost
-~300 MiB.
+~15/s per core — and each worker thread needs ~19 MiB, so 16 threads cost
+~300 MiB. These numbers were 30% faster than reality before the module was
+rebuilt; see [the wasm section](#argon2id-in-wasm-why-it-was-2x-slower-and-what-fixed-it).
 
 ## Per-version table
 
@@ -718,7 +729,7 @@ compiled from the vendored C reference. Interleaved rounds, median of five:
 | WAT, scalar (generated) | 1.53 us | 1.70 us | 26,859 B |
 | clang C, -O3 | 1.53 us | 1.76 us | 3,683 B |
 | rustc, scalar | 1.55 us | 1.77 us | 3,742 B |
-| WAT, v128 hand-written | 1.71 us | 1.95 us | 35,292 B |
+| WAT, v128 hand-written (rewritten) | 1.21 us | 1.53 us | 39,887 B |
 | rustc, +simd128 | 1.97 us | 2.21 us | 5,784 B |
 | clang C, -O3 -msimd128 | 2.02 us | 2.32 us | 6,173 B |
 | official Anubis baseline | - | 1.81-1.97 us | 35,813 B |
@@ -728,9 +739,13 @@ Three conclusions, all measured rather than argued:
 - **write C**: within 4% of hand-written WAT (inside the noise) and 7x smaller.
 - **`-msimd128` hurts**, in clang and in rustc. Their auto-vectoriser loses to
   plain scalar on this kernel.
-- **hand-written v128 loses too** (1.95 us): every round round-trips 16 words
-  through memory, and the unsigned 32x32->64 multiplies fBlaMka needs cost ~4
-  shuffles each in wasm SIMD.
+- **hand-written v128 loses too**: 1.53 us memory-bound against the scalar
+  module's 1.59, a tie. The round costs 1.31-1.49x the scalar round because the
+  unsigned 32x32->64 multiply fBlaMka needs is not `vpmuludq` in wasm SIMD - it
+  multiplies adjacent i32 lanes, so each operand needs a shuffle to gather the
+  two low halves first, and V8 then lowers the extmul with two more. Four
+  shuffle-port uops per fBlaMka, 1,472 shuffle uops per block on a CPU with one
+  shuffle port. `wasm/README.md` has the instruction counts.
 
 The parallel lever is real and elsewhere: p=1 is fixed by the challenge, so
 threads go across nonces - 2.11x on 2 workers, 3.75x on 4.
@@ -739,26 +754,79 @@ Hand-written WAT paid for HashX because a challenge-defined program must be
 interpreted or code-generated, and removing the interpreter was the whole 6x.
 Where there is no interpreter, use a compiler.
 
-### Argon2id in wasm: the block is at parity, the module is not
+### Argon2id in wasm: why it was 2x slower, and what fixed it
 
-Two different artifacts, and they do not have the same verdict — conflating them is
-how a "parity" claim became misleading:
+The verdict flipped twice here, so the whole sequence is worth recording. Both
+times the artifact under test changed, and both times I stated a result that was
+true of one artifact and false of another.
 
-| artifact | what it is | vs Anubis | note |
-|---|---|---|---|
-| `argon2_fill_c.wasm` | the **block function** alone (1 KiB), clang `-O3` | **parity**: 1.76 µs/block against their 1.81-1.97 | 16 words in registers, unrolled |
-| `argon2id_pow.wasm` | the **whole hash** (H0, 38,912 block fills, H′), Anubis ABI | **2.2x slower**: 161 ms against 72 ms | built on the vendored *reference* driver |
+**Final numbers**, one process, all modules interleaved over five rounds, warm,
+median, hashes counted from the nonce the search returned rather than from the
+number of calls (m=19456 KiB, t=2, p=1 is 38,912 block fills per hash):
 
-The reference driver's `fill_block` works through `unsigned long long v[128]` with
-`BLAKE2_ROUND_NOMSG` expanding over memory locations, so the round cannot keep its
-16 words in registers — that is the whole 2.2x, and it is not a compiler flag.
-`-funroll-loops` makes it *worse* (179 ms), which was tested rather than assumed.
+| module | ms/hash | µs/block | note |
+|---|---:|---:|---|
+| **`argon2id_pow.wasm`** (now) | **64.6 - 74.8** | **1.66 - 1.92** | `argon2_fill_fast.c`, clang `-O3` |
+| Anubis `baseline/argon2id.wasm` | 67.8 - 76.0 | 1.74 - 1.95 | their scalar build |
+| Anubis `simd128/argon2id.wasm` | 69.9 - 78.8 | 1.80 - 2.02 | their shipped SIMD build |
+| `argon2id_pow.wasm` (previous) | 131.5 - 162.6 | 3.38 - 4.18 | what the last three releases shipped |
 
-Anubis's 72 ms is 38,912 blocks at 1.85 µs — their driver adds essentially nothing
-over its own fill. Ours spends 68 ms in the same fill and 93 ms in the reference
-driver's memory-based version of it. Closing that means writing the Argon2 driver
-(H0, index_alpha, the passes, H′) around the register-resident fill that already
-exists, not tuning the build.
+The ranges are two runs on the same machine at different times, not error bars on
+one measurement: this laptop drifts by 30% with load and governor. So the claim
+is the ratio within a run, which is stable at **1.02-1.05x faster than Anubis's
+module** and **2.03-2.17x faster than the binary we were shipping**. Two
+independent causes, in this order of size:
+
+**1. The build was miscompiled by one flag.** The old `argon2id_pow.wasm`
+contains 73 `call $memcpy` sites and no `memory.copy`; the same sources built
+without `-ffreestanding` contain `memory.copy` and none of those calls.
+`-ffreestanding` (and `-mcpu=mvp`, which does the same thing for a different
+reason) disables the compiler's builtin `memcpy`, so each 1 KiB `copy_block` and
+`xor_block` inside `fill_block` became a call to the byte-at-a-time shim in
+`wasm_string.c`. Reproduced from clean sources:
+
+| build | ms/hash | `call $memcpy` |
+|---|---:|---:|
+| `-O3 -ffreestanding` | 161.8 | 73 |
+| `-O3` (default `-mcpu`) | 86.6 | 0 |
+| `-O3 -msimd128` | 99.2 | 0 |
+| `-O2` | 81.3 | 0 |
+
+That is a 1.9x loss from a flag that looks like it belongs in a `-nostdlib` build
+and does nothing useful. This is why the previous version of this section blamed
+the reference implementation: the 161 ms I measured was real, but it was 80 ms of
+reference code and 80 ms of my flag.
+
+**2. Half of the rest was the reference block function.** `ref.c` expands
+`BLAKE2_ROUND_NOMSG` over a block-wide `uint64_t v[128]` inside a
+`for (i = 0; i < 8; ++i)` loop, so the 16 words of a round are indexed by a loop
+variable and never leave memory. `wasm/argon2_fill_fast.c` gathers each round
+into a 16-word local with constant indices, rounds it in registers, and scatters
+it back: 32 loads and 32 stores per round instead of 128 of each. The rest of the
+driver (H0, H′, `index_alpha`, the passes) is still the reference package, which
+is why the digests still match byte for byte.
+
+**What did not work**, tested rather than assumed: `-msimd128` is 8-15% slower
+here (LLVM's auto-vectorised BLAKE2 round beats scalar in instruction count and
+loses in practice), and Anubis's own `simd128` module is also slower than its
+`baseline` one, so this is a property of the toolchain and not of our code.
+`-funroll-loops` was neutral to worse. A "skip the saved-XOR array on pass 0"
+rewrite measured 1.02x better and was **wrong** — with `with_xor` clear the
+saved value is `ref ^ prev`, not zero — so it is not in the tree; the module test
+caught it before it shipped.
+
+The claim to be careful about is the one about the *block function*. An earlier
+version of this file said "parity" while the tables around it were talking about
+the whole module. `argon2_fill_c.wasm` really is at parity with their block
+function (1.73-1.90 µs against 1.81-1.97, and that number moved with the machine
+every time I re-measured it). The module is where the money is, and the module is
+now ahead.
+
+Reproduce with `cd wasm && make verify-module`, which runs ten random challenges
+through our module and then hands each digest to the official Anubis module's own
+`anubis_validate`. Both speeds and both digests are in the same script:
+`node wasm/bench-a2i.mjs` for the block, `node wasm/verify-a2i-module.mjs` for the
+whole hash.
 
 ### What uses less RAM, and what uses less CPU
 

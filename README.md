@@ -133,8 +133,9 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 
 ## Documentation site
 
-[`web/`](web/) is a static site written for humans rather than for people who
-already know the project: a beginner walkthrough that assumes nothing, the six
+**[celikfana-lab.github.io/anubis-solver](https://celikfana-lab.github.io/anubis-solver/)**
+is a static site written for humans rather than for people who already know the
+project: a beginner walkthrough that assumes nothing, the six
 algorithms with what a difficulty number costs for each, a comparison against
 Anubis that includes the parts where Anubis wins, every benchmark table with its
 protocol, and a page listing the claims that re-measurement proved wrong.

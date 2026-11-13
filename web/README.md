@@ -1,5 +1,9 @@
 # web/ — documentation for humans
 
+Published at **https://celikfana-lab.github.io/anubis-solver/** by
+[`.github/workflows/pages.yml`](../.github/workflows/pages.yml), which lints the
+site and then uploads this directory as the Pages artifact.
+
 A small static site: an overview, a beginner walkthrough, a per-algorithm
 reference, a comparison against Anubis, the benchmark tables, and a page about
 the claims that measurement proved wrong.

@@ -34,6 +34,7 @@ node tools/bench-client-resources.mjs     # wasm vs native memory and CPU
 
 cd wasm && make verify-module              # our wasm kernels vs Anubis's own modules
 cd wasm && make verify-jit                 # the runtime HashX compiler, 63 checks
+cd web  && make check                      # the site: links, anchors, layout
 ```
 
 ## Layout
@@ -52,6 +53,7 @@ cd wasm && make verify-jit                 # the runtime HashX compiler, 63 chec
 | `docs/` | user and developer documentation |
 | `results/` | committed benchmark JSON |
 | `wasm/` | WebAssembly kernels (HashX interpreter and a runtime compiler, SHA-256 4-wide, Argon2id fill) + benchmarks + the module tests |
+| `web/` | the static documentation site: beginner guide, algorithms, comparison, benchmarks. `cd web && make check` |
 | `betterAnusbis/` | an Anubis-compatible PoW gate in one C file; links this library |
 | `firefox-extension/` | native messaging host so the browser uses `libanubis_solver.so` |
 | `beyond/`, `card/` | the hardware half: RTL, testbenches, QEMU PCI device + driver |

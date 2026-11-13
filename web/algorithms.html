@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The six algorithms — anubis-solver</title>
+<meta name="description" content="What each Anubis algorithm asks the client to compute, what a difficulty unit means for it, and how to choose one.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="wrap wrap--wide">
+    <a class="brand" href="index.html">anubis<span>-solver</span></a>
+    <nav class="site-nav" aria-label="Pages">
+      <a href="index.html">Overview</a>
+      <a href="beginner.html">Start here</a>
+      <a href="algorithms.html" aria-current="page">Algorithms</a>
+      <a href="comparison.html">vs Anubis</a>
+      <a href="benchmarks.html">Numbers</a>
+      <a href="mistakes.html">Mistakes</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <h1>The six algorithms</h1>
+    <p class="lead">
+      Anubis can ask for six different proofs. They are not variations on a theme:
+      one costs nothing, one costs a fraction of a millisecond, one costs 19 MiB and
+      about 70 ms per attempt. Choosing the wrong one makes a site either useless or
+      unusable, so the useful question is "what does this difficulty number actually
+      buy me".
+    </p>
+
+    <nav class="toc" aria-label="On this page">
+      <p>On this page</p>
+      <ul>
+        <li><a href="#units">Difficulty is two different things</a></li>
+        <li><a href="#table">The six, side by side</a></li>
+        <li><a href="#each">Each one, in detail</a></li>
+        <li><a href="#choose">Which should you deploy?</a></li>
+        <li><a href="#notcomparable">Why difficulty numbers are not comparable</a></li>
+      </ul>
+    </nav>
+
+    <h2 id="units">Difficulty is two different things</h2>
+    <p>
+      This is the trap worth reading first. Anubis measures difficulty in
+      <strong>leading zero bits</strong> for the WebAssembly algorithms and in
+      <strong>leading zero nibbles</strong> (hex digits, 4 bits) for the JavaScript
+      ones. So:
+    </p>
+    <div class="table-scroll">
+      <table>
+        <caption>Anubis's own source checks the JS ones with
+        <code>strings.HasPrefix(response, strings.Repeat("0", difficulty))</code>,
+        which is literally "this many zero hex digits".</caption>
+        <thead>
+          <tr><th>algorithm family</th><th>unit</th><th class="num">difficulty 5 means</th><th class="num">expected attempts</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>fast</code>, <code>slow</code></td><td>nibbles</td><td class="num">20 zero bits</td><td class="num">2<sup>20</sup> ≈ 1.05 M</td></tr>
+          <tr><td><code>sha256</code>, <code>argon2id</code>, <code>hashx</code></td><td>bits</td><td class="num">5 zero bits</td><td class="num">2<sup>5</sup> = 32</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A difficulty of 5 is a light tap for a wasm algorithm and a million hashes for
+      a JS one. Nothing in the protocol stops you from treating them as the same
+      scale; that is a policy question, and the answer is "do not".
+    </p>
+
+    <h2 id="table">The six, side by side</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>algorithm</th><th>what the client computes</th><th>unit</th>
+            <th class="num">cost per attempt</th><th class="num">typical difficulty</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>fast</code></td>
+            <td>SHA-256 of <code>challenge_text + nonce</code> as a decimal string</td>
+            <td>nibbles</td><td class="num">~120 ns native</td><td class="num">4–6</td>
+          </tr>
+          <tr>
+            <td><code>slow</code></td>
+            <td>identical to <code>fast</code> — it is a deprecated alias</td>
+            <td>nibbles</td><td class="num">same</td><td class="num">—</td>
+          </tr>
+          <tr>
+            <td><code>sha256</code></td>
+            <td>SHA-256 of <code>raw challenge bytes || 4-byte nonce</code></td>
+            <td>bits</td><td class="num">~300 ns wasm</td><td class="num">18–24</td>
+          </tr>
+          <tr>
+            <td><code>hashx</code></td>
+            <td>run a 512-instruction program derived from the challenge</td>
+            <td>bits</td><td class="num">~0.3 µs compiled</td><td class="num">15–20</td>
+          </tr>
+          <tr>
+            <td><code>argon2id</code></td>
+            <td>a full Argon2id hash: 19,456 KiB, 2 passes</td>
+            <td>bits</td><td class="num">~70 ms wasm</td><td class="num">2–6</td>
+          </tr>
+          <tr>
+            <td><code>metarefresh</code></td>
+            <td>nothing — wait, then follow a redirect</td>
+            <td>time</td><td class="num">0.8 s per unit</td><td class="num">1–2</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="each">Each one, in detail</h2>
+
+    <h3><code>fast</code> — the original JavaScript proof</h3>
+    <p>
+      The client hashes the challenge string with the decimal nonce appended, and
+      needs enough leading zero hex digits. Anubis's browser implementation uses
+      <code>crypto.subtle.digest</code> where it is available (so it is native SHA-256,
+      not JS arithmetic) and falls back to a JavaScript SHA-256 in Firefox and
+      Goanna, spread over workers.
+    </p>
+    <p>
+      It is cheap, it has been there from the start, and every Anubis client speaks
+      it. It is also the weakest of the six: a single SHA-256 core does 8 M+/s, so
+      difficulty 6 is under a second on a laptop and a bot farm barely notices.
+    </p>
+
+    <h3><code>slow</code> — not slower; deprecated</h3>
+    <p>
+      Anubis's own dispatch table says, in a comment:
+      <code>slow: fast, // XXX(Xe): slow is deprecated, but keep this around in case anything goes bad</code>.
+      The server registers both names and validates them identically. There is no
+      extra work and no different digest.
+    </p>
+    <div class="callout callout--warn">
+      <p>If you are writing new policy, pick <code>fast</code> or one of the
+      WebAssembly algorithms. <code>slow</code> exists for policies that already
+      name it.</p>
+    </div>
+
+    <h3><code>sha256</code> — the WebAssembly default</h3>
+    <p>
+      A WebAssembly module hashes the raw challenge bytes with a 4-byte nonce and
+      counts leading zero <em>bits</em>. Because the loop lives inside the module,
+      the browser pays one call per search rather than one call per hash — which is
+      why a good client is 2x Anubis's module here and still only 3.4 M/s, an order
+      of magnitude behind a native SHA-NI kernel.
+    </p>
+    <p>
+      This is the sane default for general web traffic: predictable cost, no memory
+      blow-up, works in every browser that ships WebAssembly.
+    </p>
+
+    <h3><code>hashx</code> — a program per challenge</h3>
+    <p>
+      The most interesting one. The challenge bytes seed a small deterministic
+      compiler that emits a 512-instruction program over eight 64-bit registers —
+      mixing multiplies, rotates, adds and one guarded branch — and the client runs
+      <em>that</em>. The digest is the finalised register state.
+    </p>
+    <p>
+      Two consequences. First, the program differs per challenge, so a fixed
+      hardware implementation cannot be pre-baked. Second, because the program is
+      fixed for the whole challenge, a client can compile it to native code or to
+      WebAssembly and stop interpreting — which is exactly what this repository
+      does, for a 7x gain over interpreting:
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>HashX client</th><th class="num">hashrate</th><th class="num">difficulty 20</th></tr></thead>
+        <tbody>
+          <tr><td>interpreted, Anubis's module</td><td class="num">0.37–0.44 M/s</td><td class="num">≈ 2.7 s</td></tr>
+          <tr><td>interpreted, this repo's wasm</td><td class="num">0.43–0.46 M/s</td><td class="num">≈ 2.3 s</td></tr>
+          <tr class="row-strong"><td>compiled in the page</td><td class="num">2.9–3.2 M/s</td><td class="num">≈ 0.35 s</td></tr>
+          <tr><td>native, x86-64 JIT</td><td class="num">~15 M/s</td><td class="num">≈ 0.07 s</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3><code>argon2id</code> — memory-hard, and it means it</h3>
+    <p>
+      One full Argon2id hash per attempt: <code>m=19456</code> KiB, <code>t=2</code>,
+      <code>p=1</code>, 32-byte output. The challenge bytes are the
+      <em>password</em> and an 8-byte encoding of the nonce is the <em>salt</em>.
+      Small detail with a purpose: the nonce is encoded little- or big-endian
+      depending on whether the challenge's last byte is at or above 0x80, a
+      deliberate asymmetry to make GPU implementations more annoying.
+    </p>
+    <p>
+      19 MiB per attempt is the whole point. You cannot dodge it with a GPU because
+      the algorithm is bound by memory bandwidth, not arithmetic — and the same
+      property is why the browser feels it. At ~70 ms per attempt in WebAssembly,
+      difficulty 6 is about four and a half seconds of a phone's life.
+    </p>
+    <div class="callout">
+      <p><strong>Choose the difficulty here, not by habit.</strong> A difficulty of 20
+      is a normal <code>sha256</code> setting and roughly a million times too much
+      for <code>argon2id</code>. Deployments use 2–6, and 6 is already a
+      noticeable pause.</p>
+    </div>
+
+    <h3><code>metarefresh</code> — a proof of patience</h3>
+    <p>
+      No hashing at all. The page waits <code>difficulty × 800 ms</code> and then
+      follows a <code>meta refresh</code> to the pass-challenge endpoint with the
+      challenge echoed back. Anubis uses it to tell "a browser that will run a
+      redirect" from "a client that will not".
+    </p>
+    <p>
+      It costs the client nothing but wall-clock time, so it is nearly free to
+      bypass for anything that implements a timer. Treat it as a bot filter, not a
+      proof of work.
+    </p>
+
+    <h2 id="choose">Which should you deploy?</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>if you want</th><th>use</th><th>because</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>the least friction that still filters dumb bots</td>
+            <td><code>fast</code> d4–5, or <code>metarefresh</code></td>
+            <td>sub-millisecond for real visitors; blocks clients that will not run JS at all.</td>
+          </tr>
+          <tr>
+            <td>a good general default</td>
+            <td><code>sha256</code> d18–22</td>
+            <td>0.1–0.5 s in the browser, no memory pressure, universally supported.</td>
+          </tr>
+          <tr>
+            <td>to cost scrapers more per page</td>
+            <td><code>hashx</code> d15–20</td>
+            <td>the per-challenge program resists fixed-function hardware, and a compiled client keeps it fast for humans.</td>
+          </tr>
+          <tr>
+            <td>to make GPU farms uneconomic</td>
+            <td><code>argon2id</code> d3–6</td>
+            <td>memory-hard by construction; 19 MiB per attempt is not parallelisable away.</td>
+          </tr>
+          <tr>
+            <td>to protect an API, not a page</td>
+            <td><code>sha256</code> or <code>hashx</code>, low difficulty</td>
+            <td>there is no browser to be nice to; keep the cost where a real client can absorb it.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Two rules that survive every configuration: test it on the slowest device you
+      care about, and remember that difficulty is a cost you are charging your own
+      users first.
+    </p>
+
+    <h2 id="notcomparable">Why difficulty numbers are not comparable</h2>
+    <p>
+      "We use difficulty 20" says nothing until you name the algorithm and, for the
+      JavaScript ones, whether you mean nibbles. Work it out instead:
+    </p>
+<pre><code>expected hashes = 2 ^ difficulty          <span class="c"># bits</span>
+expected hashes = 2 ^ (4 * difficulty)    <span class="c"># nibbles</span>
+
+expected seconds = expected hashes × cost per hash</code></pre>
+    <p>
+      With this repository's rates:
+    </p>
+    <div class="table-scroll">
+      <table>
+        <caption>Same nominal difficulty, wildly different work. Times are
+        expected values; the distribution is exponential, so any single solve can be
+        several times the average in either direction.</caption>
+        <thead>
+          <tr><th>configuration</th><th class="num">expected hashes</th><th class="num">expected time</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>sha256</code> d20, browser wasm</td><td class="num">1,048,576</td><td class="num">≈ 0.31 s</td></tr>
+          <tr><td><code>sha256</code> d20, native</td><td class="num">1,048,576</td><td class="num">≈ 0.13 s</td></tr>
+          <tr><td><code>fast</code> d20 nibbles</td><td class="num">1.1 × 10<sup>12</sup></td><td class="num">years</td></tr>
+          <tr><td><code>argon2id</code> d20</td><td class="num">1,048,576</td><td class="num">≈ 20 hours</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small">
+      That last row is not a hypothetical: putting a <code>sha256</code> difficulty
+      into an <code>argon2id</code> rule is the classic way to make a site
+      unreachable. It is also why the tiers in Anubis's documentation are per
+      algorithm and not one scale.
+    </p>
+
+    <p class="small">
+      Reproduce any of these: <code>node wasm/verify-jit.mjs</code> for HashX,
+      <code>node wasm/bench-a2i.mjs</code> for Argon2id, and the tables in
+      <a href="benchmarks.html">Numbers</a> for everything else. When you point the
+      solver at a live gate, <code>python3 anubis_solver.py URL</code> prints the
+      algorithm, the difficulty, the nonce and the time it took.
+    </p>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap wrap--wide">
+    <p>anubis-solver — MIT with attribution. Built with DeepSeek V4.1 Flash in DeepSeek Harness.</p>
+    <p><a href="https://github.com/celikfana-lab/anubis-solver">github.com/celikfana-lab/anubis-solver</a></p>
+  </div>
+</footer>
+</body>
+</html>

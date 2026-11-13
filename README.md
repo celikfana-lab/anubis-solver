@@ -61,6 +61,10 @@ assembly and optional GPU backends.
   native messaging — **10x** the in-page wasm at difficulty 20.
 - **`libanubis_solver.so` is 22x lighter than Anubis's server and half the CPU**
   per request, measured from `/proc`.
+- **A readable site in [`web/`](web/)**: the beginner walkthrough, the six
+  algorithms, the comparison against Anubis, the benchmark tables and a page of
+  the claims that measurement proved wrong. Static HTML, no build step:
+  `cd web && make serve`.
 
 ## Measured
 
@@ -126,6 +130,25 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 | [docs/troubleshooting.md](docs/troubleshooting.md) | common build and runtime errors |
 | [docs/development.md](docs/development.md) | layout, build, kernel regeneration, tests |
 | [SPEED.md](SPEED.md) | measured throughput, per tier and per version |
+
+## Documentation site
+
+[`web/`](web/) is a static site written for humans rather than for people who
+already know the project: a beginner walkthrough that assumes nothing, the six
+algorithms with what a difficulty number costs for each, a comparison against
+Anubis that includes the parts where Anubis wins, every benchmark table with its
+protocol, and a page listing the claims that re-measurement proved wrong.
+
+```bash
+cd web
+make serve      # http://127.0.0.1:8090/
+make check      # links and anchors, then layout at 390 and 1280 px
+```
+
+Six HTML files and one stylesheet — no framework, no CDN, no `npm install` to
+read the docs. `make check` runs a link/anchor/id linter and a headless-Chrome
+layout check, so a table that slides sideways on a phone fails a test instead of
+shipping.
 
 ## Layout
 

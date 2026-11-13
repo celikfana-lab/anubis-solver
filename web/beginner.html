@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start here — anubis-solver</title>
+<meta name="description" content="Anubis proof-of-work from zero: what a gate is, what a nonce is, how to build and run the solver, and the errors you will hit.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="wrap wrap--wide">
+    <a class="brand" href="index.html">anubis<span>-solver</span></a>
+    <nav class="site-nav" aria-label="Pages">
+      <a href="index.html">Overview</a>
+      <a href="beginner.html" aria-current="page">Start here</a>
+      <a href="algorithms.html">Algorithms</a>
+      <a href="comparison.html">vs Anubis</a>
+      <a href="benchmarks.html">Numbers</a>
+      <a href="mistakes.html">Mistakes</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <h1>Start here</h1>
+    <p class="lead">
+      No prior knowledge of proof of work, WebAssembly or Anubis assumed. By the end
+      of this page you will have built the engine, solved a real challenge, and
+      understood what your computer just did and why it took the time it did.
+    </p>
+
+    <nav class="toc" aria-label="On this page">
+      <p>On this page</p>
+      <ul>
+        <li><a href="#what">What Anubis is, and why it exists</a></li>
+        <li><a href="#words">The six words you need</a></li>
+        <li><a href="#anatomy">One solve, step by step</a></li>
+        <li><a href="#install">Build it</a></li>
+        <li><a href="#first">Your first solve</a></li>
+        <li><a href="#howlong">How long should a solve take?</a></li>
+        <li><a href="#worked">Did it actually work?</a></li>
+        <li><a href="#errors">Errors you will actually hit</a></li>
+        <li><a href="#next">Where to go next</a></li>
+      </ul>
+    </nav>
+
+    <h2 id="what">What Anubis is, and why it exists</h2>
+    <p>
+      <a href="https://github.com/TecharoHQ/anubis">Anubis</a> is a reverse proxy that
+      sits in front of a website and makes every visitor prove they spent some CPU
+      before they get in. It was written because a lot of small sites were being
+      flattened by scrapers and LLM crawlers: thousands of requests a second, each
+      one cheap for the bot and expensive for the server.
+    </p>
+    <p>
+      The trick is not a CAPTCHA. A CAPTCHA asks "are you a human" and needs a human
+      to answer. A <strong>proof-of-work gate</strong> asks "can you pay in
+      electricity" — and the answer is verifiable arithmetic, so a machine can pass
+      it. That is fine. The point is that scraping a site stops being free: instead
+      of one cheap HTTP request per page, a bot now owes you a few hundred
+      milliseconds of computing per page, per connection.
+    </p>
+    <div class="callout">
+      <p><strong>It does not make scraping impossible</strong>, and no honest gate
+      claims to. It changes the economics. A browser also pays that price, which is
+      why the difficulty is usually set to something a phone clears in a fraction of
+      a second and why the client-side implementation matters: a page that needs
+      900 ms of wasm feels broken, and the same work at 200 ms does not.</p>
+    </div>
+    <p>
+      Two consequences follow, and they shape everything in this repository:
+    </p>
+    <ul>
+      <li>
+        <strong>The client side is real code.</strong> Anubis ships a WebAssembly
+        module per algorithm and the browser runs it. Making that module faster is
+        the difference between a gate users tolerate and one they bounce off.
+      </li>
+      <li>
+        <strong>The server side is real code too.</strong> Anubis re-computes the
+        answer to check it. If the server's version is slow, every page view costs
+        the site money — its own CPU, on the critical path.
+      </li>
+    </ul>
+
+    <h2 id="words">The six words you need</h2>
+    <dl class="terms">
+      <dt>challenge</dt>
+      <dd>
+        The server's random payload, usually 32 random bytes, sent to the client as
+        hex. It is unique per request, so an answer cannot be reused. Sometimes
+        called the <em>random data</em>.
+      </dd>
+      <dt>nonce</dt>
+      <dd>
+        A number you are free to choose. You keep changing it and re-hashing until
+        the result is good enough. "Number used once."
+      </dd>
+      <dt>digest</dt>
+      <dd>
+        The hash you computed — SHA-256, Argon2id or HashX output, depending on the
+        algorithm. It is the thing being judged.
+      </dd>
+      <dt>difficulty</dt>
+      <dd>
+        How good the digest has to be. It is a count of <strong>leading zero
+        bits</strong> for most algorithms and of <strong>leading zero nibbles</strong>
+        for two of them, which is a 4x difference in meaning. See
+        <a href="algorithms.html">Algorithms</a>; getting this wrong is the single
+        most common source of confusion.
+      </dd>
+      <dt>proof of work</dt>
+      <dd>
+        The pair (challenge, nonce) that produces a good enough digest. Cheap to
+        check, expensive to find — that asymmetry is the whole mechanism.
+      </dd>
+      <dt>pass-challenge</dt>
+      <dd>
+        The endpoint you send the proof to
+        (<code>/.within.website/x/cmd/anubis/api/pass-challenge</code>). If it is
+        right, you get an auth cookie and the real page; if not, you get another
+        challenge.
+      </dd>
+    </dl>
+
+    <h2 id="anatomy">One solve, step by step</h2>
+    <p>
+      Everything below is a real HTTP round trip. It helps to see it once in the
+      open, because every tool in this repository is doing exactly this and nothing
+      magic.
+    </p>
+
+    <div class="step">
+      <h3><span class="n">1.</span> Ask for the page</h3>
+      <p>You get a 200 with a challenge page instead of the page you wanted.
+      Buried in it is a JSON blob:</p>
+<pre><code>&lt;script id="anubis_challenge" type="application/json"&gt;
+{"challenge":{"randomData":"6a1f8c2e…","id":"8f3c…","difficulty":4,…},
+ "rules":{"algorithm":"sha256","difficulty":4}}
+&lt;/script&gt;</code></pre>
+      <p class="small">The solver parses this out of the HTML. It never executes the
+      page's JavaScript.</p>
+    </div>
+
+    <div class="step">
+      <h3><span class="n">2.</span> Read the algorithm and the difficulty</h3>
+      <p>
+        These two numbers are the whole job description. <code>sha256</code> with
+        difficulty 4 means: find a nonce whose SHA-256 has 4 leading zero bits —
+        16 tries on average.
+      </p>
+    </div>
+
+    <div class="step">
+      <h3><span class="n">3.</span> Loop over nonces until the digest qualifies</h3>
+      <p>
+        Hash, count leading zeros, compare. This is the part that takes time, and
+        the part all the benchmarks on this site are about. A correct solver finds
+        <em>a</em> nonce, not <em>the</em> nonce: every nonce below the one found is
+        tested and rejected, so the work done is whatever the difficulty implied.
+      </p>
+    </div>
+
+    <div class="step">
+      <h3><span class="n">4.</span> Submit the proof</h3>
+      <p>
+        A GET with the challenge <code>id</code>, your <code>nonce</code>, the
+        <code>response</code> (your digest as hex), the <code>redir</code> you asked
+        for, and an honest <code>elapsedTime</code>.
+      </p>
+    </div>
+
+    <div class="step">
+      <h3><span class="n">5.</span> Keep the cookie, fetch the page</h3>
+      <p>
+        Success is a <code>Set-Cookie</code> for
+        <code>techaro.lol-anubis-auth</code>, a signed JSON Web Token. Present it and
+        the proxy treats you as passed, usually for hours.
+      </p>
+    </div>
+
+    <h2 id="install">Build it</h2>
+    <p>
+      One C compiler and Python 3.9+. No Node, no CUDA, no configuration file. The
+      optional halves (GPU backends, GPU kernels, the Verilog side) are off unless
+      you ask for them.
+    </p>
+<pre><code>git clone https://github.com/celikfana-lab/anubis-solver
+cd anubis-solver
+make -j8            <span class="c"># builds ./libanubis_solver.so</span>
+make test           <span class="c"># C core checks</span></code></pre>
+    <p>If you prefer not to build anything, the Python CLI is the same tool:</p>
+<pre><code>pip install -r requirements.txt    <span class="c"># requests, for the CLI</span>
+python3 anubis_solver.py --help</code></pre>
+    <div class="callout">
+      <p><strong>On Debian/Ubuntu</strong> you may need <code>build-essential</code>
+      and, for the accelerator backends only, <code>libvulkan-dev</code> or the
+      Level Zero headers. If <code>make</code> fails, read the first error, not the
+      last: the last is usually the linker complaining that the real error stopped
+      something from being built.</p>
+    </div>
+
+    <h2 id="first">Your first solve</h2>
+    <p>
+      The CLI is the shortest path, and it links the native engine — not the
+      WebAssembly one. That distinction matters more than it looks, and it is
+      visible in the timings below.
+    </p>
+<pre><code>python3 anubis_solver.py https://anubis.techaro.lol/</code></pre>
+    <p>
+      Instead of pointing at somebody else's site, you can put up a gate of your own
+      in one command and solve that. It is the same exercise, it works offline, and
+      you can turn the difficulty up and down yourself:
+    </p>
+<pre><code><span class="c"># a page to protect, and a gate in front of it</span>
+mkdir -p /tmp/site &amp;&amp; echo '&lt;h1&gt;PAST THE WALL&lt;/h1&gt;' &gt; /tmp/site/index.html
+(cd /tmp/site &amp;&amp; python3 -m http.server 8002 &amp;) &amp;
+./betterAnusbis/betterAnusbis --listen :8099 --target http://127.0.0.1:8002 \
+    --algorithm sha256 --difficulty 8
+
+<span class="c"># in another shell: solve it</span>
+python3 anubis_solver.py http://127.0.0.1:8099/</code></pre>
+    <p>This is real output, not an illustration:</p>
+<pre><code>solved sha256 difficulty=8 nonce=212 in 1.3 ms
+HTTP 200 (69 bytes)
+&lt;html&gt;&lt;body&gt;&lt;h1&gt;PAST THE WALL&lt;/h1&gt;&lt;p&gt;the real page&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</code></pre>
+    <p>
+      The page came back, which is the proof: a rejected answer would have returned
+      the challenge page again. Change <code>--difficulty 8</code> to 20 and the same
+      command reports something like <code>nonce=2241431 in 142.0 ms</code> — 12
+      more bits is about 4,096 times more attempts, and 142 ms against 1.3 ms is
+      roughly what the arithmetic predicts once per-call overhead stops dominating.
+    </p>
+
+    <div class="callout">
+      <p><strong>Why "native" matters for those numbers.</strong> <code>anubis_solver.py</code>
+      calls <code>libanubis_solver.so</code>, which uses SHA-NI and AVX2 kernels and
+      can spread across cores. The browser has neither: it has WebAssembly. The same
+      difficulty 20 task that takes 142 ms natively takes roughly 300 ms in the
+      in-page wasm module — and that is the improvement this repository's wasm
+      kernels exist to make, because a browser cannot install a native library.</p>
+    </div>
+
+    <h3>Same thing, with the other two hard algorithms</h3>
+<pre><code><span class="c"># HashX: the program depends on the challenge, so it is compiled per challenge</span>
+solved hashx difficulty=20 nonce=685361 in 47.0 ms
+
+<span class="c"># Argon2id: 19 MiB per attempt, so the difficulties are much smaller</span>
+solved argon2id difficulty=5 nonce=12 in 168.6 ms</code></pre>
+    <p>
+      Those two lines are the algorithms behaving exactly as designed. HashX is fast
+      per hash but the program changes every time; Argon2id is slow per hash on
+      purpose, which is what makes it resistant to being farmed out to a GPU.
+    </p>
+
+    <h2 id="howlong">How long should a solve take?</h2>
+    <p>
+      Difficulty is a count of leading zero bits, so the expected number of attempts
+      is 2<sup>difficulty</sup>. Multiply by the per-hash cost and you have the
+      expected time. This table uses the measured rates from
+      <a href="benchmarks.html">Numbers</a>, and keeps native and wasm apart because
+      they differ by 2–7x depending on the algorithm:
+    </p>
+    <div class="table-scroll">
+      <table>
+        <caption>A slower machine is proportionally slower. <code>fast</code> and
+        <code>slow</code> count nibbles, not bits, so their difficulty number is 4x
+        smaller for the same work.</caption>
+        <thead>
+          <tr><th>algorithm</th><th>where</th><th class="num">difficulty</th><th class="num">expected attempts</th><th class="num">expected time</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>sha256</code></td><td>native, 1 core (~8 M/s)</td><td class="num">20</td><td class="num">1,048,576</td><td class="num">≈ 0.13 s</td></tr>
+          <tr><td><code>sha256</code></td><td>native, 4 threads (~20 M/s)</td><td class="num">24</td><td class="num">16,777,216</td><td class="num">≈ 0.84 s</td></tr>
+          <tr><td><code>sha256</code></td><td>browser wasm (~3.4 M/s)</td><td class="num">20</td><td class="num">1,048,576</td><td class="num">≈ 0.31 s</td></tr>
+          <tr><td><code>hashx</code></td><td>native JIT (~15 M/s)</td><td class="num">20</td><td class="num">1,048,576</td><td class="num">≈ 0.07 s</td></tr>
+          <tr><td><code>hashx</code></td><td>browser, compiled in the page</td><td class="num">20</td><td class="num">1,048,576</td><td class="num">≈ 0.35 s</td></tr>
+          <tr><td><code>hashx</code></td><td>browser, interpreted fallback</td><td class="num">20</td><td class="num">1,048,576</td><td class="num">≈ 2.3 s</td></tr>
+          <tr><td><code>argon2id</code></td><td>native (~13 ms/hash)</td><td class="num">6</td><td class="num">64</td><td class="num">≈ 0.85 s</td></tr>
+          <tr><td><code>argon2id</code></td><td>browser wasm (~70 ms/hash)</td><td class="num">6</td><td class="num">64</td><td class="num">≈ 4.5 s</td></tr>
+          <tr><td><code>fast</code> / <code>slow</code></td><td>native (~8.3 M/s)</td><td class="num">5 nibbles</td><td class="num">1,048,576</td><td class="num">≈ 0.13 s</td></tr>
+          <tr><td><code>metarefresh</code></td><td>any</td><td class="num">1</td><td class="num">none</td><td class="num">0.8 s of waiting</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Read the <code>argon2id</code> rows twice. Sixty-four attempts taking seconds is
+      not a bug — 19,456 KiB and two passes <em>per attempt</em> is the entire point of
+      a memory-hard algorithm, and it is why deployments use difficulty 2–6 for it
+      rather than 20.
+    </p>
+
+    <h2 id="worked">Did it actually work?</h2>
+    <p>
+      "It exited 0" is not evidence. These are, in increasing order of how much they
+      prove:
+    </p>
+    <ul class="lede-list">
+      <li>
+        <strong>The page came back.</strong> The CLI prints the real content, not the
+        challenge page. A gate that rejects you returns the challenge again.
+      </li>
+      <li>
+        <strong>The answer is accepted by a different implementation.</strong>
+        <code>wasm/verify-module.mjs</code> hands our digest to the official Anubis
+        WebAssembly module and requires <em>it</em> to accept. Two independent
+        implementations agreeing is much stronger than one implementation not
+        crashing.
+      </li>
+      <li>
+        <strong>The whole round trip is exercised.</strong>
+        <code>betterAnusbis/test-all-algorithms.sh</code> starts a real gate on
+        localhost, protects a real page, and asserts the protected text arrives —
+        11 checks, all six algorithms plus the honeypot.
+      </li>
+    </ul>
+<pre><code>cd betterAnusbis &amp;&amp; make &amp;&amp; ./test-all-algorithms.sh
+python3 tests/test_core.py
+cd wasm &amp;&amp; make verify-module    <span class="c"># our kernels vs Anubis's own modules</span>
+cd wasm &amp;&amp; make verify-jit       <span class="c"># the runtime HashX compiler, 63 checks</span></code></pre>
+
+    <h2 id="errors">Errors you will actually hit</h2>
+
+    <h3><code>__multi3</code> is undefined when linking the wasm kernels</h3>
+    <p>
+      HashX's 64&times;64&rarr;128-bit multiplies are written with <code>__int128</code>,
+      which wasm has no instruction for and a <code>-nostdlib</code> build has no
+      compiler-rt to supply. The build uses a portable 32-bit-half version instead
+      (<code>-DHASHX_NO_INT128</code>). It is <strong>not</strong> a performance
+      problem: those kernels are still faster than Anubis's. Installing
+      <code>libclang_rt.builtins-wasm32.a</code> lets it link the other way and the
+      machine code does not change, because wasm has no 128-bit multiply at any
+      optimisation level.
+    </p>
+
+    <h3>There is no <code>wasm-ld</code></h3>
+    <p>
+      clang can target <code>wasm32</code> without the wasm linker being installed;
+      you only find out at link time. On Debian/Ubuntu: <code>apt install lld</code>.
+      Put it on <code>PATH</code> and the wasm targets build.
+    </p>
+
+    <h3>The challenge page comes back instead of the page</h3>
+    <p>
+      Your proof was rejected or your cookie was not sent. Check, in this order: the
+      nonce is what you computed with, <code>response</code> is the digest of that
+      nonce (not of another one), the <code>id</code> is the one from this challenge,
+      and the cookie jar actually keeps <code>techaro.lol-anubis-auth</code>. A gate
+      whose answer arrives after the challenge expired will also do this.
+    </p>
+
+    <h3>Difficulty seems 4x off</h3>
+    <p>
+      You are probably comparing a bit-based algorithm with a nibble-based one.
+      <code>fast</code> and <code>slow</code> count leading zero <em>nibbles</em>;
+      <code>sha256</code>, <code>argon2id</code> and <code>hashx</code> count leading
+      zero <em>bits</em>. See <a href="algorithms.html#units">units</a>.
+    </p>
+
+    <h3>Nothing found, and it never stops</h3>
+    <p>
+      That is what a solver does: the search has no upper bound by design, and the
+      current nonce space is searched until something matches. If it runs forever at
+      a difficulty that should take a second, the per-hash rate is wrong — check you
+      are not accidentally running the interpreter where you expected the compiled
+      path (HashX is 7x slower interpreted), or the wasm module where you expected
+      native.
+    </p>
+
+    <h2 id="next">Where to go next</h2>
+    <ul class="lede-list">
+      <li>
+        <a href="algorithms.html">Algorithms</a> — what each of the six asks for, and
+        how to choose one for a real site.
+      </li>
+      <li>
+        <a href="comparison.html">vs Anubis</a> — if you are deciding what to deploy,
+        including the parts where Anubis is the better answer.
+      </li>
+      <li>
+        <a href="benchmarks.html">Numbers</a> — how the rates above were measured,
+        and why the ratios are trustworthy when the absolutes are not.
+      </li>
+      <li>
+        <a href="mistakes.html">Mistakes</a> — the same measurements done wrong,
+        which is the fastest way to learn what to watch out for in your own.
+      </li>
+      <li>
+        The repository's
+        <a href="https://github.com/celikfana-lab/anubis-solver/blob/main/BEGINNER.md">BEGINNER.md</a>
+        covers the build options the quick start hides (GPU backends, bindings,
+        assembly kernels).
+      </li>
+    </ul>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap wrap--wide">
+    <p>anubis-solver — MIT with attribution. Built with DeepSeek V4.1 Flash in DeepSeek Harness.</p>
+    <p><a href="https://github.com/celikfana-lab/anubis-solver">github.com/celikfana-lab/anubis-solver</a></p>
+  </div>
+</footer>
+</body>
+</html>

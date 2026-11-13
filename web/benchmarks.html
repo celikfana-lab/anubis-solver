@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numbers — anubis-solver</title>
+<meta name="description" content="Every measured table: per-algorithm hashrate, the wasm kernels against Anubis's own modules, and the methodology that makes the ratios trustworthy.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="wrap wrap--wide">
+    <a class="brand" href="index.html">anubis<span>-solver</span></a>
+    <nav class="site-nav" aria-label="Pages">
+      <a href="index.html">Overview</a>
+      <a href="beginner.html">Start here</a>
+      <a href="algorithms.html">Algorithms</a>
+      <a href="comparison.html">vs Anubis</a>
+      <a href="benchmarks.html" aria-current="page">Numbers</a>
+      <a href="mistakes.html">Mistakes</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap wrap--wide">
+
+    <h1>Numbers</h1>
+    <p class="lead">
+      Every performance claim in this repository, with the protocol that produced it.
+      The protocol matters as much as the table: a proof-of-work search has an
+      exponential distribution, so most naive measurements of it are wrong, and the
+      <a href="mistakes.html">Mistakes</a> page is the receipt for that.
+    </p>
+
+    <nav class="toc" aria-label="On this page">
+      <p>On this page</p>
+      <ul>
+        <li><a href="#how">How to read these numbers</a></li>
+        <li><a href="#wasm">The wasm kernels vs Anubis's</a></li>
+        <li><a href="#argon2id">Argon2id, in detail</a></li>
+        <li><a href="#native">Native engine</a></li>
+        <li><a href="#v128">Why the SIMD fill does not win</a></li>
+        <li><a href="#resources">Server and client resources</a></li>
+        <li><a href="#repro">Reproduce</a></li>
+      </ul>
+    </nav>
+
+    <h2 id="how">How to read these numbers</h2>
+    <p>
+      Four rules, all of which cost me a wrong claim at least once:
+    </p>
+    <ul class="lede-list">
+      <li>
+        <strong>Ratios within a run, not absolutes across runs.</strong> This laptop's
+        governor and SMT sibling move identical code by up to 30%. Modules are loaded
+        once and measured round-robin, so a slow minute hits every candidate equally.
+        Every table below is one run; the same run measured twice can differ by 1.3x.
+      </li>
+      <li>
+        <strong>Count hashes, not calls.</strong> The search loop stops when it wins,
+        and the number of attempts is random with mean 2<sup>difficulty</sup>. Timing
+        N calls and dividing by N gives a number that depends on luck. The harness
+        recovers the real attempt count from the nonce the search returned.
+      </li>
+      <li>
+        <strong>Warm up first.</strong> V8 compiles WebAssembly in two tiers. Timing
+        the first hash after instantiation measures the tier-up compiler, not the
+        kernel — that single mistake produced a "4x loss" that was mostly
+        compilation.
+      </li>
+      <li>
+        <strong>Check the answer before believing the speed.</strong> A kernel that
+        returns the wrong digest quickly is not fast, it is broken. Every timing in
+        this repository is paired with a bit-exactness check against a reference:
+        <code>fill_vectors.txt</code> for the Argon2id block, Anubis's own modules for
+        the ABI, the C engine for everything else.
+      </li>
+    </ul>
+
+    <h2 id="wasm">The wasm kernels vs Anubis's own modules</h2>
+    <p>
+      Same challenge, same difficulty, same process, both modules warmed, round-robin
+      interleaved. "Anubis's" means the module shipped in
+      <code>web/static/wasm/simd128/</code> of Anubis v1.28.3.
+    </p>
+
+    <h3>SHA-256 — four nonces wide</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>kernel</th><th class="num">hashes/s</th><th>verdict</th></tr></thead>
+        <tbody>
+          <tr class="row-strong"><td>this repo, 4 nonces per compression</td><td class="num">3.0–3.9 M</td><td></td></tr>
+          <tr><td>Anubis's module</td><td class="num">1.7–1.9 M</td><td><span class="pill pill--good">1.8–2.1× faster</span></td></tr>
+          <tr><td>native, SHA-NI, 4 threads (for scale)</td><td class="num">~20 M</td><td>10× the wasm</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>HashX — compiled from the challenge</h3>
+    <p>
+      A HashX program is fixed for a whole challenge, so it can be compiled instead of
+      interpreted. This repository does that at run time, in the page, in plain
+      JavaScript — no toolchain, no server round trip.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <caption>Difficulty 20, 479,623 counted hashes. All four find the same nonce
+        and the same digest.</caption>
+        <thead><tr><th>path</th><th class="num">hashes/s</th><th class="num">per hash</th><th>verdict</th></tr></thead>
+        <tbody>
+          <tr class="row-strong"><td>compiled in the page</td><td class="num">2.90–3.18 M</td><td class="num">0.31–0.34 µs</td><td></td></tr>
+          <tr><td>this repo, interpreted</td><td class="num">0.43–0.46 M</td><td class="num">2.19–2.31 µs</td><td>1.18× official</td></tr>
+          <tr><td>Anubis's module, both builds</td><td class="num">0.37–0.44 M</td><td class="num">2.54–2.73 µs</td><td><span class="pill pill--good">7–8× slower</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The compile costs about 6 ms per challenge. Below roughly difficulty 12 the
+      build is a bigger cost than the search, which is why a threshold is the obvious
+      refinement — the browser does it unconditionally today because real deployments
+      use 15–20.
+    </p>
+
+    <h2 id="argon2id">Argon2id, in detail</h2>
+    <p>
+      This one has the most interesting history in the repository, so it gets its own
+      section. The parameters are fixed by Anubis: <code>m=19456</code> KiB,
+      <code>t=2</code>, <code>p=1</code>, 32-byte output, which is <strong>38,912
+      block fills per hash</strong>. Almost all of the time is in that loop.
+    </p>
+
+    <h3>Whole hash, same run</h3>
+    <div class="table-scroll">
+      <table>
+        <caption>Two runs at different times, because the absolute numbers drift.
+        The ratio within a run is the claim.</caption>
+        <thead><tr><th>module</th><th class="num">ms/hash</th><th class="num">µs/block</th><th>verdict</th></tr></thead>
+        <tbody>
+          <tr class="row-strong"><td>this repo now (<code>argon2_fill_fast.c</code>)</td><td class="num">64.6–74.8</td><td class="num">1.66–1.92</td><td></td></tr>
+          <tr><td>Anubis's baseline build</td><td class="num">67.8–76.0</td><td class="num">1.74–1.95</td><td>1.02–1.05× slower</td></tr>
+          <tr><td>Anubis's simd128 build</td><td class="num">69.9–78.8</td><td class="num">1.80–2.02</td><td>1.05–1.08× slower</td></tr>
+          <tr><td>this repo, previous release</td><td class="num">131.5–162.6</td><td class="num">3.38–4.18</td><td><span class="pill pill--bad">2.0–2.2× slower</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Why the old one was twice as slow</h3>
+    <p>
+      Not the algorithm, and not the reference implementation: a build flag. The old
+      module was built with <code>-ffreestanding</code>, which turns off the
+      compiler's builtin <code>memcpy</code>. Inside the block function that means
+      every 1 KiB copy became a call to a byte-at-a-time shim. The evidence is in the
+      emitted code: the old binary contains 73 <code>call $memcpy</code> and no
+      <code>memory.copy</code>; rebuilt without the flag it is the other way round.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <caption>Same sources, same input, only the flags change.</caption>
+        <thead><tr><th>build</th><th class="num">ms/hash</th><th class="num">call $memcpy</th></tr></thead>
+        <tbody>
+          <tr><td><code>-O3 -ffreestanding</code></td><td class="num">161.8</td><td class="num">73</td></tr>
+          <tr><td><code>-O3 -msimd128</code></td><td class="num">99.2</td><td class="num">0</td></tr>
+          <tr><td><code>-O3</code> (shipped)</td><td class="num">86.6</td><td class="num">0</td></tr>
+          <tr><td><code>-O2</code></td><td class="num">81.3</td><td class="num">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The remaining gap was the reference block function: it expands each BLAKE2 round
+      over the whole 1 KiB block inside a loop, so the 16 words a round touches are
+      indexed by a loop variable and never reach registers.
+      <code>wasm/argon2_fill_fast.c</code> gathers a round into a 16-word local with
+      constant indices, which is worth another 1.25×. Everything else — H0, H′,
+      <code>index_alpha</code>, the passes — still comes from the reference package, so
+      the digests are unchanged and the test below proves it.
+    </p>
+
+    <div class="callout">
+      <p><strong>How this is checked:</strong> <code>make verify-module</code> runs ten
+      random challenges through our module and hands each digest to Anubis's own
+      module, which must accept it with its own <code>anubis_validate</code>. That is
+      the test that would have caught the bad build; before it existed, nothing
+      compared our binary against anything outside this repository.</p>
+    </div>
+
+    <h2 id="native">Native engine</h2>
+    <p>
+      For scale, and because it explains why the browser extension exists:
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>workload</th><th class="num">native</th><th class="num">wasm</th><th class="num">ratio</th></tr></thead>
+        <tbody>
+          <tr><td>SHA-256, difficulty 20</td><td class="num">~0.13 s</td><td class="num">~0.31 s</td><td class="num">2.4×</td></tr>
+          <tr><td>Argon2id, per hash</td><td class="num">~13 ms</td><td class="num">~70 ms</td><td class="num">5.4×</td></tr>
+          <tr><td>HashX, per hash</td><td class="num">~0.07 µs</td><td class="num">0.31 µs</td><td class="num">~4×</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Threads scale across nonces rather than inside a hash — <code>p=1</code> is fixed
+      by the challenge — which gives 2.11× on 2 workers and 3.75× on 4 for Argon2id,
+      and 2.36× on 4 for HashX. GPU backends exist (CUDA, Level Zero, Vulkan) and are
+      all opt-in; every GPU hit is re-verified on the CPU before it is accepted, so a
+      broken driver cannot produce an invalid proof. Those tables are in
+      <code>SPEED.md</code> because they are a different question.
+    </p>
+
+    <h2 id="v128">Why the SIMD fill does not win</h2>
+    <p>
+      The obvious optimisation for Argon2id's block function is to do two 64-bit
+      words at a time with wasm's <code>v128</code>. It was written, and it is
+      bit-exact, and it does <em>not</em> beat scalar once the working set is the real
+      19 MiB. The reason is one instruction:
+    </p>
+    <div class="callout">
+      <p><code>i64x2.extmul_low_i32x4_u</code> is not <code>vpmuludq</code>. It
+      multiplies adjacent i32 lanes, which in a natural u64 layout are the two halves
+      of the <em>same</em> word — so each operand needs a gather
+      (<code>i8x16.shuffle</code>) before the multiply, and V8 lowers the extmul
+      itself with two more shuffles. That is four shuffle-port uops per
+      <code>fBlaMka</code>, on a CPU with one shuffle port: 1,472 shuffle uops per
+      block.</p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <caption>Measured from inside wasm, 128/128 reference vectors, min of nine
+        runs. "Resident" is a hot cache; "scattered" is the real 19 MiB arena.</caption>
+        <thead><tr><th>round implementation</th><th class="num">resident</th><th class="num">scattered</th></tr></thead>
+        <tbody>
+          <tr class="row-strong"><td>scalar, register-resident</td><td class="num">0.77 µs</td><td class="num">0.80 µs</td></tr>
+          <tr><td><code>v128</code>, rewritten</td><td class="num">1.21 µs</td><td class="num">1.53 µs</td></tr>
+          <tr><td><code>v128</code>, first attempt</td><td class="num">1.04–1.08 µs</td><td class="num">1.25–1.30 µs</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The rewritten version is 1.2–1.3× faster than the first attempt and still a tie
+      with scalar when memory-bound, because the arithmetic is not the bottleneck at
+      19 MiB. What the exercise <em>did</em> find is that the plumbing around the
+      round — unrolling the copy and the final XOR instead of looping 128 times — is
+      worth 1.2–1.5×. That is not shippable in this driver (the C attempts came out
+      1.06× and 1.23× <em>slower</em>, and <code>-msimd128</code> pessimises the round
+      more than the plumbing saves), so the module keeps the scalar round and lets
+      clang emit <code>memory.copy</code> for the copies.
+    </p>
+
+    <h2 id="resources">Server and client resources</h2>
+    <div class="table-scroll">
+      <table>
+        <caption>Details and the "what Anubis does better" counterweight are on
+        <a href="comparison.html">vs Anubis</a>.</caption>
+        <thead><tr><th></th><th class="num">Anubis</th><th class="num">betterAnusbis</th></tr></thead>
+        <tbody>
+          <tr><td>idle RSS</td><td class="num">44–46 MB</td><td class="num">2.1 MB</td></tr>
+          <tr><td>threads</td><td class="num">17–19</td><td class="num">1</td></tr>
+          <tr><td>CPU per challenge page</td><td class="num">870–900 µs</td><td class="num">470–500 µs</td></tr>
+          <tr><td>CPU per verification</td><td class="num">2.3–2.8 ms</td><td class="num">1.25 ms</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="repro">Reproduce</h2>
+<pre><code><span class="c"># our wasm kernels vs Anubis's own modules (18 checks, both directions)</span>
+cd wasm &amp;&amp; make verify-module
+
+<span class="c"># the runtime HashX compiler: derivation, emission, digests, 63 checks</span>
+cd wasm &amp;&amp; make verify-jit
+
+<span class="c"># the Argon2id block function against the reference vectors</span>
+cd wasm &amp;&amp; node verify-a2i.mjs &amp;&amp; node bench-a2i.mjs
+
+<span class="c"># every fill formulation, timed from inside wasm</span>
+cd wasm &amp;&amp; node bench-fill-inmodule.mjs
+
+<span class="c"># servers and clients, from /proc</span>
+python3 tools/bench-server-resources.py
+node tools/bench-client-resources.mjs
+node tools/bench-endtoend.mjs</code></pre>
+    <p class="small">
+      The long-form versions, with the negative results and the per-run detail, are
+      <a href="https://github.com/celikfana-lab/anubis-solver/blob/main/SPEED.md">SPEED.md</a>
+      (all measurements) and <code>wasm/README.md</code> (the kernel-level argument).
+      If a number here and a number there disagree, that is a bug — please open an
+      issue.
+    </p>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap wrap--wide">
+    <p>anubis-solver — MIT with attribution. Built with DeepSeek V4.1 Flash in DeepSeek Harness.</p>
+    <p><a href="https://github.com/celikfana-lab/anubis-solver">github.com/celikfana-lab/anubis-solver</a></p>
+  </div>
+</footer>
+</body>
+</html>

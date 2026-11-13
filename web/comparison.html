@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>betterAnusbis vs Anubis — anubis-solver</title>
+<meta name="description" content="A measured comparison: memory, CPU per request, client cost, and the places where Anubis is simply the better answer.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="wrap wrap--wide">
+    <a class="brand" href="index.html">anubis<span>-solver</span></a>
+    <nav class="site-nav" aria-label="Pages">
+      <a href="index.html">Overview</a>
+      <a href="beginner.html">Start here</a>
+      <a href="algorithms.html">Algorithms</a>
+      <a href="comparison.html" aria-current="page">vs Anubis</a>
+      <a href="benchmarks.html">Numbers</a>
+      <a href="mistakes.html">Mistakes</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap wrap--wide">
+
+    <h1>betterAnusbis vs Anubis</h1>
+    <p class="lead">
+      Two ways to put the same wall up. This page is the honest comparison: where
+      one is faster, where the other has features the first does not, and which
+      situations should send you to Anubis.
+    </p>
+
+    <div class="callout">
+      <p><strong>Not a fork.</strong> <code>betterAnusbis</code> speaks Anubis's
+      protocol — same routes, same challenge JSON, same cookie name — so any Anubis
+      client works against it unchanged. That is what makes the comparison
+      meaningful rather than apples to oranges.</p>
+    </div>
+
+    <h2 id="numbers">The numbers that decide it</h2>
+    <p>
+      Measured from <code>/proc</code>, not estimated: both servers serving 300
+      challenge pages and 40 full pass-challenge exchanges each.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <caption>Reproduce with <code>python3 tools/bench-server-resources.py</code>.
+        Neither server grows under load: RSS after 300 pages equals idle RSS, and the
+        peak (<code>VmHWM</code>) never moved.</caption>
+        <thead>
+          <tr><th></th><th class="num">Anubis v1.28.3</th><th class="num">betterAnusbis</th><th>verdict</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>idle RSS</td><td class="num">44–46 MB</td><td class="num">2.1 MB</td>
+            <td><span class="pill pill--good">~21× less</span></td>
+          </tr>
+          <tr>
+            <td>threads</td><td class="num">17–19</td><td class="num">1</td>
+            <td><span class="pill pill--good">1/17th</span></td>
+          </tr>
+          <tr>
+            <td>CPU per challenge page</td><td class="num">870–900 µs</td><td class="num">470–500 µs</td>
+            <td><span class="pill pill--good">~1.9× less</span></td>
+          </tr>
+          <tr>
+            <td>CPU per verification</td><td class="num">2.3–2.8 ms</td><td class="num">1.25 ms</td>
+            <td><span class="pill pill--good">~2× less</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Why the gap is that large: Anubis is a Go service whose runtime and
+      dependencies cost ~45 MB before it does anything, and it re-checks each answer
+      by running the same WebAssembly module inside <code>wazero</code>. betterAnusbis
+      is one C program with a 32-byte secret and a small trap table, and it verifies
+      with <code>libanubis_solver.so</code> — the same engine the CLI uses.
+    </p>
+
+    <h2 id="client">What the visitor pays</h2>
+    <p>
+      Server memory is the fun number; client CPU is the one users feel. Same
+      difficulty, same challenge, three clients:
+    </p>
+    <div class="table-scroll">
+      <table>
+        <caption>Reproduce with <code>node tools/bench-client-resources.mjs</code>.</caption>
+        <thead>
+          <tr><th>client</th><th class="num">memory</th><th class="num">per hash</th><th>notes</th></tr>
+        </thead>
+        <tbody>
+          <tr class="row-strong">
+            <td>this repo's wasm kernel</td><td class="num">0.13 MiB</td>
+            <td class="num">347 ns</td><td>4 nonces wide, one module per algorithm</td>
+          </tr>
+          <tr>
+            <td>Anubis's wasm module</td><td class="num">1.06 MiB</td>
+            <td class="num">597 ns</td><td>the module every Anubis deployment ships</td>
+          </tr>
+          <tr>
+            <td>native library (via the extension)</td><td class="num">36.3 MB RSS</td>
+            <td class="num">205 ns</td><td>one thread; more with <code>ANUBIS_THREADS</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The native client wins on speed and loses badly on memory, which is the whole
+      reason it is an optional extension and not the default. A browser tab should
+      not cost 36 MB to pass a gate.
+    </p>
+
+    <h2 id="features">Features</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>capability</th><th>Anubis</th><th>betterAnusbis</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>protocol compatibility (routes, JSON, cookie)</td><td>reference</td><td>identical</td></tr>
+          <tr><td>all six algorithms</td><td>yes</td><td>yes</td></tr>
+          <tr><td>policy</td><td>YAML, weighted rules, per-rule difficulty</td><td>flat file: <code>allow</code>/<code>deny</code>/<code>challenge</code> on UA, path, header, network</td></tr>
+          <tr><td>configuration</td><td>YAML files plus flags</td><td>flags only</td></tr>
+          <tr><td>honeypot</td><td>trap links, tarpit, network rules</td><td>trap link, tarpit, log, difficulty bump on flagged networks</td></tr>
+          <tr><td>TLS listener</td><td>yes</td><td>yes (<code>--tls-cert</code>, <code>--tls-key</code>)</td></tr>
+          <tr><td>TLS to the backend</td><td>yes</td><td>yes (<code>--target-insecure</code> for self-signed)</td></tr>
+          <tr><td>single-use challenges</td><td>yes, stored in backends</td><td>yes, in memory; <code>--stateless</code> trades it for replayability</td></tr>
+          <tr><td>state shared across replicas</td><td>yes, via backends</td><td>no — one process, one table</td></tr>
+          <tr><td>HTTP/2, keep-alive</td><td>Go's server</td><td>one request per connection, then close</td></tr>
+          <tr><td>imprint page, <code>make-challenge</code> API</td><td>yes</td><td>no</td></tr>
+          <tr><td>runtime</td><td>Go, multi-package</td><td>one C file, one <code>cc</code> line</td></tr>
+          <tr><td>language bindings</td><td>—</td><td>Node, Go, C#, R, Java, Rust, asm</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="anubis-wins">What Anubis does better</h2>
+    <p>
+      Being clear about this is more useful than a table that only points one way.
+    </p>
+    <ul class="lede-list">
+      <li>
+        <strong>Policy is a language there and a list here.</strong> Anubis can match
+        on weights, expressions and per-rule difficulty, and reads a YAML config.
+        betterAnusbis has three actions and first-match-wins. If you need "score this
+        user agent 4 and this one 20", that is Anubis.
+      </li>
+      <li>
+        <strong>Multiple replicas.</strong> Anubis keeps challenge state in pluggable
+        backends, so two instances behind one load balancer agree about what has been
+        consumed. betterAnusbis keeps it in memory: one process, or
+        <code>--stateless</code> with weaker guarantees.
+      </li>
+      <li>
+        <strong>Production web serving.</strong> Anubis is a Go HTTP server with
+        HTTP/2 and keep-alive. betterAnusbis reads one request, answers it and
+        closes. Put it behind nginx or caddy; do not make it the only thing in front
+        of a streaming app.
+      </li>
+      <li>
+        <strong>An imprint page, a <code>make-challenge</code> API and the surrounding
+        tooling.</strong> Those exist there and not here.
+      </li>
+      <li>
+        <strong>It is the reference.</strong> When Anubis changes its challenge
+        format, Anubis is right by definition. This repo's tests compare against
+        Anubis's own modules precisely because that is the authority.
+      </li>
+    </ul>
+
+    <h2 id="ours-wins">What betterAnusbis does better</h2>
+    <ul class="lede-list">
+      <li>
+        <strong>It is small.</strong> 2.1 MB and one thread, against 44–46 MB and
+        17–19. On a $5 VPS, or next to other services, that is the difference between
+        fitting and not fitting.
+      </li>
+      <li>
+        <strong>Verification is half the cost.</strong> 1.25 ms against 2.3–2.8 ms,
+        on the critical path of every page view.
+      </li>
+      <li>
+        <strong>It is one C file.</strong> You can read the whole gate in an
+        afternoon, and <code>make</code> is one <code>cc</code> line. Nothing hides in
+        a dependency tree.
+      </li>
+      <li>
+        <strong>The client side is faster.</strong> The wasm kernels are 1.8–2.1×
+        Anubis's for SHA-256 and 7–8× for HashX, which is time a real visitor does not
+        spend waiting.
+      </li>
+      <li>
+        <strong>It comes with a solver.</strong> The same library verifies and solves,
+        so a test can establish that a challenge is passable end to end.
+      </li>
+    </ul>
+
+    <h2 id="choose">Which should you use?</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>situation</th><th>pick</th></tr></thead>
+        <tbody>
+          <tr><td>existing Anubis deployment, YAML policies, several replicas</td><td><strong>stay on Anubis</strong> — nothing here replaces its policy engine or backends</td></tr>
+          <tr><td>small site, one box, want the wall up today</td><td><strong>betterAnusbis</strong> — one binary, one flag per decision</td></tr>
+          <tr><td>you need the challenge solved programmatically in CI</td><td><strong>this repo's CLI or library</strong>, against either server</td></tr>
+          <tr><td>you are studying how the six algorithms behave</td><td><strong>either</strong> — both are protocol-compatible, so the numbers transfer</td></tr>
+          <tr><td>you want the browser to spend 0.3 s instead of 2.3 s on HashX</td><td><strong>serve this repo's kernels</strong> (<code>--web</code>), or use the extension</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="clients">The four clients in this repository</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>client</th><th>algorithms</th><th>fast because</th><th>when</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>anubis_solver.py</code> / the C library</td>
+            <td>all six</td>
+            <td>native SHA-NI/AVX2 kernels, multithreaded</td>
+            <td>CLI work, CI, anything you control</td>
+          </tr>
+          <tr>
+            <td>Firefox extension</td>
+            <td>all six</td>
+            <td>same native library over native messaging</td>
+            <td>you want a real browser to be fast, and can install an add-on</td>
+          </tr>
+          <tr>
+            <td><code>tools/anubis_fetch.js</code></td>
+            <td>all six</td>
+            <td>no dependencies; <code>hashx</code> compiled in JS, <code>sha256</code> via wasm</td>
+            <td>one file, Node only, no build step</td>
+          </tr>
+          <tr>
+            <td>the gate's own page</td>
+            <td>all six</td>
+            <td>our wasm kernels, HashX compiled in the page</td>
+            <td>visitors who have installed nothing</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small">
+      Numbers for every row are in <a href="benchmarks.html">Numbers</a>. The server
+      and client figures above come from the two benchmark scripts named in their
+      captions, both of which read the kernel's own counters rather than trusting a
+      stopwatch around a browser.
+    </p>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap wrap--wide">
+    <p>anubis-solver — MIT with attribution. Built with DeepSeek V4.1 Flash in DeepSeek Harness.</p>
+    <p><a href="https://github.com/celikfana-lab/anubis-solver">github.com/celikfana-lab/anubis-solver</a></p>
+  </div>
+</footer>
+</body>
+</html>

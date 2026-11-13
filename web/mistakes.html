@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What we got wrong — anubis-solver</title>
+<meta name="description" content="Six claims from this project that measurement proved false, what the truth was, and the measuring mistake behind each one.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="wrap wrap--wide">
+    <a class="brand" href="index.html">anubis<span>-solver</span></a>
+    <nav class="site-nav" aria-label="Pages">
+      <a href="index.html">Overview</a>
+      <a href="beginner.html">Start here</a>
+      <a href="algorithms.html">Algorithms</a>
+      <a href="comparison.html">vs Anubis</a>
+      <a href="benchmarks.html">Numbers</a>
+      <a href="mistakes.html" aria-current="page">Mistakes</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <h1>What we got wrong</h1>
+    <p class="lead">
+      Every claim below was made in this repository's documentation, was measurably
+      false, and was corrected. They are kept as a list rather than quietly edited
+      away, because the mistake behind each one is the kind you will make yourself
+      the first time you measure a proof-of-work loop — and because a benchmark page
+      that admits nothing is worth the same as one that admits everything.
+    </p>
+
+    <div class="callout">
+      <p><strong>The pattern.</strong> Six claims, four of them produced by the same
+      cause: comparing two things that were not the same thing. Different artefacts,
+      different warmth, different counting, different units. Speed claims are easy to
+      make and hard to hold; these are the ones that did not hold.</p>
+    </div>
+
+    <h2 id="one">1. "wasm SIMD has no 64-bit multiply"</h2>
+    <p>
+      <strong>Said:</strong> the SIMD proposal has no <code>i64x2</code> multiply, which
+      is why an Argon2id SIMD kernel cannot be written in wasm.
+    </p>
+    <p>
+      <strong>True:</strong> <code>i64x2.mul</code> exists and has since the proposal
+      shipped. What does <em>not</em> exist is the <em>unsigned 32&times;32&rarr;64</em>
+      widening multiply in Rust's stable <code>core::arch::wasm32</code> — only the
+      signed form, <code>i64x2_extmul_low_i32x4</code>. The wasm instruction
+      <code>i64x2.extmul_low_i32x4_u</code> is right there; the Rust binding is not.
+    </p>
+    <p>
+      <strong>Cause:</strong> inferring the instruction set from the language binding.
+      The instruction you can name from your language is not the instruction set.
+    </p>
+    <p class="small">
+      Found by writing the kernel in WAT instead, where the unsigned opcode is one
+      instruction, and watching it assemble.
+    </p>
+
+    <h2 id="two">2. "Our C kernel is 0.01 µs faster than hand-written WAT"</h2>
+    <p>
+      <strong>Said:</strong> clang's C was marginally faster than the generated WAT.
+    </p>
+    <p>
+      <strong>True:</strong> in the same interleaved run it was
+      <strong>0.06 µs slower</strong>, which is inside the noise. The honest claim is
+      "within 4%, a tie" — not a direction.
+    </p>
+    <p>
+      <strong>Cause:</strong> reading two numbers from two runs and subtracting them.
+      A 0.01 µs difference on a 1.8 µs measurement is 0.5%; the run-to-run spread on
+      this machine is 30%.
+    </p>
+
+    <h2 id="three">3. "Our HashX interpreter does 1.7 M hashes/s"</h2>
+    <p>
+      <strong>Said:</strong> the WebAssembly interpreter ran at about 1.7 M hashes/s,
+      making the compiled path "1.6× faster".
+    </p>
+    <p>
+      <strong>True:</strong> the interpreter does <strong>0.43–0.46 M hashes/s</strong>.
+      The 1.7 M figure was the <em>native C engine</em> from a different table two
+      sections away. Measured properly, compiling is <strong>7×</strong> the
+      interpreter, not 1.6×.
+    </p>
+    <p>
+      <strong>Cause:</strong> a number copied into the wrong row. The ratio was so
+      implausible — an interpreter within 60% of a compiler — that it should have been
+      caught by arithmetic rather than by measurement.
+    </p>
+
+    <h2 id="four">4. "Argon2id is at parity with Anubis"</h2>
+    <p>
+      This one is two mistakes wearing one coat.
+    </p>
+    <p>
+      <strong>Said:</strong> our Argon2id module is at parity with Anubis's.
+    </p>
+    <p>
+      <strong>True, part one:</strong> the claim was measured on the <em>block
+      function</em> (1.7–1.9 µs against their implied 1.8–2.0), then applied to the
+      <em>whole module</em>. The module was 2.2× slower. Two different artefacts, one
+      sentence — and the sentence was true of one of them.
+    </p>
+    <p>
+      <strong>True, part two:</strong> even that module number was mostly a
+      miscompile. The shipped binary had been built with <code>-ffreestanding</code>,
+      which disables the compiler's builtin <code>memcpy</code> and turns every 1 KiB
+      block copy into a call to a byte-at-a-time shim. Rebuilt without the flag, the
+      same sources run at 86 ms instead of 162. With the block function rewritten to
+      keep each round in registers, 65–75 ms — <strong>1.02–1.05× faster than
+      Anubis's</strong>.
+    </p>
+    <p>
+      <strong>Cause:</strong> (a) conflating an inner loop with a program;
+      (b) never having compared our compiled artefact against anything outside the
+      repository. The second is now impossible: <code>make verify-module</code> hands
+      our digests to Anubis's own module and requires it to accept them.
+    </p>
+    <div class="callout callout--warn">
+      <p><strong>The lesson worth stealing:</strong> a build flag that "looks like it
+      belongs" in a <code>-nostdlib</code> project can cost 2×. The way to find out is
+      to read the emitted instructions — <code>call $memcpy</code> where you expect
+      <code>memory.copy</code> — not to reason about the flag's description.</p>
+    </div>
+
+    <h2 id="five">5. "Nothing here compiles a challenge in the browser"</h2>
+    <p>
+      <strong>Said:</strong> the generate-WAT-and-assemble path was a build-time
+      experiment for one fixed challenge; real challenges would have to be
+      interpreted.
+    </p>
+    <p>
+      <strong>True:</strong> that was a statement about the toolchain, not about what
+      was possible. Emitting wasm bytes is not hard; it just was not written yet.
+      <code>wasm/hashx_jit.mjs</code> now derives the program and emits the module in
+      plain JavaScript, so any challenge is compiled in the page with no
+      <code>wat2wasm</code> and no server round trip.
+    </p>
+    <p>
+      <strong>Cause:</strong> describing a limitation of the implementation as if it
+      were a limitation of the approach. Worth flagging because that is the easiest
+      way to accidentally be wrong on a documentation page: "nothing does X" usually
+      means "we have not done X".
+    </p>
+
+    <h2 id="six">6. "Halving the multiplies will make the SIMD fill faster"</h2>
+    <p>
+      <strong>Said:</strong> processing two 64-bit words per <code>v128</code>
+      register halves the multiply count, so the fill should be materially faster.
+    </p>
+    <p>
+      <strong>True:</strong> it is slower than scalar, and now the reason is measured:
+      the unsigned widening multiply needs both operands' low halves gathered into
+      adjacent i32 lanes first, and V8 lowers the widening multiply itself with two
+      more shuffles. Four shuffle-port uops per <code>fBlaMka</code>, 1,472 shuffle
+      uops per block, on a CPU with one shuffle port. The scalar round wins.
+    </p>
+    <p>
+      <strong>Cause:</strong> counting the arithmetic and ignoring the data movement
+      needed to feed it. "Fewer multiply instructions" is not "fewer cycles" when the
+      operands have to be repacked first.
+    </p>
+
+    <h2 id="nearmiss">The one that nearly shipped</h2>
+    <p>
+      Worth recording because the process worked. A rewrite of the fill that skipped
+      one of its two 1 KiB scratch arrays on the first pass measured
+      <strong>1.02× faster</strong>. It was also <strong>wrong</strong>: when the
+      "XOR over the old value" flag is clear the value you must keep is
+      <code>ref ^ prev</code>, not zero, and the rewrite dropped it. Modules were
+      built, and <code>make verify-module</code> rejected the digests before anything
+      was released.
+    </p>
+    <p>
+      A 2% win is not worth a wrong proof, and speed without a correctness check is
+      how you ship one.
+    </p>
+
+    <h2 id="lessons">Six rules for measuring a proof-of-work loop</h2>
+    <ol>
+      <li>
+        <strong>Count attempts, not calls.</strong> The search stops when it wins, and
+        the attempt count is exponential. Recover it from the nonce, or force a
+        difficulty that never hits.
+      </li>
+      <li>
+        <strong>Warm up the compiler.</strong> WebAssembly engines tier up. First-call
+        timing measures compilation.
+      </li>
+      <li>
+        <strong>Interleave the candidates.</strong> Load every variant once and
+        measure them round-robin in one process. Sequential runs measure the machine's
+        mood.
+      </li>
+      <li>
+        <strong>Report ratios from one run.</strong> Absolute hashes/s move 30% with
+        the governor, the SMT sibling and the weather. The ratio is the result.
+      </li>
+      <li>
+        <strong>Verify before you celebrate.</strong> Compare against a reference that
+        is not your own previous binary. Two independent implementations agreeing is
+        evidence; one implementation not crashing is not.
+      </li>
+      <li>
+        <strong>Say which artefact you measured.</strong> "The fill core", "the module",
+        and "the search loop" are three different claims, and conflating them is how
+        mistake 4 happened.
+      </li>
+    </ol>
+
+    <p>
+      If you find a claim on this site that does not reproduce, open an issue — that
+      is the same mechanism that produced this page.
+    </p>
+
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap wrap--wide">
+    <p>anubis-solver — MIT with attribution. Built with DeepSeek V4.1 Flash in DeepSeek Harness.</p>
+    <p><a href="https://github.com/celikfana-lab/anubis-solver">github.com/celikfana-lab/anubis-solver</a></p>
+  </div>
+</footer>
+</body>
+</html>

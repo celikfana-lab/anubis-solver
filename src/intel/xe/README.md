@@ -45,6 +45,15 @@ the same file walks the list and produces the digest, which must equal
   assemble : OK, 63936 bytes, 3996 instructions
 ```
 
+### What this GPU does with the equivalent SPIR-V
+
+For scale, the same algorithm compiled by the driver and run on this laptop's
+Iris Xe (gen-12lp, Mesa 25.2.8) through Vulkan does **70.6 M hashes/s** at 8/8
+digests exact, and it solved a real challenge (nonce 15648, 21 hits, confirmed by
+the WebAssembly reference). That is the driver's code, not this listing — it is
+here so that "3,996 instructions" has something to be compared with, and so
+nobody reads this file as a performance claim.
+
 ## The ISA, in one screen
 
 - A GRF is 32 bytes: **eight dwords, one per lane**. An instruction with execution

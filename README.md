@@ -69,8 +69,8 @@ results that came out negative.
 
 | | | how |
 |---|---|---|
-| SHA-256 in wasm, 4 nonces wide | **2.1x** Anubis's own module (3.9 vs 1.9 M hashes/s) | `cd wasm && make && node bench-sha256.mjs` |
-| HashX compiled to WAT | **6-8x** Anubis's module (2.7 vs 0.33 M hashes/s) | `cd wasm && node bench.mjs` |
+| SHA-256 in wasm, 4 nonces wide | **1.8-2.1x** Anubis's own module (3.0-3.9 vs 1.7-1.9 M hashes/s) | `cd wasm && make && node bench-sha256.mjs` |
+| HashX compiled to WAT | **6-8x** Anubis's module (1.9-2.7 vs 0.30-0.35 M hashes/s) | `cd wasm && node bench.mjs` |
 | Argon2id fill core | parity with Anubis (~1.8 µs/block) | `cd wasm && node bench-a2i.mjs` |
 | Browser, native library | **10x** the in-page wasm at difficulty 20 | `python3 firefox-extension/test-native.py` |
 | Gate server footprint | **22x less RAM**, ~2x less CPU per request | `python3 tools/bench-server-resources.py` |

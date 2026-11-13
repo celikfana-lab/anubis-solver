@@ -131,6 +131,15 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 | [docs/development.md](docs/development.md) | layout, build, kernel regeneration, tests |
 | [SPEED.md](SPEED.md) | measured throughput, per tier and per version |
 
+## [HALL_OF_SHAME.md](HALL_OF_SHAME.md)
+
+A file for claims that did not survive measurement — other people's first, because
+that is funnier, then ours, because that is fairer. The headline one is the
+prediction that memory-hard Argon2id puts "the 'hey Claude vibeslop me a CUDA Anubis
+solver' route ... on its way to being fundamentally dead": this repository is that
+solver, it was written entirely by an AI, and `results/argon2id-cuda-t4.json` has it
+running Argon2id at **20.7x** a CPU core on a T4.
+
 ## Documentation site
 
 **[celikfana-lab.github.io/anubis-solver](https://celikfana-lab.github.io/anubis-solver/)**

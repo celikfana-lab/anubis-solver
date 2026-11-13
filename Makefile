@@ -129,6 +129,22 @@ test: $(LIB)
 shader:
 	bash tools/build_shader.sh
 
+# Assemble the hand-written Intel Xe listing. iga64 is Intel's assembler; it
+# comes from libigc2-tools, or from a built IGC tree (see src/intel/xe/README.md).
+#
+#   make xe-asm        -> build/intelXe_sha256.krn (the machine code)
+#   make xe-loader     -> build/xe-loader, which runs it through OpenCL
+IGA64 ?= $(shell command -v iga64 2>/dev/null)
+.PHONY: xe-asm
+xe-asm: | $(BUILD)
+ifneq ($(IGA64),)
+	$(IGA64) -p 12p1 -a src/intel/xe/intelXe_sha256.xe -o $(BUILD)/intelXe_sha256.krn
+	@echo "assembled $(BUILD)/intelXe_sha256.krn: $$(wc -c < $(BUILD)/intelXe_sha256.krn) bytes, $$(( $$(wc -c < $(BUILD)/intelXe_sha256.krn) / 16 )) instructions"
+else
+	@echo "xe-asm needs iga64: apt install libigc2-tools, or build visa/iga from IGC"
+	@false
+endif
+
 # Intel Xe assembly loader: patches a listing assembled by IGA into an IGC Zebin
 # and loads it through OpenCL, which is the only way to execute hand-written gen
 # instructions on this machine (Vulkan and OpenCL both take SPIR-V otherwise).

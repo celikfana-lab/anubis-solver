@@ -14,6 +14,9 @@
 </tr>
 </table>
 
+A summary of what this repository demonstrates, with the measured numbers and how
+to reproduce each one, is in [`SHOWCASE.md`](SHOWCASE.md).
+
 **Beyond** is the hardware half of this repository, in [`beyond/`](beyond/). It is a
 real design point: 365 Argon2id engines
 x 3 contexts behind eight HBM3e stacks (70,122 h/s measured), plus 128 HashX

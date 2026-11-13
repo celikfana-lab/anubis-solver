@@ -812,6 +812,39 @@ not. Argon2id uses add/sub/xor/rotate, `blamka` (32x32->64 `mulhi32`) and the wh
 fill, but never a full 64x64 multiply - so the Intel miscompile is pinned to
 `umulh64`/`mul64`, not to the u64 emulation as a whole.
 
+#### SHA-256 on WebGPU: the one that wins
+
+`webgpu/sha256.wgsl` is compute-bound, needs no memory, and SHA-256 is entirely
+32-bit, so `vec4<u32>` gives four nonces per invocation with no u64 emulation. It
+self-checks 8/8 on both backends (including nonzero nonces on both nonce byte
+orders, which a nonce-0 check cannot distinguish) and it is the first WebGPU kernel
+here that beats the wasm module by a wide margin:
+
+| window | GPU | wasm 4-wide | ratio |
+|---|---:|---:|---:|
+| quiet machine | **68.0 MH/s** | 2.03 MH/s | **33x** |
+| moderate load | 23-39 MH/s | 0.79-1.15 MH/s | 29-39x |
+| desktop busy (load 10-11) | 3.5 MH/s | 0.93 MH/s | 3.7x |
+| SwiftShader (CPU backend) | 0.51 MH/s | 2.48 MH/s | 0.2x |
+
+The ratio is the result and the absolute is the host: an iGPU shares memory
+bandwidth and needs the CPU to submit, so a busy desktop hurts it far more than it
+hurts wasm. 68 MH/s is about half the native Vulkan/Level Zero 137 MH/s on the same
+iGPU, which is the expected gap for a shader with less scheduling freedom, and
+17-23x wasm using this repo's 3.0-3.9 M/s baseline.
+
+Measured kernel shapes, same load, same digests: the shipped 64-round loop with
+`w[i & 15]` and K in a private array won; a 4x16 unrolled form with constant
+indices - the obvious optimisation - was 2-3x slower (register pressure and lost
+occupancy); fully unrolling killed SwiftShader's JIT outright with
+`VK_ERROR_DEVICE_LOST`.
+
+And the diagnostic is now closed from both sides: SHA-256 (pure 32-bit vector
+arithmetic) **passes** on Intel, Argon2id passes, and only HashX fails. 32-bit
+scalar and `vec4` arithmetic, rotates, shifts and the whole Argon2 fill are all
+compiled correctly there; the wrongness is confined to the 64x64 multiply's high
+half, `umulh64`/`mul64`.
+
 Correctness is not assumed: `wasm/verify.mjs` makes both engines solve the same
 difficulty-16 challenge, and they return the **same nonce (180078) and the same
 digest** — the official module is 7-9x slower on the same work. Three

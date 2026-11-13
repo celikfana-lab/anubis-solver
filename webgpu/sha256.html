@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SHA-256 on WebGPU — self-check and measurement</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 2rem; max-width: 62rem; color: #e8e8e4; background: #14161a; }
+  h1 { font-size: 1.4rem; margin: 0 0 .4rem; }
+  h2 { font-size: 1rem; margin: 1.6rem 0 .4rem; color: #9ad; }
+  table { border-collapse: collapse; margin: .6rem 0; }
+  th, td { padding: .3rem .8rem .3rem 0; text-align: left; border-bottom: 1px solid #2b2f36; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  code, pre { font-family: ui-monospace, Menlo, monospace; font-size: .85rem; }
+  .ok { color: #6f6; } .bad { color: #f88; } .muted { color: #888; }
+  .banner { border-left: 3px solid #666; padding: .6rem 1rem; margin: 1rem 0; background: #1b1e23; }
+  .banner.gpu { border-left-color: #6f6; }
+  .banner.wasm { border-left-color: #fa6; }
+  .chosen { font-weight: 700; }
+  #log { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .8rem; color: #aaa; }
+</style>
+</head>
+<body>
+<h1>SHA-256 on WebGPU</h1>
+<p class="muted">
+  The same Anubis <code>sha256</code> proof of work in a WGSL compute shader and
+  in WebAssembly, in one browser and one process. <strong>The page does not
+  trust the GPU:</strong> before using it, it hashes known
+  (challenge, nonce) pairs and compares the digests against
+  <code>wasm/sha256_pow.wasm</code>. If they disagree — which is the useful
+  diagnostic for the Intel backend — the page reports it and falls back to
+  WebAssembly instead of returning wrong answers faster.
+</p>
+<p class="muted">
+  The check covers <strong>both nonce byte orders</strong> (little-endian when
+  the challenge's last byte is &ge; 0x80, big-endian otherwise, per
+  <code>wasm/sha256_pow.c</code>) and <strong>nonzero nonces</strong>: nonce 0 is
+  four zero bytes either way, so a check that only used nonce 0 would not notice
+  a reversed nonce encoding at all.
+</p>
+
+<div id="selection" class="banner"><span class="chosen">selecting a backend…</span></div>
+
+<h2>Adapter and limits</h2>
+<table id="adapter"><tbody></tbody></table>
+
+<h2>Self-check (GPU digest vs the WebAssembly module)</h2>
+<div id="verify">running…</div>
+<table id="checks"><thead><tr><th>challenge order</th><th>nonce</th><th>GPU digest</th><th>wasm digest</th><th>status</th></tr></thead><tbody></tbody></table>
+
+<h2>Throughput</h2>
+<table id="rates"><thead><tr><th>engine</th><th>hashes/s</th><th>per hash</th><th>status</th></tr></thead><tbody></tbody></table>
+
+<h2>Log</h2>
+<div id="log"></div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const log = (m) => { $('log').textContent += m + '\n'; console.error(m); };
+const row = (table, cells, cls) => {
+  const tr = document.createElement('tr');
+  if (cls) tr.className = cls;
+  for (const [i, c] of cells.entries()) {
+    const td = document.createElement('td');
+    if (i === 1) td.className = 'n';
+    td.textContent = c;
+    tr.append(td);
+  }
+  table.querySelector('tbody').append(tr);
+};
+const fmt = (n, d = 0) => Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[s.length >> 1]; };
+const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+const bytes = (h) => new Uint8Array(h.match(/../g).map((x) => parseInt(x, 16)));
+
+// Same 32-byte challenge as the HashX demo: last byte 0x7d (< 0x80), so the
+// nonce bytes are appended big-endian. The second challenge flips that last
+// byte to 0xfd so the little-endian branch is exercised too.
+const CHALLENGE = '6a1f8c2e4d0b9a7f3c5e2d1b0a9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d';
+const CHALLENGE_LE = CHALLENGE.slice(0, -2) + 'fd';
+
+// Nonzero nonces matter: 0xdeadbeef etc. would all hash identically if the
+// nonce insertion were dropped, and nonce 0 cannot tell the byte orders apart.
+const CHECKS = [
+  ['big-endian', CHALLENGE, 0],
+  ['big-endian', CHALLENGE, 1],
+  ['big-endian', CHALLENGE, 12345],
+  ['big-endian', CHALLENGE, 0xdeadbeef],
+  ['little-endian', CHALLENGE_LE, 0],
+  ['little-endian', CHALLENGE_LE, 1],
+  ['little-endian', CHALLENGE_LE, 12345],
+  ['little-endian', CHALLENGE_LE, 0xdeadbeef],
+];
+
+const WGSL_URL = './sha256.wgsl';
+const WASM_URL = '../wasm/sha256_pow.wasm';
+const WASM_BATCH_URL = '../wasm/sha256_pow_batch.wasm';
+const LANES = 4;                       // nonces per invocation, must match the shader
+const THREADS = 64;                    // @workgroup_size
+const N_PER_GROUP = LANES * THREADS;
+const RESULTS_U32 = 76;                // 4 header + 8 nonces + 64 hash words
+
+// ?quick=1 self-check only, ?engine=wasm|webgpu force a side, ?checks=N run
+// fewer/more of the known-answer pairs.
+const query = new URLSearchParams(location.search);
+const quick = query.has('quick');
+const forced = query.get('engine');
+const checksParam = Number(query.get('checks') ?? 0);
+
+/** Padded message words for a challenge, with the 4 nonce bytes left zero. */
+function template(challengeHex) {
+  const ch = bytes(challengeHex);
+  const len = ch.length;
+  const total = len + 4;
+  const blocks = Math.ceil((total + 9) / 64);
+  const msg = new Uint8Array(blocks * 64);
+  msg.set(ch, 0);
+  msg[len + 4] = 0x80;                              // padding after the nonce
+  const bits = BigInt(total) * 8n;                  // 64-bit big-endian length
+  for (let i = 0; i < 8; i++) msg[blocks * 64 - 1 - i] = Number((bits >> BigInt(8 * i)) & 255n);
+
+  // Big-endian u32 words, as the shader reads them.
+  const words = new Uint32Array(blocks * 16);
+  for (let i = 0; i < words.length; i++) {
+    words[i] = (((msg[4 * i] << 24) | (msg[4 * i + 1] << 16) | (msg[4 * i + 2] << 8) | msg[4 * i + 3]) >>> 0);
+  }
+
+  // Which one or two words the four nonce bytes land in: wordA gets
+  // (V >> shiftA) into its low bytes, wordB gets (V << shiftB) into its high
+  // bytes, and the masks keep the template bytes around them. V is the nonce in
+  // big-endian byte order (byte-swapped for the little-endian encoding).
+  const r = len & 3;
+  const wpA = len >>> 2;
+  let wpB = 0xffffffff, keepA = 0, shiftA = 0, keepB = 0, shiftB = 0;
+  if (r > 0) {
+    const b = 4 - r;
+    keepA = (0xffffffff << (8 * b)) >>> 0;
+    shiftA = 8 * r;
+    wpB = wpA + 1;
+    keepB = (1 << (8 * r)) - 1;
+    shiftB = 8 * b;
+  }
+  const swap = len > 0 && ch[len - 1] >= 0x80 ? 1 : 0;
+  return { challengeHex, blocks, words, wpA, wpB, keepA, shiftA, keepB, shiftB, swap };
+}
+
+/** Digest words -> hex, big-endian (SHA-256 state words in order). */
+const digestHex = (words) => words.map((w) => (w >>> 0).toString(16).padStart(8, '0')).join('');
+
+async function main() {
+  const out = { ok: false, page: 'sha256' };
+
+  if (!navigator.gpu) {
+    $('verify').innerHTML = '<span class="bad">navigator.gpu is missing</span>';
+    return { ...out, error: 'no navigator.gpu' };
+  }
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) {
+    $('verify').innerHTML = '<span class="bad">no adapter</span>';
+    return { ...out, error: 'no adapter' };
+  }
+  const info = adapter.info ?? {};
+  for (const [k, v] of Object.entries({ vendor: info.vendor, architecture: info.architecture,
+    device: info.device, description: info.description })) {
+    if (v) row($('adapter'), [k, v]);
+  }
+  const device = await adapter.requestDevice();
+  device.addEventListener('uncapturederror', (e) => log('GPU error: ' + e.error.message));
+  device.lost.then((i) => log(`device lost: ${i.reason}: ${i.message}`));
+  out.adapter = { vendor: info.vendor ?? '', arch: info.architecture ?? '', description: info.description ?? '' };
+  const software = /swiftshader/i.test(`${info.architecture ?? ''} ${info.description ?? ''} ${info.device ?? ''}`);
+
+  const L = device.limits;
+  out.limits = {
+    maxStorageBufferBindingSize: L.maxStorageBufferBindingSize,
+    maxComputeWorkgroupsPerDimension: L.maxComputeWorkgroupsPerDimension,
+    maxComputeInvocationsPerWorkgroup: L.maxComputeInvocationsPerWorkgroup,
+    maxNoncesPerDispatch: L.maxComputeWorkgroupsPerDimension * N_PER_GROUP,
+  };
+  for (const [k, v] of Object.entries(out.limits)) row($('adapter'), [k, fmt(v)]);
+
+  /* ---------------- the WebAssembly reference ---------------- */
+  async function loadWasm(url) {
+    const b = await (await fetch(url)).arrayBuffer();
+    const { instance } = await WebAssembly.instantiate(b, {});
+    return { ex: instance.exports, bytes: b.byteLength };
+  }
+  const wasm = await loadWasm(WASM_URL);
+  let wasmBatch = null;
+  try { wasmBatch = await loadWasm(WASM_BATCH_URL); } catch (e) { log('no batch module: ' + e); }
+  out.wasmBytes = wasm.bytes;
+
+  const wasmDigest = (challengeHex, nonce) => {
+    const ex = wasm.ex;
+    new Uint8Array(ex.memory.buffer).set(bytes(challengeHex), ex.data_ptr());
+    ex.set_data_length(bytes(challengeHex).length);
+    const n = ex.anubis_work(0, nonce >>> 0, 1) >>> 0;
+    if (n !== (nonce >>> 0)) throw new Error(`wasm returned nonce ${n}, expected ${nonce}`);
+    return new Uint8Array(ex.memory.buffer, ex.result_hash_ptr(), ex.result_hash_size()).slice();
+  };
+
+  /* ---------------- the GPU ---------------- */
+  const code = await (await fetch(WGSL_URL)).text();
+  const module = device.createShaderModule({ code, label: 'sha256' });
+  const ci = await module.getCompilationInfo();
+  const errs = ci.messages.filter((m) => m.type === 'error');
+  for (const m of ci.messages) log(`shader ${m.type} line ${m.lineNum}: ${m.message}`);
+  const gpuUsable = errs.length === 0;
+  out.shaderCompiles = gpuUsable;
+  out.shaderMessages = ci.messages.slice(0, 8).map((m) => `${m.type} line ${m.lineNum}: ${m.message}`);
+  if (!gpuUsable) $('verify').innerHTML = '<span class="bad">the shader does not compile on this backend</span>';
+
+  let pipeline, bind, paramsBuf, resultsBuf, msgBuf, readBuf;
+  if (gpuUsable) {
+    pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+    paramsBuf = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    resultsBuf = device.createBuffer({ size: RESULTS_U32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    msgBuf = device.createBuffer({ size: 4096, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    readBuf = device.createBuffer({ size: RESULTS_U32 * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    bind = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: paramsBuf } },
+        { binding: 1, resource: { buffer: resultsBuf } },
+        { binding: 2, resource: { buffer: msgBuf } },
+      ],
+    });
+  }
+
+  /**
+   * Scan `count` consecutive nonces from `base`. Returns the readback words and
+   * the wall time of submit -> onSubmittedWorkDone.
+   */
+  async function runGPU(tpl, base, count, difficulty) {
+    device.queue.writeBuffer(msgBuf, 0, tpl.words);
+    device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([
+      base >>> 0, count >>> 0, difficulty >>> 0, tpl.blocks,
+      tpl.wpA, tpl.wpB, tpl.keepA, tpl.shiftA, tpl.keepB, tpl.shiftB, tpl.swap, 0,
+    ]));
+    device.queue.writeBuffer(resultsBuf, 0, new Uint32Array(RESULTS_U32));   // clear total
+    const groups = Math.ceil(count / N_PER_GROUP);
+    const t0 = performance.now();
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bind);
+    pass.dispatchWorkgroups(groups);
+    pass.end();
+    enc.copyBufferToBuffer(resultsBuf, 0, readBuf, 0, RESULTS_U32 * 4);
+    device.queue.submit([enc.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    const ms = performance.now() - t0;
+    await readBuf.mapAsync(GPUMapMode.READ);
+    const u32 = new Uint32Array(readBuf.getMappedRange()).slice(0);
+    readBuf.unmap();
+    return { u32, ms, groups };
+  }
+
+  const hitsFrom = (u32) => {
+    const total = u32[0];
+    const hits = [];
+    for (let s = 0; s < Math.min(8, total); s++) {
+      hits.push({ nonce: u32[4 + s], words: Array.from(u32.slice(12 + s * 8, 12 + s * 8 + 8)) });
+    }
+    return { total, hits };
+  };
+
+  /* ---------------- step 1: does this GPU compute SHA-256 correctly? ---------------- */
+  const active = checksParam > 0 ? CHECKS.slice(0, Math.min(checksParam, CHECKS.length)) : CHECKS;
+  let checked = 0;
+  let mismatches = 0;
+  let gpuDigestNonce0 = null;      // the big-endian challenge's nonce 0
+  let wasmDigestNonce0 = null;
+  let gpuDigestNonce0LE = null;
+  if (gpuUsable) {
+    try {
+      for (const [order, challenge, nonce] of active) {
+        const tpl = template(challenge);
+        // count=4 so the four lanes are exactly nonce..nonce+3; pick ours back
+        // out of the (unordered, atomic) result slots by nonce.
+        const { u32 } = await runGPU(tpl, nonce >>> 0, 4, 0);
+        const got = hitsFrom(u32);
+        const hit = got.hits.find((h) => h.nonce === (nonce >>> 0));
+        const mine = hit ? digestHex(hit.words) : '(missing)';
+        const theirs = hex(wasmDigest(challenge, nonce));
+        // nonce 0 exists for both byte orders; keep them apart so the reported
+        // "nonce 0" digest is the big-endian one the reference vectors use.
+        if (nonce === 0 && order === 'big-endian') { gpuDigestNonce0 = mine; wasmDigestNonce0 = theirs; }
+        if (nonce === 0 && order === 'little-endian') { gpuDigestNonce0LE = mine; }
+        checked++;
+        const ok = mine === theirs;
+        if (!ok) mismatches++;
+        row($('checks'), [order, String(nonce), mine.slice(0, 16) + '…', theirs.slice(0, 16) + '…', ok ? 'ok' : 'MISMATCH'],
+          ok ? '' : 'rejected');
+        if (!ok) log(`self-check ${order} nonce ${nonce}: gpu ${mine} wasm ${theirs}`);
+      }
+    } catch (e) {
+      log('self-check threw: ' + (e && e.stack ? e.stack : e));
+      out.selfCheckError = String(e);
+    }
+  } else {
+    checked = 0;
+  }
+  const gpuCorrect = gpuUsable && checked === active.length && mismatches === 0;
+  out.selfCheck = gpuCorrect ? 'pass' : (gpuUsable ? 'fail' : 'unavailable');
+  out.checked = checked;
+  out.mismatches = mismatches;
+  out.digestNonce0 = gpuDigestNonce0;
+  out.digestNonce0LE = gpuDigestNonce0LE;
+
+  if (gpuUsable) {
+    $('verify').innerHTML = gpuCorrect
+      ? `<span class="ok">${checked}/${checked} digests match WebAssembly</span> — the WebGPU SHA-256 is bit-exact on this backend, ` +
+        `both nonce byte orders and nonzero nonces included.` +
+        `<br><span class="muted">nonce 0, big-endian challenge: <code>${gpuDigestNonce0}</code> (wasm: <code>${wasmDigestNonce0}</code>)` +
+        `<br>nonce 0, little-endian challenge: <code>${gpuDigestNonce0LE}</code></span>`
+      : `<span class="bad">${mismatches} of ${checked} digests differ from WebAssembly</span> — ` +
+        `this backend miscompiles the shader, so the page will use WebAssembly. Wrong answers, not slow answers.`;
+  }
+
+  /* ---------------- step 2: pick a backend ---------------- */
+  let engine = gpuCorrect ? 'webgpu' : 'wasm';
+  if (forced === 'wasm') engine = 'wasm';
+  if (forced === 'webgpu') engine = 'webgpu';
+  out.engine = engine;
+  out.forced = forced ?? null;
+  out.ok = engine === 'webgpu' ? gpuCorrect : true;
+
+  const why = forced ? `forced with ?engine=${forced}`
+    : !gpuUsable ? 'the shader did not compile on this backend'
+    : gpuCorrect ? 'self-check passed'
+    : 'self-check failed: wrong digests, so the GPU is not used';
+  $('selection').className = 'banner ' + (engine === 'webgpu' ? 'gpu' : 'wasm');
+  $('selection').innerHTML =
+    `<span class="chosen">using ${engine === 'webgpu' ? 'WebGPU' : 'WebAssembly'}</span> — ${why}.<br><span class="muted">` +
+    (engine === 'webgpu'
+      ? 'The GPU passed the known-answer test, so it is safe to use.'
+      : 'This is the same fallback the C engine performs for every GPU hit: a backend that cannot reproduce the reference digest is not used, however fast it is.') +
+    '</span>';
+
+  // The self-check above only compares digests: at difficulty 0 every nonce is a
+  // hit, so it never exercises the leading-zero-BIT comparison that decides
+  // whether a nonce actually solves the challenge. This scan does. Any genuine
+  // hit is a valid answer; the wasm module returns a nonce only if it qualifies,
+  // so asking it for the GPU's hit nonce must return that same nonce.
+  let solveCheck = null;
+  if (gpuUsable && gpuCorrect) {
+    try {
+      const { u32 } = await runGPU(template(CHALLENGE), 0, 1 << 20, 16);
+      const got = hitsFrom(u32);
+      if (got.total > 0 && got.hits.length > 0) {
+        const nonce = got.hits[0].nonce;
+        const ex = wasm.ex;
+        const ch = bytes(CHALLENGE);
+        new Uint8Array(ex.memory.buffer).set(ch, ex.data_ptr());
+        ex.set_data_length(ch.length);
+        const confirmed = ex.anubis_work(16, nonce, 1) >>> 0;
+        solveCheck = { hits: got.total, nonce, confirmed, ok: confirmed === nonce };
+        log(`difficulty 16 over 1M nonces: GPU found ${got.total} hit(s); nonce ${nonce} ` +
+            (solveCheck.ok ? 'is a qualifying nonce (wasm agrees)' : `wasm says ${confirmed} instead`));
+      } else {
+        solveCheck = { hits: 0, ok: false };
+        log(`difficulty 16: no hits in 1M nonces (expected ~16)`);
+      }
+    } catch (e) {
+      log('solve check threw: ' + (e && e.stack ? e.stack : e));
+    }
+  }
+  out.solveCheck = solveCheck;
+
+  if (quick) {
+    log('quick mode: self-check only');
+    return out;
+  }
+
+  /* ---------------- step 3: throughput, both engines ---------------- */
+  // SHA-256 needs no memory, so the only limit on a dispatch is
+  // maxComputeWorkgroupsPerDimension; count is chosen to stay well inside it
+  // and to take a few tens of milliseconds on a real GPU.
+  const maxNonces = Math.min(L.maxComputeWorkgroupsPerDimension, 65535) * N_PER_GROUP;
+  const COUNT = Math.min(software ? (1 << 20) : (1 << 22), maxNonces);
+  const NEVER = 256;                    // leading zero bits can never reach 256
+  out.gpuNoncesPerDispatch = COUNT;
+
+  let gpuRate = 0;
+  if (gpuUsable) {
+    const tpl = template(CHALLENGE);
+    try {
+      await runGPU(tpl, 0, COUNT, NEVER);                  // compile + warm up
+      const runs = [];
+      for (let r = 0; r < 5; r++) {
+        const { ms, u32 } = await runGPU(tpl, 0, COUNT, NEVER);
+        if (u32[0] !== 0) log(`warning: ${u32[0]} hits at difficulty ${NEVER}?`);
+        runs.push(COUNT / (ms / 1000));
+      }
+      gpuRate = median(runs);
+      const ms = 1000 / gpuRate;
+      const gpuStatus = engine === 'webgpu' ? 'selected'
+        : gpuCorrect ? `not used: forced ?engine=${forced}` : 'not used: wrong digests';
+      row($('rates'), [`WebGPU, 4 nonces per invocation (${fmt(COUNT)} per dispatch)`,
+        fmt(gpuRate), `${(ms * 1000).toFixed(2)} µs`, gpuStatus],
+        engine === 'webgpu' ? 'chosen' : 'rejected');
+      log(`GPU runs: ${runs.map((r) => (r / 1e6).toFixed(1)).join(', ')} MH/s ` +
+        `(median ${(gpuRate / 1e6).toFixed(1)}, best ${(Math.max(...runs) / 1e6).toFixed(1)})`);
+    } catch (e) {
+      log('GPU throughput threw: ' + e);
+    }
+  }
+  out.gpuRate = gpuRate;
+  out.gpuHashesPerSecond = gpuRate;
+
+  // WebAssembly: anubis_work has no hash-count argument, so time a scan at
+  // difficulty 16 (2^16 expected hashes) and count exactly how many nonces were
+  // consumed: returnedNonce - start + 1. That measures the internal loop, with
+  // no per-hash JS call overhead.
+  const measureWasm = (mod, label, cls) => {
+    const ex = mod.ex;
+    const challenge = bytes(CHALLENGE);
+    new Uint8Array(ex.memory.buffer).set(challenge, ex.data_ptr());
+    ex.set_data_length(challenge.length);
+    ex.anubis_work(16, 0, 1);                            // warm up / tier up
+    let hashes = 0;
+    const t0 = performance.now();
+    for (let r = 0; r < 5; r++) {
+      const start = 1000000 + r * 1000000;
+      const ret = ex.anubis_work(16, start, 1) >>> 0;
+      hashes += (ret - start) >>> 0;
+      hashes += 1;
+    }
+    const seconds = (performance.now() - t0) / 1000;
+    const rate = hashes / seconds;
+    row($('rates'), [label, fmt(rate), `${(1e6 / rate).toFixed(3)} µs`, cls || 'reference'],
+      cls === 'chosen' ? 'chosen' : '');
+    log(`${label}: ${hashes} hashes in ${seconds.toFixed(3)} s`);
+    return rate;
+  };
+
+  let wasmRate = 0;
+  if (wasmBatch) wasmRate = measureWasm(wasmBatch, 'WebAssembly, 4-wide (sha256_pow_batch.wasm)',
+    engine === 'wasm' ? 'chosen' : '');
+  const wasmScalar = measureWasm(wasm, 'WebAssembly, scalar (sha256_pow.wasm)', 'reference');
+  out.wasmBatchRate = wasmRate;
+  out.wasmScalarRate = wasmScalar;
+  if (!wasmRate) wasmRate = wasmScalar;
+  out.wasmRate = wasmRate;
+
+  if (gpuRate && wasmRate) {
+    const ratio = gpuRate / wasmRate;
+    out.ratio = ratio;
+    row($('rates'), ['ratio (GPU / wasm)', `${ratio.toFixed(2)}x`, '',
+      ratio >= 1 ? 'WebGPU is faster' : 'WebAssembly is faster']);
+  }
+
+  out.usedRate = engine === 'webgpu' ? gpuRate : wasmRate;
+  out.ok = engine === 'webgpu' ? gpuCorrect : true;
+  log(`done: ${engine} at ${fmt(out.usedRate)} hashes/s` +
+      (engine === 'webgpu' ? '' : ' (SHA-256 on WebGPU was not used)'));
+  return out;
+}
+
+main().then((out) => { window.__result = out; }).catch((e) => {
+  log('failed: ' + (e && e.stack ? e.stack : e));
+  window.__result = { ok: false, page: 'sha256', error: String(e) };
+});
+</script>
+</body>
+</html>

@@ -225,6 +225,49 @@ Two things this cost that are worth recording:
   changes the first address block of the first segment and every digest after it —
   the classic Argon2id port break, and the one bug found here.
 
+## SHA-256
+
+`webgpu/sha256.wgsl` is the algorithm this was all for. It is compute-bound, needs
+no memory, and SHA-256 is entirely 32-bit — so `vec4<u32>` gives four nonces per
+invocation in one instruction stream, with none of the u64 emulation the other two
+kernels need. It self-checks 8/8 on **both** backends, including nonces 0, 1, 12345
+and 0xdeadbeef on a big-endian challenge *and* a little-endian one, because the
+nonce's byte order depends on the challenge's last byte and nonce 0 is four zero
+bytes either way — a nonce-0-only check cannot catch that bug.
+
+It is also the first thing here that beats the wasm module by a wide margin:
+
+| window | GPU | wasm 4-wide | ratio |
+|---|---:|---:|---:|
+| quiet machine | **68.0 MH/s** (median of 73.1, 68.0, 68.6, 66.2, 66.8) | 2.03 MH/s | **33x** |
+| moderate load | 23-39 MH/s | 0.79-1.15 MH/s | 29-39x |
+| desktop busy (load 10-11) | 3.5 MH/s | 0.93 MH/s | 3.7x |
+| SwiftShader (CPU backend) | 0.51 MH/s | 2.48 MH/s | 0.2x, i.e. slower |
+
+The spread is the host, not the kernel: an iGPU shares memory bandwidth with the
+CPU and needs the CPU to submit work, so a busy desktop hurts it far more than it
+hurts the wasm module. The ratio is the result; the absolute figure depends on
+whether you are using the machine.
+
+68 MH/s is about half the repository's native Vulkan/Level Zero SHA-256 on the same
+iGPU (137 MH/s), which is the right ballpark for a shader compiler with less
+freedom than a hand-written SPIR-V kernel, and 17-23x the wasm module using the
+repo's own 3.0-3.9 M/s figure.
+
+**Kernel shape matters, and the obvious optimisation loses.** Three shapes A/B'd
+interleaved under the same load: the shipped 64-round loop with `w[i & 15]` plus the
+K constants in a private array won (11.2/5.5 MH/s in that window); a 4x16 unrolled
+form with constant schedule indices — the "obvious" optimisation — was **2-3x
+slower** (4.9/3.2), presumably from register pressure and lost occupancy; and
+unrolling all 64 rounds ran at 6.1 MH/s and, worse, **kills SwiftShader's JIT**
+with `VK_ERROR_DEVICE_LOST`. All three produced the same digests, so this is purely
+a performance choice.
+
+Because difficulty 0 never exercises the leading-zero-bit test, the page also does a
+real hit test: a 1M-nonce scan at difficulty 16 found 21 hits, and
+`anubis_work(16, 5030, 1)` on the wasm module returns exactly nonce 5030 — a
+genuine qualifying hit, not merely a matching digest.
+
 ## The Intel diagnostic this produced
 
 Argon2id **passes** on the Intel backend, which narrows the HashX failure. Argon2id

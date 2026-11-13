@@ -7,6 +7,8 @@ The C library is the one implementation; these are thin bindings to it.
 | Python | `anubis_solver.py` (repo root) | `ctypes` |
 | Node | `bindings/node/` | `koffi` FFI — no native addon, no build step |
 | Go | `bindings/go/` | `cgo` — links libanubis_solver.so directly |
+| C# | `bindings/csharp/` | `[LibraryImport]` P/Invoke — no NuGet, no shim |
+| R | `bindings/r/` | a small `.Call` shim, because `.C()` cannot return a code |
 
 All of them answer the same four questions and expose the same five algorithm
 families. Build the library first, from the repository root:
@@ -91,3 +93,67 @@ a 4-byte nonce. The core chooses the nonce byte order **from the challenge's las
 byte**: little-endian when it is `>= 0x80`, big-endian otherwise. The Go test
 mirrors that rule to recompute a digest independently; if you are implementing a
 verifier yourself, this is the part to get right.
+
+## C#
+
+```bash
+cd bindings/csharp
+dotnet build AnubisSolver.csproj     # the library, no NuGet packages
+dotnet run --project tests/Tests.csproj   # 13 checks against the real library
+```
+
+```csharp
+using AnubisSolver;
+
+var r = Anubis.SolveNibbles("demo-challenge", 3);
+Console.WriteLine($"{r.Nonce} {r.Hash} {r.Millis}ms");
+
+var h = Anubis.Solve("hashx", hexChallenge, 4);
+var (ok, hash) = Anubis.VerifyHashx(hexChallenge, (uint)h.Nonce, 4);
+```
+
+The library is found by an `AssemblyLoadContext` resolver that walks up from the
+build output to the repository root; `ANUBIS_LIB` overrides it. Failures throw
+`SolverException` with `.Code`, `.IsUnsolved` and `.IsArgument`.
+
+Two things to know if you write your own C# against this library:
+
+- **`[LibraryImport]` requires `partial` and unsafe blocks.** The containing class
+  must be `partial` and the project needs `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`.
+- **A `string` parameter means UTF-8.** `anubis_sha256_hex` takes a byte pointer
+  plus a length, so a string-only binding cannot hash binary data at all - the
+  digest cross-check in the tests failed until `Sha256Hex(byte[])` and
+  `Sha256Midstate(byte[])` overloads existed.
+
+## R
+
+```bash
+cd bindings/r
+make                          # builds anubisR.so via `R CMD SHLIB`
+R --vanilla -f test.R         # 14 checks against the real library
+```
+
+If R was unpacked without the `R CMD` wrapper, compile directly:
+`make direct R_INCLUDE=.../R/include R_LIB=.../R/lib R_LIB_LDFLAGS="-L.../R/lib -lR"`.
+
+```r
+source("anubis.R")
+
+anubis_info()                                   # version, gpu, threads, ...
+anubis_solve_nibbles("demo-challenge", 3)       # list(nonce, hash, ms)
+anubis_solve_hashx(hexChallenge, 4)
+anubis_verify_hashx(hexChallenge, nonce, 4)$ok
+```
+
+Errors are real R conditions, so `tryCatch` can tell them apart: a nonce or time
+budget running out is `anubis_unsolved`, a malformed hex challenge is
+`anubis_argument_error`, and both inherit from `anubis_error`.
+
+**Why a shim and not plain `.C()`:** R's base `.C()` interface discards the C
+function's return value, and every function in `anubis-solver.h` reports success
+through exactly that. `src/anubis_r.c` is therefore a ~300-line `.Call` shim that
+returns the status alongside the outputs; `anubis.R` turns a non-zero status into
+a condition. Without it there is no way to see a return code at all.
+
+R has no native 64-bit integer, so nonces come back as doubles - exact to 2^53,
+far beyond anything a search will reach.

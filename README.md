@@ -100,14 +100,16 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 ### Other languages
 
 Besides the Python library at the top of the repository, `bindings/` has thin
-wrappers over the same `libanubis_solver.so`: a **Node** one using koffi FFI (no
-native addon, no build step) and a **Go** one using cgo. Both expose
-introspection, the SHA-256 helpers, all five algorithm families and verification,
-and both ship with tests that run against the real library:
+wrappers over the same `libanubis_solver.so`: **Node** (koffi FFI, no native
+addon), **Go** (cgo), **C#** (P/Invoke, no NuGet) and **R** (a `.Call` shim). All
+four expose introspection, the SHA-256 helpers, all five algorithm families and
+verification, and each ships with tests that run against the real library:
 
 ```bash
-(cd bindings/node && npm install && node test.js)
-(cd bindings/go && go test ./...)
+(cd bindings/node   && npm install && node test.js)          # 11 checks
+(cd bindings/go     && go test ./...)                        # 10 tests
+(cd bindings/csharp && dotnet run --project tests/Tests.csproj)  # 13 checks
+(cd bindings/r      && make && R --vanilla -f test.R)        # 14 checks
 ```
 
 ### Configuration: `make config`
@@ -174,6 +176,8 @@ tests/                   unit, local end-to-end, version matrix, CVE harness
 examples/                Python, C and C++ samples
 bindings/node/           Node bindings (koffi FFI, no build step)
 bindings/go/             Go bindings (cgo, links the .so)
+bindings/csharp/         C# bindings (P/Invoke, no NuGet)
+bindings/r/              R bindings (.Call shim)
 tools/                   kernel generators, build scripts, benchmarks
 results/                 raw benchmark JSON
 ```

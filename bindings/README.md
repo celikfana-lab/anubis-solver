@@ -10,6 +10,7 @@ The C library is the one implementation; these are thin bindings to it.
 | C# | `bindings/csharp/` | `[LibraryImport]` P/Invoke — no NuGet, no shim |
 | R | `bindings/r/` | a small `.Call` shim, because `.C()` cannot return a code |
 | Java | `bindings/java/` | a JNI shim; no jars, no preview flags |
+| Assembly | `bindings/asm/` | `.include` macros for x86-64 SysV and AArch64 |
 
 All of them answer the same four questions and expose the same five algorithm
 families. Build the library first, from the repository root:
@@ -194,3 +195,38 @@ signature is checked by the C compiler. Do not remove that include.
 The Java classes need the shim on `java.library.path`
 (`-Djava.library.path=bindings/java/build`); the shim itself finds
 `libanubis_solver.so` through its rpath, so no `LD_LIBRARY_PATH` is needed.
+
+## Assembly
+
+```bash
+cd bindings/asm
+make run        # x86-64, native: solves, verifies, prints the digest
+make run-arm    # cross-builds an aarch64 library, runs the aarch64 demo under qemu
+```
+
+```asm
+    .include "anubis.inc"
+
+    ANUBIS_SOLVE_NIBBLES challenge, 3, 0, -1, snonce, shex, sms
+    // %eax = 0 for a hit; snonce/shex/sms now hold the result
+    test %eax, %eax
+    jnz  .Lsolve_failed
+```
+
+`anubis.inc` gives you a macro per call, and the file's comments are the register
+map. The map is the whole difficulty:
+
+- **x86-64:** `budget_ms` is a double, so it takes `%xmm0` and consumes *none* of
+  `%r8`/`%r9`. `out_nonce` is therefore `%r8`, `out_hex` is `%r9`, and `out_ms` is
+  the only stack argument. Writing `out_nonce` into `%r9` assembles, links, and
+  writes garbage.
+- **AArch64:** same split with `d0`, so `out_nonce` is `x4`, `out_hex` is `x5`,
+  `out_ms` is `x6` — and nothing goes on the stack. Note also that `#` is an
+  immediate prefix there, not a comment: `#`-comments inside a macro body get
+  glued onto the instruction. Use `//`.
+
+Both demos are verified: x86-64 natively, AArch64 under `qemu-aarch64` against a
+cross-built library, and they return the *same nonce and hash*, so the two are
+checked against each other. `bindings/asm/README.md` also documents how to
+cross-build the library (the root Makefile keys its kernel choice off `uname -m`,
+so a cross build must pass `ASM_SRC=src/cpu/neon.s` and argon2's `ref.c`).

@@ -28,3 +28,5 @@ bindings/csharp/tests/obj/
 bindings/r/anubisR.so
 bindings/r/src/*.o
 bindings/java/build/
+bindings/asm/build/
+build-arm64/

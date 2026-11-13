@@ -120,6 +120,23 @@ verification, and each ships with tests that run against the real library:
 (cd bindings/asm    && make run && make run-arm)                 # both arches
 ```
 
+### betterAnusbis: the gate, in one C file
+
+`betterAnusbis/` is an Anubis-compatible proof-of-work gate — same challenge JSON,
+same `pass-challenge` route, same cookie name, so every existing client works
+against it unchanged — in about a thousand lines of C with one dependency (this
+repository's engine, used for verification).
+
+```bash
+cd betterAnusbis && make
+./betterAnusbis --target http://127.0.0.1:3000 --algorithm sha256 --difficulty 12
+```
+
+All six algorithms are gated and verified (fast, slow, sha256, argon2id, hashx,
+metarefresh), `./test-all-algorithms.sh` asserts the protected page comes back for
+each, and tampering gets a 403. Anubis has the policy engine, the honeypot and the
+rule language; this has `--target`.
+
 ### The browser, using the real library
 
 `firefox-extension/` is a Firefox add-on that solves Anubis challenges through
@@ -242,6 +259,7 @@ bindings/r/              R bindings (.Call shim)
 bindings/java/           Java bindings (JNI, no jars)
 bindings/rust/           Rust bindings (hand-written FFI, no deps)
 wasm/                   HashX compiled to WAT and the sha256 kernels, benchmarked
+betterAnusbis/          an Anubis-compatible PoW gate in one C file
 firefox-extension/      native messaging: the browser uses libanubis_solver.so
 bindings/asm/            assembly macros + demos (x86-64 and AArch64)
 dsh-plugin/              DSH tool: anubis_fetch, a web_fetch for Anubis pages

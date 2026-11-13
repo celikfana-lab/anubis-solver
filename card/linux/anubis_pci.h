@@ -1,6 +1,6 @@
 /* anubis_pci.h — the BAR0 contract, shared by the driver and the QEMU model.
  *
- * Mirrors chip/rtl/periph/axil_regs.v. Vendor/device are whatever you wire into
+ * Mirrors beyond/rtl/periph/axil_regs.v. Vendor/device are whatever you wire into
  * the FPGA; these values match the QEMU device so the same driver talks to both.
  */
 #ifndef ANUBIS_PCI_H

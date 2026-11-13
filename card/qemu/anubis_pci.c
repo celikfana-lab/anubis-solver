@@ -3,7 +3,7 @@
  *
  * Why a C model and not the Verilog: QEMU cannot host RTL, but it can host the
  * *contract*. This device implements the same BAR0 register map as
- * chip/rtl/periph/axil_regs.v, so a Linux driver written against it works
+ * beyond/rtl/periph/axil_regs.v, so a Linux driver written against it works
  * unchanged on the real card. The hash is a real SHA-256 of
  * (challenge || nonce little-endian) instead of Argon2id, because the point is
  * the register handshake, not the algorithm.

@@ -1,4 +1,4 @@
-/* gen_hashx_vectors.c — stage vectors for chip/tb/tb_hashx.v from the C
+/* gen_hashx_vectors.c — stage vectors for beyond/tb/tb_hashx.v from the C
  * reference in src/hashx (LGPL-3.0, see THIRD_PARTY_NOTICES.md). Used only as
  * a test-vector generator, never linked into the library.
  *

@@ -379,10 +379,10 @@ correct with verification off (checked against argon2-cffi); it is a
 benchmarking switch, not a production default. Raw data:
 [`results/gpu-verify-t4.json`](results/gpu-verify-t4.json).
 
-## Hardware (the Verilog reference in `chip/`)
+## Hardware (the Verilog reference in `beyond/`)
 
-`chip/` solves both challenge families in simulation — see
-[`chip/README.md`](chip/README.md). Everything here is **cycle-accurate
+`beyond/` solves both challenge families in simulation — see
+[`beyond/README.md`](beyond/README.md). Everything here is **cycle-accurate
 simulation, not silicon**, so read it as architecture: the cycle counts are
 measured, the clock is assumed. No static timing analysis has been run, so
 "1 GHz" is a plausible target rather than a verified one.
@@ -391,10 +391,10 @@ measured, the clock is assumed. No static timing analysis has been run, so
 
 | | |
 |---|---|
-| RTL | `chip/rtl/` — SHA-256 PoW, full Argon2id, full HashX, eight-stack HBM3e, and the 365-engine card top in `rtl/top/` |
+| RTL | `beyond/rtl/` — SHA-256 PoW, full Argon2id, full HashX, eight-stack HBM3e, and the 365-engine card top in `rtl/top/` |
 | Simulator | Icarus Verilog 12.0 (function), Verilator 5.020 (single-hash speed) |
 | Machine | 56-core Xeon, Ubuntu 24.04 |
-| Run | `make -C chip remote-sim`, `make -C chip remote-mpipe`, 2026-11-12 |
+| Run | `make -C beyond remote-sim`, `make -C beyond remote-mpipe`, 2026-11-12 |
 | Raw data | [`results/chip-throughput-2026-11-12.json`](results/chip-throughput-2026-11-12.json), [`results/chip-fill-writeback-2026-11-12.json`](results/chip-fill-writeback-2026-11-12.json), [`results/hbm3e-x8-2026-11-12.json`](results/hbm3e-x8-2026-11-12.json) |
 
 ### One engine
@@ -437,8 +437,8 @@ link saturates at ~30 engines instead of 59: half the die for the same
 ### Scaling Argon2id: engines vs HBM3
 
 The question for Argon2id is never the datapath, it is whether memory keeps
-the engines fed. `chip/rtl/argon2/argon2_mpipe.v` carries N engines with K
-hashes each against `chip/rtl/mem/hbm3_model.v` (819 B/cycle, 350-cycle
+the engines fed. `beyond/rtl/argon2/argon2_mpipe.v` carries N engines with K
+hashes each against `beyond/rtl/mem/hbm3_model.v` (819 B/cycle, 350-cycle
 latency, byte-credit admission). `fill_block` is a 133-cycle counter there, so
 this measures arbitration, occupancy and latency hiding.
 
@@ -471,7 +471,7 @@ hashes/s**, and it is the memory that decides it, not the engines.
 ### Eight HBM3e stacks
 
 HBM3e is 9.6 Gb/s/pin on a 1024-bit bus: 1,228.8 GB/s per stack, so eight of
-them are 9.82 TB/s. `chip/rtl/mem/hbm3e_mem.v` is that subsystem — eight
+them are 9.82 TB/s. `beyond/rtl/mem/hbm3e_mem.v` is that subsystem — eight
 instances of the same per-stack link model (byte-credit admission and the
 350-cycle pipeline, unchanged) behind a router that sends
 `stack = block % 8`. Only the *selected* stack can backpressure a request; a
@@ -543,10 +543,10 @@ So the honest range for a 1 GHz, 365-engine, eight-HBM3e design is
 
 ### The card: 365 engines
 
-`chip/rtl/top/anubis_argon2_card.v` is that design point as a single Verilog
+`beyond/rtl/top/anubis_argon2_card.v` is that design point as a single Verilog
 top: the 365-engine array, the three request lanes, the eight HBM3e stacks, the
 PCIe BAR0 register block and the UART console, wired together.
-`make -C chip card-argon2-max` builds it and drives it through BAR0 the way a
+`make -C beyond card-argon2-max` builds it and drives it through BAR0 the way a
 host would.
 
 ```
@@ -577,7 +577,7 @@ challenge.
 ### One die, three machines
 
 The three Anubis families want three different machines, so
-`chip/rtl/top/anubis_tri_chip.v` puts the right machine next to each other
+`beyond/rtl/top/anubis_tri_chip.v` puts the right machine next to each other
 instead of forcing one datapath to be three things. Only the host interface and
 the board are shared.
 
@@ -613,7 +613,7 @@ PoW has no latency requirement, so the pipeline is the right answer — it just
 isn't written yet, and the pooled version is built from a core that is already
 verified against known vectors.
 
-`make -C chip tri-chip` runs all three on one die and checks each against its
+`make -C beyond tri-chip` runs all three on one die and checks each against its
 reference: HashX must find nonce 228 (9 leading zero bits, the C reference's
 first hit), SHA-256 must find nonce 83 with digest `008fa7f1...`, and the
 Argon2id array's traffic must match its engine count and block cost.
@@ -652,7 +652,7 @@ path, so a stuck bit inside a DRAM cell is outside what it can see.
 
 ### Benchmark: all three at once
 
-`make -C chip bench` runs the three sub-chips together with the difficulty set
+`make -C beyond bench` runs the three sub-chips together with the difficulty set
 impossible, so every lane hashes flat out and what is measured is the machine
 rather than the size of a search:
 
@@ -721,7 +721,7 @@ silicon genuinely wins, because the core has no memory to wait on.
   memory and cut it substantially.
 - **Sweeps belong on the server.** Eight configurations, 8 × 12,000 blocks of
   simulation, take 97 s wall / 10 min CPU on 56 cores versus roughly a quarter
-  of an hour on the 16-core laptop. `make -C chip remote-mpipe` and friends
+  of an hour on the 16-core laptop. `make -C beyond remote-mpipe` and friends
   rsync the tree and run there.
 
 ## Notes

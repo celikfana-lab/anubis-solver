@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vectors for chip/tb_h_prime.v: Argon2's H' against hashlib.
+"""Vectors for beyond/tb_h_prime.v: Argon2's H' against hashlib.
 
 Per case, 2056 bytes:
     [0..1023]    X, zero padded

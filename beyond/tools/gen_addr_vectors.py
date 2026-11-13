@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vectors for chip/tb_argon2_addr.v: Argon2id address blocks.
+"""Vectors for beyond/tb_argon2_addr.v: Argon2id address blocks.
 
 Per case: 8 parameter lines then 128 expected 64-bit words (hex, one per line):
     pass, lane, slice, m', t, y, counter, unused

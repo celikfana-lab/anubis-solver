@@ -54,7 +54,7 @@ module doctor #(
     input  wire          mem_resp_valid,
     input  wire [IDW-1:0] mem_resp_id
 );
-    // ---- known-answer constants (chip/tools/gen_doctor_consts.py) ---------
+    // ---- known-answer constants (beyond/tools/gen_doctor_consts.py) ---------
     // Argon2: the block-A vector times the XOR fold of all 128 output words
     localparam [63:0] ARGON_FOLD = 64'hA156E4FDFEC07F87;
     // SHA-256: IV over one padded block of 55 'a' bytes

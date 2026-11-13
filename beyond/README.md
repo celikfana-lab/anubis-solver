@@ -1,8 +1,10 @@
-# chip/ — SHA-256 and Argon2id proof of work in Verilog
+# beyond/ — SHA-256, HashX and Argon2id proof of work in Verilog
 
-Synthesizable RTL for the two Anubis challenge families: a SHA-256 core with a
-nonce scanner (`fast`/`slow`/`sha256`), and a complete Argon2id datapath
-(`argon2id`) that solves real challenges in simulation.
+*Beyond* is the hardware half of this repository: synthesizable RTL for every
+algorithm Anubis uses, plus the memory system and the host interfaces. A SHA-256
+core with a nonce scanner covers `fast`/`slow`/`sha256`, a complete Argon2id
+datapath covers `argon2id`, and a HashX VM covers `hashx` - all three solve real
+challenges in simulation.
 
 ## Layout
 
@@ -85,7 +87,7 @@ the last challenge byte is `>= 0x80`), and a hit needs `DIFF` leading zero bits
 of the 32-byte tag.
 
 ```bash
-cd chip
+cd beyond
 make solve DIFF=4 MAXN=32      # M_COST=64: searches nonces on the chip
 ```
 
@@ -212,7 +214,7 @@ request scheduler on top of `lpddr6_if`.
 Every command runs from this directory; artifacts land in `build/`.
 
 ```bash
-cd chip
+cd beyond
 make sim        # all 11 testbenches (iverilog + vvp)
 make solve      # on-chip nonce search, M_COST=64 (DIFF=4 MAXN=32 by default)
 make synth      # yosys area estimate for sha256_core

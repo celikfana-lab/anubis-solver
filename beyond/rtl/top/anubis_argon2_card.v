@@ -1,6 +1,6 @@
 // anubis_argon2_card.v — the 365-engine Argon2id card, as one Verilog top.
 //
-// The scaling study (`SPEED.md`, `chip/README.md`) says the design point is:
+// The scaling study (`SPEED.md`, `beyond/README.md`) says the design point is:
 //
 //   8 HBM3e stacks   9,824 B/cycle = 9.82 TB/s at 1 GHz
 //   3 request lanes  9,824 / 3,584 B per block = 2.74 requests per cycle needed

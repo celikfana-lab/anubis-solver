@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vectors for chip/tb_argon2_index.v: index_alpha, single lane."""
+"""Vectors for beyond/tb_argon2_index.v: index_alpha, single lane."""
 import random
 import sys
 

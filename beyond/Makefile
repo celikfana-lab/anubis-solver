@@ -1,4 +1,4 @@
-# chip/Makefile — simulate the SHA-256 and Argon2id proof-of-work datapath.
+# beyond/Makefile — simulate the SHA-256 and Argon2id proof-of-work datapath.
 #
 # Run everything from this directory: the testbenches read their vectors from
 # vectors/ with relative paths, and binaries go to build/.
@@ -343,13 +343,13 @@ synth:
 	$(YOSYS) -p "read_verilog -sv $(SHA) rtl/sha256/anubis_pow.v; synth -top sha256_core; stat"
 
 # ---- run on the build server ----------------------------------------------
-# the repo root, not just chip/: the HashX vectors are generated against
+# the repo root, not just beyond/: the HashX vectors are generated against
 # ../src/hashx, so a chip-only copy cannot build on the far side
 sync:
 	$(RSYNC) $(CURDIR)/../ $(HOST):$(REMOTE_DIR)/
 
 remote-%: sync
-	ssh $(HOST) 'cd $(REMOTE_DIR)/chip && make -j$(REMOTE_JOBS) $*'
+	ssh $(HOST) 'cd $(REMOTE_DIR)/beyond && make -j$(REMOTE_JOBS) $*'
 
 clean:
 	rm -rf $(B) vectors/*.hex~ vectors/prev.hex vectors/ref.hex vectors/dst.hex \

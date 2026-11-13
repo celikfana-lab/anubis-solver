@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate byte-stream BLAKE2b vectors for chip/tb_blake2b_stream.v.
+"""Generate byte-stream BLAKE2b vectors for beyond/tb_blake2b_stream.v.
 
 Layout, NC blocks of 512 bytes each:
     [0..255]    message bytes, zero padded

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vectors for chip/tb_h0.v: Argon2's H0 against hashlib.
+"""Vectors for beyond/tb_h0.v: Argon2's H0 against hashlib.
 
 Per case, 272 bytes:
     [0..191]   password bytes, zero padded

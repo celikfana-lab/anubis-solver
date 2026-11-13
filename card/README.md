@@ -2,7 +2,7 @@
 
 QEMU cannot host Verilog, so this directory tests the **contract** instead: a
 QEMU PCI device that implements the same BAR0 register map as
-[`chip/rtl/periph/axil_regs.v`](../chip/rtl/periph/axil_regs.v), and a Linux
+[`beyond/rtl/periph/axil_regs.v`](../beyond/rtl/periph/axil_regs.v), and a Linux
 driver that binds to it. A driver written against this device works unchanged
 on the FPGA, because both sides agree on the register map and the PCI IDs.
 

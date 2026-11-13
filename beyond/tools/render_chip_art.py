@@ -16,7 +16,7 @@ are a sliver.
 Draws at 4x and downsamples for antialiasing, then adds the lighting, grain and
 vignette that make it read as a photograph of hardware rather than a diagram.
 
-    python3 chip/tools/render_chip_art.py
+    python3 beyond/tools/render_chip_art.py
 """
 from pathlib import Path
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vectors for chip/tb_argon2_engine.v: a whole Argon2id hash.
+"""Vectors for beyond/tb_argon2_engine.v: a whole Argon2id hash.
 
 The testbench instantiates the engine with M_COST = 64 (a real 19 MiB run is
 millions of cycles), so the reference uses memory_cost = 64 too. One line per

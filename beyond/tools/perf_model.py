@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Argon2id throughput model for a scaled-up version of chip/rtl/argon2.
+"""Argon2id throughput model for a scaled-up version of beyond/rtl/argon2.
 
 Grounded in the measured RTL: one engine takes 5,165,657 cycles for a real
 Anubis hash (m=19456, t=2), i.e. 132.76 cycles per 1 KiB block over 38,912

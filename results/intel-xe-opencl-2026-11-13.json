@@ -31,5 +31,93 @@
   "hand_written_instructions": 2844,
   "webgpu_same_kernel_mhps": 70.6
  },
- "notes": "First native Intel GPU measurement here. Level Zero has no driver on this machine (only the loader); OpenCL does, so this goes through NEO and IGC. The hand-written listing in src/intel/xe is not executed: it is verified by interpreting its own instruction list and by assembling with IGA."
+ "notes": "First native Intel GPU measurement here. Level Zero has no driver on this machine (only the loader); OpenCL does, so this goes through NEO and IGC. The hand-written listing in src/intel/xe is not executed: it is verified by interpreting its own instruction list and by assembling with IGA.",
+ "library_backend": {
+  "wired": true,
+  "entry": "anubis_opencl_solve() called from anubis_solve_bits() and anubis_solve_nibbles()",
+  "dispatch_order": "CUDA -> Level Zero -> Vulkan -> OpenCL -> CPU",
+  "enabled_by": "ANUBIS_OPENCL=1, or no other GPU backend answering",
+  "disabled_by": "ANUBIS_NO_OPENCL=1",
+  "kernel": "src/opencl/sha256_pow.cl, one work-item per nonce, 64 lanes per workgroup",
+  "partial_prefix": "pre[]/pre_len carry the leftover bytes of a 32-byte Anubis randomData; keeps whole-block folded state in mid[]",
+  "verified": "every hit re-verified by anubis_verify_bits/anubis_verify_nibbles before being accepted"
+ },
+ "library_throughput_mhps": {
+  "steady_state": 285.0,
+  "range": [
+   260.0,
+   338.0
+  ],
+  "chunk_nonces": 4194304,
+  "chunk_ms": 14.7,
+  "cold_first_dispatch_ms": [
+   50.0,
+   190.0
+  ],
+  "note": "measured with difficulty 63 so no hit ends the search early; the first dispatch after idle is slow while the GPU clocks up"
+ },
+ "end_to_end": {
+  "gate": "betterAnusbis --algorithm sha256 --difficulty 26 (Anubis-compatible, same JSON and cookie)",
+  "client": "python3 anubis_solver.py http://127.0.0.1:8092/",
+  "result": "protected page returned ('PAST THE WALL')",
+  "gpu_ms": [
+   236.0,
+   296.2
+  ],
+  "gpu_mhps": [
+   260.0,
+   268.0
+  ],
+  "cpu_ms": [
+   9122.3,
+   3594.7
+  ],
+  "cpu_mhps": [
+   19.6,
+   19.5
+  ],
+  "speedup": "12x to 39x in wall time, 13.4x in hashes/s",
+  "cpu_condition": "four threads (the CLI default), powersave governor at 1.2 GHz; a single thread measures 5.0-5.6 MH/s in tools/bench_gpu.py"
+ },
+ "bugs_found_while_wiring": [
+  "p_clCreateBuffer was declared (ctx, flags_as_ulong, size_as_int, host, err) and every call site passed size then flags, so no device buffer was ever created and every search returned 'exhausted' without hashing",
+  "the dispatch used local size 1 (one lane per workgroup) and a blocking transfer per chunk: 14 MH/s before, ~285 MH/s after 64-lane workgroups and one results write per search",
+  "an OpenCL device that reports itself as a CPU (pocl) is now refused instead of silently beating the AVX2 code by being slower"
+ ],
+ "kernel_bug_hypothesis_rejected": "an early guess blamed IGC for miscompiling the local digest array in the hit test; reverting that rewrite kept the kernel correct, so the cause was the host buffers, not the compiler",
+ "bench_gpu_rows_2026_11_13": {
+  "note": "tools/bench_gpu.py; the 'level zero' row is the OpenCL fallback because Level Zero is not compiled in on this machine (no level_zero/ze_api.h), and short workloads pay the cold first dispatch",
+  "mhps": {
+   "cuda/l0/vulkan (auto)": {
+    "fast d6": 84.0,
+    "fast d7": 104.0,
+    "sha256 b24": 49.6,
+    "sha256 b26": 59.2
+   },
+   "level zero (= opencl fallback)": {
+    "fast d6": 76.7,
+    "fast d7": 112.5,
+    "sha256 b24": 130.8,
+    "sha256 b26": 177.8
+   },
+   "vulkan": {
+    "fast d6": 93.9,
+    "fast d7": 73.0,
+    "sha256 b24": 60.0,
+    "sha256 b26": 78.1
+   },
+   "opencl": {
+    "fast d6": 77.4,
+    "fast d7": 149.0,
+    "sha256 b24": 141.1,
+    "sha256 b26": 179.9
+   },
+   "cpu (1 thread)": {
+    "fast d6": 5.8,
+    "fast d7": 5.3,
+    "sha256 b24": 5.0,
+    "sha256 b26": 5.6
+   }
+  }
+ }
 }

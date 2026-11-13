@@ -43,8 +43,9 @@ assembly and optional GPU backends.
 - **CPU kernels**: hand-written AVX2, SHA-NI, AVX-512 and AArch64 NEON/SHA-2
   assembly, with runtime dispatch down to a portable C fallback.
 - **GPU backends** (all opt-in except SHA-256): CUDA, oneAPI Level Zero,
-  Vulkan — for SHA-256, Argon2id and HashX. OpenCL host is in place but not
-  wired yet.
+  Vulkan and OpenCL — for SHA-256, Argon2id and HashX. The OpenCL path now
+  actually runs: 265 M hashes/s on an Iris Xe through Intel's NEO ICD, 13x what
+  four CPU threads manage on the same challenge (see [docs/gpu.md](docs/gpu.md)).
 - **Three interfaces**: Python library + CLI, a public C/C++ header, and the
   shared library on its own.
 - **Every GPU hit is re-verified** with the CPU reference; a mismatch silently
@@ -332,7 +333,7 @@ src/levelzero/*.c          Level Zero backends
 src/levelzero/*.cl         their OpenCL C kernels (embedded SPIR-V)
 src/vulkan/vulkan.c        Vulkan backends
 src/vulkan/*.comp          their GLSL kernels (embedded SPIR-V)
-src/opencl/                portable OpenCL host (not wired yet)
+src/opencl/                portable OpenCL host + its sha256 kernel
 src/intel/xe/              Intel Xe (gen12lp) assembly for the SHA-256 kernel,
                            assembled with IGA and verified against hashlib; see
                            src/intel/xe/README.md

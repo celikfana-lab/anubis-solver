@@ -51,9 +51,21 @@ CORE_SRC := src/core/anubis_solver.c src/hashx/hashx.c
 VULKAN ?= auto
 ifneq ($(VULKAN),0)
 ifneq ($(wildcard /usr/include/vulkan/vulkan.h),)
-CORE_SRC += src/vulkan/vulkan.c src/opencl/opencl_backend.c
+CORE_SRC += src/vulkan/vulkan.c
 CFLAGS  += -DANUBIS_HAVE_VULKAN
 LDFLAGS += -ldl
+endif
+endif
+# Optional OpenCL backend (any GPU with an ICD: Intel, AMD, NVIDIA, Mesa).
+# dlopen()s libOpenCL.so.1, so there is no hard link and no -lOpenCL here.
+# Vulkan is still the preferred path where it works; this one is used when no
+# other GPU backend answers, or when ANUBIS_OPENCL=1 asks for it by name.
+OPENCL ?= auto
+ifneq ($(OPENCL),0)
+ifneq ($(wildcard /usr/include/CL/cl.h),)
+CORE_SRC += src/opencl/opencl_backend.c
+CFLAGS   += -DANUBIS_HAVE_OPENCL
+LDFLAGS  += -ldl
 endif
 endif
 # Optional oneAPI Level Zero backend (Intel GPUs). Needs the Level Zero

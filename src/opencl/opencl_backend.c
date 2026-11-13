@@ -42,6 +42,8 @@ typedef void *cl_event;
 #define CL_TRUE 1
 #define CL_PROGRAM_BUILD_LOG 0x1183
 #define CL_DEVICE_NAME 0x102B
+#define CL_DEVICE_TYPE 0x1000
+#define CL_DEVICE_TYPE_GPU_BIT (1u << 2)
 
 typedef struct {
     uint32_t mid[8];
@@ -52,6 +54,8 @@ typedef struct {
     uint32_t check_bits;
     uint32_t base_nonce;
     uint32_t chunk;
+    uint32_t pre_len;      /* leftover prefix bytes that did not fill a block */
+    uint8_t pre[64];       /* ...and the bytes themselves */
 } cl_sha_params;
 
 typedef struct {
@@ -102,7 +106,7 @@ static cl_program (*p_clCreateProgramWithSource)(cl_context, cl_uint, const char
 static cl_int (*p_clBuildProgram)(cl_program, cl_uint, const cl_device_id *, const char *, void *, void *);
 static cl_int (*p_clGetProgramBuildInfo)(cl_program, cl_device_id, cl_uint, size_t, void *, size_t *);
 static cl_kernel (*p_clCreateKernel)(cl_program, const char *, cl_int *);
-static cl_mem (*p_clCreateBuffer)(cl_context, cl_ulong, cl_int, void *, cl_int *);
+static cl_mem (*p_clCreateBuffer)(cl_context, cl_ulong, size_t, void *, cl_int *);
 static cl_int (*p_clSetKernelArg)(cl_kernel, cl_uint, size_t, const void *);
 static cl_int (*p_clEnqueueNDRangeKernel)(cl_command_queue, cl_kernel, cl_uint, const size_t *, const size_t *, const size_t *, cl_uint, const cl_event *, cl_event *);
 static cl_int (*p_clFinish)(cl_command_queue);
@@ -207,9 +211,18 @@ static int ocl_init(void) {
     }
     {
         char name[128];
+        cl_ulong dtype = 0;
         name[0] = 0;
         p_clGetDeviceInfo(dev[0], CL_DEVICE_NAME, sizeof(name), name, &got);
         snprintf(g_ocl.info, sizeof(g_ocl.info), "OpenCL: %s", name);
+        /* A CPU ICD (pocl, rusticl fallback) is not a GPU backend, and this
+         * library already has hand-written SIMD kernels for the CPU. Say no
+         * instead of quietly running slower. */
+        p_clGetDeviceInfo(dev[0], CL_DEVICE_TYPE, sizeof(dtype), &dtype, &got);
+        if ((dtype & CL_DEVICE_TYPE_GPU_BIT) == 0) {
+            fprintf(stderr, "opencl: %s is not a GPU device, not using it\n", name);
+            return 0;
+        }
     }
     g_ocl.prog_sha = ocl_build(ocl_sha256_src, "sha256_pow");
     g_ocl.prog_a2 = ocl_build(ocl_argon2_src, "argon2id_pow");
@@ -236,12 +249,22 @@ static int ocl_init(void) {
     g_ocl.sha_r = (cl_sha_results *)calloc(1, sizeof(cl_sha_results));
     g_ocl.a2_r = (cl_a2_results *)calloc(1, sizeof(cl_a2_results));
     g_ocl.hx_r = (cl_hx_results *)calloc(1, sizeof(cl_hx_results));
-    g_ocl.sha_params = p_clCreateBuffer(g_ocl.ctx, sizeof(cl_sha_params), CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, g_ocl.sha_p, &err);
-    g_ocl.sha_results = p_clCreateBuffer(g_ocl.ctx, sizeof(cl_sha_results), CL_MEM_READ_WRITE, NULL, &err);
-    g_ocl.a2_challenge = p_clCreateBuffer(g_ocl.ctx, 4096, CL_MEM_READ_WRITE, NULL, &err);
-    g_ocl.a2_results = p_clCreateBuffer(g_ocl.ctx, sizeof(cl_a2_results), CL_MEM_READ_WRITE, NULL, &err);
-    g_ocl.hx_prog = p_clCreateBuffer(g_ocl.ctx, 512u * 16u, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, NULL, &err);
-    g_ocl.hx_results = p_clCreateBuffer(g_ocl.ctx, sizeof(cl_hx_results), CL_MEM_READ_WRITE, NULL, &err);
+    g_ocl.sha_params = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+                                      sizeof(cl_sha_params), g_ocl.sha_p, &err);
+    g_ocl.sha_results = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE,
+                                          sizeof(cl_sha_results), NULL, &err);
+    g_ocl.a2_challenge = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE, 4096, NULL, &err);
+    g_ocl.a2_results = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE,
+                                         sizeof(cl_a2_results), NULL, &err);
+    g_ocl.hx_prog = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE, 512u * 16u, NULL, &err);
+    g_ocl.hx_results = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE,
+                                         sizeof(cl_hx_results), NULL, &err);
+    if (g_ocl.sha_params == NULL || g_ocl.sha_results == NULL) {
+        /* Report the backend as unavailable rather than as "exhausted": a
+         * broken device buffer must not look like a finished search. */
+        fprintf(stderr, "opencl: could not create device buffers (err %d)\n", err);
+        return 0;
+    }
     pthread_mutex_init(&g_ocl.mu, NULL);
     g_ocl.state = 1;
     return 1;
@@ -272,13 +295,14 @@ static void ocl_hex(const uint32_t w[8], char out[65]) {
 
 /* ------------------------------- SHA-256 ------------------------------- */
 
-int anubis_opencl_solve(const uint32_t mid[8], uint32_t prefix_len, int mode,
-                        int use_le, int difficulty, int check_bits,
-                        uint64_t max_nonce, double budget_ms,
-                        uint32_t *out_nonce, char out_hex[65],
-                        double *out_ms) {
+int anubis_opencl_solve(const uint32_t mid[8], const uint8_t *prefix,
+                        uint32_t prefix_len, int mode, int use_le,
+                        int difficulty, int check_bits, uint64_t max_nonce,
+                        double budget_ms, uint32_t *out_nonce,
+                        char out_hex[65], double *out_ms) {
     double t0;
     uint32_t chunk;
+    size_t lsz;
     uint64_t base = 0, maxn;
     int rc = 1;
 
@@ -289,6 +313,20 @@ int anubis_opencl_solve(const uint32_t mid[8], uint32_t prefix_len, int mode,
     t0 = ocl_now();
     memcpy(g_ocl.sha_p->mid, mid, 32);
     g_ocl.sha_p->prefix_len = prefix_len;
+    /* The kernel hashes whole blocks already folded into mid; whatever is left
+     * over goes at the head of the tail block ahead of the nonce. */
+    {
+        uint32_t pre = prefix_len % 64u;
+        g_ocl.sha_p->pre_len = pre;
+        memset(g_ocl.sha_p->pre, 0, sizeof(g_ocl.sha_p->pre));
+        if (pre != 0) {
+            if (prefix == NULL) {
+                pthread_mutex_unlock(&g_ocl.mu);
+                return -1;
+            }
+            memcpy(g_ocl.sha_p->pre, prefix + prefix_len - pre, pre);
+        }
+    }
     g_ocl.sha_p->mode = (uint32_t)mode;
     g_ocl.sha_p->use_le = (uint32_t)use_le;
     g_ocl.sha_p->difficulty = (uint32_t)difficulty;
@@ -297,24 +335,43 @@ int anubis_opencl_solve(const uint32_t mid[8], uint32_t prefix_len, int mode,
     if (chunk < 4096u) chunk = 4096u;
     if (chunk > (1u << 24)) chunk = 1u << 24;
     maxn = max_nonce > 0xFFFFFFFFull ? 0xFFFFFFFFull : max_nonce;
+    /* One lane per work-item leaves the EU mostly idle: a workgroup of one is
+     * also the most expensive shape to schedule. 64 lanes per workgroup, with
+     * the kernel's `gid >= p->chunk` guard covering the rounded-up tail. */
+    lsz = 64;
+    /* The hit slots are written once, by whichever candidates qualify first,
+     * so the result buffer is cleared once and not per chunk: a non-zero count
+     * at any read means stop. That removes a blocking transfer per chunk. */
+    memset(g_ocl.sha_r, 0, sizeof(*g_ocl.sha_r));
+    p_clEnqueueWriteBuffer(g_ocl.queue, g_ocl.sha_results, CL_TRUE, 0,
+                           sizeof(*g_ocl.sha_r), g_ocl.sha_r, 0, NULL, NULL);
     while (base <= maxn) {
         uint64_t rem = maxn - base + 1;
         uint32_t count = (uint32_t)(rem < (uint64_t)chunk ? rem : (uint64_t)chunk);
-        size_t gsz = count, lsz = 1;
+        size_t gsz;
         cl_int err;
+        double tc = ocl_now();
         if (count == 0) break;
+        gsz = ((size_t)count + lsz - 1u) / lsz * lsz;
         g_ocl.sha_p->base_nonce = (uint32_t)base;
         g_ocl.sha_p->chunk = count;
-        memset(g_ocl.sha_r, 0, sizeof(*g_ocl.sha_r));
         p_clEnqueueWriteBuffer(g_ocl.queue, g_ocl.sha_params, CL_TRUE, 0, sizeof(*g_ocl.sha_p), g_ocl.sha_p, 0, NULL, NULL);
-        p_clEnqueueWriteBuffer(g_ocl.queue, g_ocl.sha_results, CL_TRUE, 0, sizeof(*g_ocl.sha_r), g_ocl.sha_r, 0, NULL, NULL);
         err = p_clSetKernelArg(g_ocl.k_sha, 0, sizeof(cl_mem), &g_ocl.sha_params);
         err |= p_clSetKernelArg(g_ocl.k_sha, 1, sizeof(cl_mem), &g_ocl.sha_results);
         if (err != CL_SUCCESS) { rc = -1; break; }
         err = p_clEnqueueNDRangeKernel(g_ocl.queue, g_ocl.k_sha, 1, NULL, &gsz, &lsz, 0, NULL, NULL);
         if (err != CL_SUCCESS) { rc = -1; break; }
-        p_clFinish(g_ocl.queue);
-        p_clEnqueueReadBuffer(g_ocl.queue, g_ocl.sha_results, CL_TRUE, 0, sizeof(*g_ocl.sha_r), g_ocl.sha_r, 0, NULL, NULL);
+        {
+            cl_int ferr = p_clFinish(g_ocl.queue);
+            cl_int rd = p_clEnqueueReadBuffer(g_ocl.queue, g_ocl.sha_results, CL_TRUE, 0, sizeof(*g_ocl.sha_r), g_ocl.sha_r, 0, NULL, NULL);
+            if (getenv("ANUBIS_OPENCL_DEBUG") != NULL) {
+                fprintf(stderr, "opencl: chunk base=%u count=%u hits=%u chunk_ms=%.2f "
+                                "total_ms=%.1f finish=%d read=%d\n",
+                        g_ocl.sha_p->base_nonce, count, g_ocl.sha_r->count,
+                        (ocl_now() - tc) * 1000.0, (ocl_now() - t0) * 1000.0, ferr, rd);
+            }
+            if (ferr != CL_SUCCESS || rd != CL_SUCCESS) { rc = -1; break; }
+        }
         if (g_ocl.sha_r->count > 0) {
             ocl_hex(g_ocl.sha_r->hashes[0], out_hex);
             *out_nonce = g_ocl.sha_r->nonces[0];
@@ -379,9 +436,9 @@ int anubis_opencl_argon2_solve(const uint8_t *challenge, size_t clen, int use_le
     pthread_mutex_lock(&g_ocl.mu);
     if (g_ocl.a2_mem == NULL) {
         cl_int err;
-        g_ocl.a2_mem = p_clCreateBuffer(g_ocl.ctx,
+        g_ocl.a2_mem = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE,
                                         (size_t)A2_LANES * (A2_M + 3u) * 1024u,
-                                        CL_MEM_READ_WRITE, NULL, &err);
+                                        NULL, &err);
         if (g_ocl.a2_mem == NULL) {
             pthread_mutex_unlock(&g_ocl.mu);
             return -1;

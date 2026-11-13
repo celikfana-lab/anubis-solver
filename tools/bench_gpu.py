@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Compare the GPU backend (CUDA if built, else Vulkan) against the CPU.
+"""Compare the GPU backends (CUDA, Level Zero, Vulkan, OpenCL) against the CPU.
 
     python3 tools/bench_gpu.py
 
-Runs the same workloads twice in subprocesses: once with the GPU enabled and
-once with ANUBIS_NO_CUDA=1 ANUBIS_NO_VULKAN=1. Every digest is checked
-against hashlib.
+Runs the same workloads in subprocesses, once per backend selection, and
+prints MH/s. The CPU row disables every GPU path, including OpenCL. Every
+digest is checked against hashlib before its number is reported, so a row
+that appears here is a row that actually hashed.
 """
 
 from __future__ import annotations
@@ -78,8 +79,10 @@ def main() -> int:
         ("cuda/l0/vulkan (auto)", {}),
         ("level zero", {"ANUBIS_NO_CUDA": "1", "ANUBIS_NO_VULKAN": "1"}),
         ("vulkan", {"ANUBIS_NO_CUDA": "1", "ANUBIS_NO_LEVELZERO": "1"}),
+        ("opencl", {"ANUBIS_OPENCL": "1", "ANUBIS_NO_CUDA": "1",
+                    "ANUBIS_NO_VULKAN": "1", "ANUBIS_NO_LEVELZERO": "1"}),
         ("cpu", {"ANUBIS_NO_CUDA": "1", "ANUBIS_NO_VULKAN": "1",
-                 "ANUBIS_NO_LEVELZERO": "1"}),
+                 "ANUBIS_NO_LEVELZERO": "1", "ANUBIS_NO_OPENCL": "1"}),
     ]
     results = []
     for name, env in modes:

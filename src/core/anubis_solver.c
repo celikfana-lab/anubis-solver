@@ -146,6 +146,55 @@ static uint64_t l0_min_work(int bits_mode) {
 }
 #endif
 
+#if defined(ANUBIS_HAVE_OPENCL)
+extern int anubis_opencl_available(void);
+extern const char *anubis_opencl_info(void);
+extern int anubis_opencl_solve(const uint32_t mid[8], const uint8_t *prefix,
+                               uint32_t prefix_len, int mode, int use_le,
+                               int difficulty, int check_bits, uint64_t max_nonce,
+                               double budget_ms, uint32_t *out_nonce,
+                               char out_hex[65], double *out_ms);
+
+static uint64_t opencl_min_work(int bits_mode) {
+    const char *s = getenv("ANUBIS_OPENCL_MIN_WORK");
+    if (s != NULL && *s != '\0') {
+        return strtoull(s, NULL, 0);
+    }
+    return bits_mode ? (1ull << 16) : (1ull << 20);
+}
+
+#if defined(ANUBIS_HAVE_CUDA)
+extern int anubis_cuda_available(void);
+#endif
+
+/* OpenCL goes last in the chain: it is the portable path, not the fast one.
+ * On this laptop (Intel Xe, IGC) it measures 195 M sha256/s against Vulkan's
+ * 70 M, so ANUBIS_OPENCL=1 is worth knowing about, but the vendor backends
+ * above keep their place by default. Unset means "only if nothing else". */
+static int opencl_enabled(void) {
+    const char *e = getenv("ANUBIS_OPENCL");
+    if (e != NULL && e[0] != '\0') {
+        return e[0] != '0';
+    }
+#if defined(ANUBIS_HAVE_CUDA)
+    if (anubis_cuda_available()) {
+        return 0;
+    }
+#endif
+#if defined(ANUBIS_HAVE_LEVELZERO)
+    if (anubis_l0_available()) {
+        return 0;
+    }
+#endif
+#if defined(ANUBIS_HAVE_VULKAN)
+    if (anubis_vulkan_available()) {
+        return 0;
+    }
+#endif
+    return 1;
+}
+#endif
+
 #if defined(ANUBIS_HAVE_CUDA)
 extern int anubis_cuda_available(void);
 extern const char *anubis_cuda_info(void);
@@ -1479,6 +1528,36 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
     }
 #endif
 
+#if defined(ANUBIS_HAVE_OPENCL)
+    if (clen % 64u <= 35u && opencl_enabled() && anubis_opencl_available()) {
+        uint64_t expected = 1;
+        int i;
+        for (i = 0; i < difficulty && i < 40; i++) {
+            expected *= 16;
+        }
+        if (expected >= opencl_min_work(0)) {
+            uint32_t gnonce = 0;
+            char ghex[65];
+            double gms = 0.0;
+            uint64_t cap = expected < (0xFFFFFFFFull / 8)
+                               ? expected * 8
+                               : 0xFFFFFFFFull;
+            int grc = anubis_opencl_solve(ctx.base.h, (const uint8_t *)challenge,
+                                          (uint32_t)clen, 0, 0, difficulty, 0,
+                                          cap, budget_ms, &gnonce, ghex, &gms);
+            if (grc == 0 &&
+                gpu_hit_ok_nibbles(challenge, gnonce, difficulty, ghex)) {
+                *out_nonce = gnonce;
+                memcpy(out_hex, ghex, 65);
+                if (out_ms != NULL) {
+                    *out_ms = gms;
+                }
+                return ANUBIS_OK;
+            }
+        }
+    }
+#endif
+
     return run_search(&job, out_nonce, out_hex, out_ms);
 }
 
@@ -1644,6 +1723,36 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
                                : 0xFFFFFFFFull;
             int grc = anubis_vulkan_solve(ctx.base.h, (uint32_t)raw_len, 1,
                                           ctx.use_le, difficulty, 1, cap,
+                                          budget_ms, &gnonce, ghex, &gms);
+            if (grc == 0 &&
+                gpu_hit_ok_bits(challenge_hex, gnonce, difficulty, ghex)) {
+                *out_nonce = gnonce;
+                memcpy(out_hex, ghex, 65);
+                if (out_ms != NULL) {
+                    *out_ms = gms;
+                }
+                return ANUBIS_OK;
+            }
+        }
+    }
+#endif
+
+#if defined(ANUBIS_HAVE_OPENCL)
+    if (raw_len % 64u <= 51u && opencl_enabled() && anubis_opencl_available()) {
+        uint64_t expected = 1;
+        int i;
+        for (i = 0; i < difficulty && i < 40; i++) {
+            expected *= 2;
+        }
+        if (expected >= opencl_min_work(1)) {
+            uint32_t gnonce = 0;
+            char ghex[65];
+            double gms = 0.0;
+            uint64_t cap = expected < (0xFFFFFFFFull / 8)
+                               ? expected * 8
+                               : 0xFFFFFFFFull;
+            int grc = anubis_opencl_solve(ctx.base.h, raw, (uint32_t)raw_len,
+                                          1, ctx.use_le, difficulty, 1, cap,
                                           budget_ms, &gnonce, ghex, &gms);
             if (grc == 0 &&
                 gpu_hit_ok_bits(challenge_hex, gnonce, difficulty, ghex)) {

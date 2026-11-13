@@ -74,9 +74,46 @@ Mesa's V3DV driver is detected but the compute kernels do not produce verified
 digests there yet, so everything falls back to the CPU (Argon2id ≈ 29 h/s on
 one core, ≈ 46 h/s on two). See [SPEED.md](../SPEED.md).
 
-## OpenCL note
+## OpenCL
 
-The OpenCL host is implemented (`libOpenCL.so.1`, same kernels as Level Zero)
-but not wired into the solver yet. Mesa's `rusticl` needs
-`RUSTICL_ENABLE=iris` and is very slow to compile the Argon2id kernel; a vendor
-ICD (Intel NEO, NVIDIA, AMD) is the intended target.
+The OpenCL backend is wired for SHA-256 and is the last GPU link in the chain:
+it is used when no vendor backend answers, or when `ANUBIS_OPENCL=1` asks for
+it by name. `ANUBIS_NO_OPENCL=1` turns it off. Devices that report themselves
+as CPUs (pocl) are refused, because the hand-written SIMD kernels are faster.
+
+It carries its own kernel, `src/opencl/sha256_pow.cl`, rather than reusing the
+Level Zero one: the Anubis `sha256` challenge uses 32 bytes of `randomData`, so
+the message is a partial block plus nonce, while the Level Zero kernel only
+takes whole 64-byte blocks (its params struct is baked into a precompiled
+SPIR-V blob). The OpenCL kernel takes the leftover bytes in `pre[]`/`pre_len`.
+
+Measured on the Iris Xe (gen12lp, 96 EUs) through Intel NEO + IGC 2.16, against
+the same challenge served by `betterAnusbis --algorithm sha256 --difficulty 26`
+(one work-item per nonce, 64 lanes per workgroup):
+
+| backend | difficulty 26 solve | M hashes/s |
+|---|---|---|
+| OpenCL (Intel NEO) | 236-296 ms | 260-268 |
+| Vulkan (same GPU) | ~4 s | ~70 |
+| CPU, 4 threads (the CLI default) | 3.6-9.1 s | 19.5 |
+| CPU, 1 thread (`bench_gpu.py`) | | 5.0-5.6 |
+
+`ANUBIS_OPENCL_CHUNK` sets the dispatch size (default 4 Mi work-items) and
+`ANUBIS_OPENCL_MIN_WORK` the work threshold below which the CPU wins anyway.
+`ANUBIS_OPENCL_DEBUG=1` prints one line per dispatch, which is the honest way
+to see whether the GPU actually did the work.
+
+`python3 tools/bench_gpu.py` prints one row per backend. Read it with care on a
+machine without the vendor backends: the row labelled `level zero` there is the
+OpenCL fallback, because Level Zero is not compiled in when
+`level_zero/ze_api.h` is absent, and a row whose env only disables CUDA and
+Vulkan still ends up at the last GPU link, which is this one.
+
+A caveat worth knowing: this backend had never been exercised before, and the
+first run of it found `clCreateBuffer` called with its size and flags arguments
+swapped, so no device buffer was ever created and every search returned
+"exhausted". Results are now checked for `CL_SUCCESS` and the backend reports
+itself unavailable instead of pretending to have searched.
+
+Mesa's `rusticl` needs `RUSTICL_ENABLE=iris` and is very slow to compile the
+Argon2id kernel; a vendor ICD (Intel NEO, NVIDIA, AMD) is the intended target.

@@ -12,7 +12,7 @@ src/cpu/*.s             hand-written SHA-256 kernels
 src/cuda/*.cu           CUDA backends (SHA-256, Argon2id, HashX)
 src/levelzero/*.c       Level Zero backends (+ *.cl kernels, *.spv.h)
 src/vulkan/*.c          Vulkan backends (GLSL kernels in *.comp)
-src/opencl/             portable OpenCL host (same kernels as Level Zero)
+src/opencl/             portable OpenCL host + its own sha256 kernel
 third_party/argon2      Argon2id reference implementation
 tools/                  generators, kernel build scripts, benchmarks
 tests/                  test suite
@@ -56,8 +56,11 @@ changes.
 | `tools/build_argon2_vk.sh` | `src/vulkan/argon2id.comp` → `src/vulkan/argon2id.spv` (needs `glslangValidator`) |
 | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` | generate the x86-64 assembly kernels |
 
-`src/opencl/opencl_kernels.h` embeds the three `.cl` sources for the portable
-OpenCL backend; regenerate it after editing a `.cl` file.
+`src/opencl/opencl_kernels.h` embeds the `.cl` sources for the portable OpenCL
+backend; regenerate it with `python3 tools/embed_opencl_kernels.py` after
+editing one (`--check` fails instead of writing if it is stale). The SHA-256
+entry comes from `src/opencl/sha256_pow.cl`, the other two from
+`src/levelzero/`.
 
 Level Zero rejects SPIR-V newer than 1.2, hence
 `llvm-spirv --spirv-max-version=1.2` in the build scripts.

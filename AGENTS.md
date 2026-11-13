@@ -25,7 +25,7 @@ python3 tests/test_core.py
 python3 tests/test_local.py        # needs a local Anubis checkout (ANUBIS_SRC)
 python3 tests/test_versions.py
 python3 tools/bench_tiers.py
-python3 tools/bench_gpu.py
+python3 tools/bench_gpu.py          # per-backend rows: cuda/l0, vulkan, opencl, cpu
 python3 tools/bench_argon2_gpu.py  # ANUBIS_GPU_ARGON2=1 for the GPU
 python3 tools/bench_hashx_gpu.py   # ANUBIS_GPU_HASHX=1 for CUDA
 node tools/bench-endtoend.mjs      # the wall, 2 servers x 3 clients
@@ -51,7 +51,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `src/intel/xe/` | Intel Xe (gen12lp) assembly for the SHA-256 kernel: a hand-written listing from `tools/gen_xe_sha256.py`, and IGC's own code extracted from a Zebin that ran on the GPU |
 | `src/levelzero/*.c` | Level Zero backends; kernels in `src/levelzero/*.cl` |
 | `src/vulkan/vulkan.c` | Vulkan backends; kernels in `src/vulkan/*.comp` |
-| `src/opencl/` | portable OpenCL host (not wired yet) |
+| `src/opencl/` | portable OpenCL host, wired for SHA-256; its own `sha256_pow.cl` |
 | `include/anubis-solver.h` | public C/C++ header — keep in sync with exports |
 | `anubis_solver.py` | Python library, requests client, CLI |
 | `docs/` | user and developer documentation |
@@ -96,7 +96,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `src/levelzero/argon2id_l0.spv(.h)` | `tools/build_l0_argon2.sh` |
 | `src/vulkan/argon2id.spv(.h)` | `tools/build_argon2_vk.sh` |
 | `src/levelzero/hashx_l0.spv(.h)`, `src/vulkan/hashx.spv(.h)` | clang/llvm-spirv and `glslangValidator` (see `docs/development.md`) |
-| `src/opencl/opencl_kernels.h` | re-embed the three `.cl` files |
+| `src/opencl/opencl_kernels.h` | `python3 tools/embed_opencl_kernels.py` |
 | `src/cpu/avx2.s`, `src/cpu/avx512.s` | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` |
 | `src/intel/xe/intelXe_sha256.xe` | `tools/gen_xe_sha256.py` (needs `IGA64` to assemble) |
 | `src/intel/xe/intelXe_sha256.igc.xe` | run `tools/xe-sha256-opencl.c`, `dd` the `.text.sha256_pow` section out of the Zebin, `iga64 -p 12p1 -d` |

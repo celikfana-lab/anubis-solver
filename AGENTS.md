@@ -56,6 +56,9 @@ python3 tools/bench_hashx_gpu.py   # ANUBIS_GPU_HASHX=1 for CUDA
   `tools/` scripts rather than editing `.spv`/`.spv.h` by hand.
 - **Docs**: when a feature changes, update `README.md`, the relevant
   `docs/*.md`, and `BEGINNER.md` if the quick start changes.
+- **Licensing**: the project is MIT + attribution, not plain MIT. Do not add a
+  bare `"license": "MIT"` anywhere, and do not strip the credit line from the
+  top-level RTL headers — see `LICENSE` section 3 and `ATTRIBUTION.md`.
 
 ## Backend rules (important)
 

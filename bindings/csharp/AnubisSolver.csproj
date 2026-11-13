@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Description>C# bindings for libanubis_solver</Description>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <!-- MIT + attribution: an SPDX expression cannot express it, see ../../LICENSE -->
   </PropertyGroup>
   <ItemGroup>
     <!-- the test program is its own project and must not be compiled into the library -->

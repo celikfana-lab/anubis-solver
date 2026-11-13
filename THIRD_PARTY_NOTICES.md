@@ -1,7 +1,10 @@
 # Third-party notices
 
 This project vendors two third-party components. They remain under their own
-licenses; the MIT license in `LICENSE` covers only the original code.
+licenses; the `LICENSE` covers only the original code, under **MIT + attribution**
+(see [ATTRIBUTION.md](ATTRIBUTION.md)). The attribution requirement sits on top of
+the terms below and cannot loosen them — where they conflict, the third-party
+license wins for that portion.
 
 ## HashX (`src/hashx.c`, `src/hashx.h`)
 

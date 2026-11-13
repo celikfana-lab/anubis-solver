@@ -474,10 +474,22 @@ go build -o /tmp/anubis-build/anubis ./cmd/anubis
 
 ## License
 
-Original code is MIT (see [LICENSE](LICENSE)). `src/hashx/hashx.c` is a port of
-tevador/hashx and remains **LGPL-3.0**; `third_party/argon2` is CC0-1.0 /
-Apache-2.0. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before
-redistributing binaries.
+Original code is **MIT + attribution** (see [LICENSE](LICENSE)): the MIT grant,
+conditioned on one extra requirement — if you distribute the code, a binary built
+from it, or a design derived from `beyond/`, you must credit
+
+> Built with [DeepSeek V4.1 Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017)
+> running [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness).
+
+One line in your README, NOTICE file, about screen, or — for a chip — the
+top-level RTL header or datasheet. Because of that condition this is *not* plain
+MIT; call it "MIT + attribution". [ATTRIBUTION.md](ATTRIBUTION.md) has the
+paragraph to paste and spells out what counts as use.
+
+`src/hashx/hashx.c` is a port of tevador/hashx and remains **LGPL-3.0**;
+`third_party/argon2` is CC0-1.0 / Apache-2.0. Those terms are unaffected by the
+attribution requirement. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+before redistributing binaries.
 
 [![made by DeepSeek V4.1 Flash](https://img.shields.io/badge/made%20by-DeepSeek%20V4.1%20Flash-4D6BFE?style=flat-square)](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017)
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)

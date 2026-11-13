@@ -1,4 +1,6 @@
 // anubis_tri_chip.v — one die, three sub-chips, each as fast as its algorithm allows.
+// Built with DeepSeek V4.1 Flash running DeepSeek Harness (DSH).
+// See ../../../LICENSE (MIT + attribution) and ../../../ATTRIBUTION.md.
 //
 // The three Anubis families want three different machines, so this top does not
 // try to share a datapath between them. It puts the right machine next to each

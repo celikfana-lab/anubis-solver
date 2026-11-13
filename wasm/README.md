@@ -285,6 +285,54 @@ measurement is a measurement of the compiler, not the kernel.
 `crypto.createHash`, which is the measured 3.7× (157 → 589 kH/s) and the reason to
 have written it. It falls back to `createHash` when the module is not built.
 
+## Can the same trick make HashX faster? No — and here is why
+
+The SHA-256 win came from batching four nonces in `i32x4` lanes. It is tempting to
+do the same to HashX, and wabt's opcode table says the arithmetic is available:
+`i64x2.mul` exists (I claimed otherwise earlier — that was wrong), and
+`i64x2.extmul_low_i32x4_u` covers the 32×32 half of a 64-bit multiply, so the 160
+`MUL_R` and the 32 mulhi instructions could take two lanes each.
+
+It still cannot be batched, because **HashX's control flow is data-dependent**.
+Unlike SHA-256's branch-free compression, the program takes a backward jump when
+`(result & imm) == 0`, and `result` is the last `mulh` output — a different value
+for every nonce. Two nonces would diverge at the first branch and need different
+instruction streams.
+
+From this program's 16 branch points:
+
+```
+branch 145: imm 0x01002011   0 trailing zeros   P(taken) ~ 1/1
+branch 305: imm 0x00008601   0 trailing zeros   P(taken) ~ 1/1
+branch  49: imm 0x80400402   1 trailing zero    P(taken) ~ 1/2
+branch  81: imm 0x04084002   1 trailing zero    P(taken) ~ 1/2
+branch 113: imm 0x00280024   2 trailing zeros  P(taken) ~ 1/4
+...
+expected branches taken per hash: 1.0  (capped: `be` clears after the first)
+```
+
+Two of them fire with probability 1/2 each, so a jump happens in most hashes. Lanes
+would spend their time diverging, not hashing. A predicate-masked variant that
+falls back to scalar per diverged lane is *possible*, but the fallback would fire
+often enough to eat the gain — and it is the kind of complexity that produces a
+wrong digest once in a million hashes.
+
+### What does work: independent workers
+
+Each nonce is a separate search, so the parallel budget goes to workers, exactly as
+for Argon2id. `node bench-hashx-threads.mjs`:
+
+| workers | aggregate | per worker |
+|---|---:|---:|
+| 1 | 2.73 M hashes/s | 2.73 M |
+| 2 | 4.22 M hashes/s (1.54×) | 2.11 M |
+| 4 | 6.45 M hashes/s (2.36×) | 1.61 M |
+
+Sub-linear rather than the 3.75× Argon2 saw: HashX is pure integer compute, so
+workers contend for the same cores instead of for memory. Still, 6.45 M hashes/s
+against the official module's ~0.33 M is **~19× aggregate**, and 6–8× on one
+thread.
+
 ## The demo
 
 ```bash

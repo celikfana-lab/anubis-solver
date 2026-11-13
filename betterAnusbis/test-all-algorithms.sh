@@ -2,8 +2,11 @@
 # Every algorithm Anubis supports, gated by betterAnusbis and solved by a client.
 #
 # fast, slow, sha256 and metarefresh are solved by the Node client; argon2id and
-# hashx need the memory-hard kernels, so the Python CLI does those. Each run
-# asserts the protected page came back, not just that a challenge was issued.
+# hashx run through the Python CLI here. Each run asserts the protected page came
+# back, not just that a challenge was issued. The challenge page solves hashx
+# itself too (compiled in the page, with a progress bar), which is what a browser
+# does; this script keeps the CLI in the loop so a regression in the native
+# verifier still shows up.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 REPO="$(cd .. && pwd)"

@@ -29,7 +29,16 @@ betterAnusbis: betterAnusbis.c $(LIBDIR)/libanubis_solver.so
 $(LIBDIR)/libanubis_solver.so:
 	$(MAKE) -C $(LIBDIR) libanubis_solver.so
 
+# The demo the progress bar exists for: hashx at a hostile difficulty, solved in
+# the browser. It needs a backend to protect, so pass one:
+#   make slow TARGET=http://127.0.0.1:8002 DIFFICULTY=28
+TARGET  ?= http://127.0.0.1:3000
+DIFFICULTY ?= 28
+slow: betterAnusbis wasm-kernels
+	./betterAnusbis --listen 127.0.0.1:4949 --target $(TARGET) \
+	    --algorithm hashx --difficulty $(DIFFICULTY)
+
 clean:
 	rm -f betterAnusbis
 
-.PHONY: clean wasm-kernels
+.PHONY: clean wasm-kernels slow

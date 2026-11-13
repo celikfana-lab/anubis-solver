@@ -162,6 +162,13 @@ challenge bytes and only falls back to fetching the interpreter.
 | `argon2id` | `argon2id_pow.wasm` (our register-resident fill, m=19456 t=2 p=1) | 13.9 KB | **exact, and 1.02-1.05x faster** |
 | `hashx` | compiled in the page from the challenge (`hashx_jit.mjs`), falling back to `hashx_pow.wasm` | 10.4 KB / 14.9 KB | **exact, and 7-8x faster** |
 
+`hashx` also shows what it costs. The page compiles the challenge's program,
+then scans nonces in windows of 262,144 and drives a progress bar that says
+**slowing you down!** with the measured MHash/s and an estimate of the time
+left. The number is measured, not guessed: the rate is the nonces actually
+hashed divided by the elapsed time, and a difficulty-28 challenge on one laptop
+core runs at about 2.8 MHash/s.
+
 `fast`, `slow` and `metarefresh` are solved inline in JS, so a page needs no
 network round trip for the cheap algorithms, and `hashx` needs none either because
 it builds its kernel in the page.

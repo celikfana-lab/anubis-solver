@@ -1951,6 +1951,27 @@ function buildModule(challenge) {
     location.replace(u.toString());
   };
 
+  // A HashX search does not report how many candidates it has tried, but the
+  // compiled module can be called in windows, so this counts nonces actually
+  // hashed: both the fraction and the rate below are measured, not estimated.
+  const workBox=document.getElementById("work"), workBar=document.getElementById("workbar"),
+        workFill=document.getElementById("fill"), workPct=document.getElementById("pct"),
+        workRate=document.getElementById("rate"), workEta=document.getElementById("eta"),
+        workSub=document.getElementById("worksub");
+  function workShow(sub){
+    if(workBox) workBox.hidden=false;
+    if(workBar) workBar.classList.add("busy");
+    if(workSub&&sub) workSub.textContent=sub;
+  }
+  function workUpdate(frac,done,ms,expected){
+    if(workFill) workFill.style.width=(Math.max(0,Math.min(1,frac))*100).toFixed(1)+"%";
+    if(workPct) workPct.textContent=(frac*100).toFixed(1)+"%";
+    const rate=ms>0?done/(ms/1000):0;
+    if(workRate) workRate.textContent=rate>0?(rate/1e6).toFixed(2)+" MHash/s":"\u2014";
+    if(workEta&&rate>0) workEta.textContent="~"+Math.max(0,expected/rate-ms/1000).toFixed(0)+" s left at this rate";
+  }
+  function workDone(){ if(workBar) workBar.classList.remove("busy"); }
+
   if(algo==="metarefresh"){
     // Anubis's metarefresh proof is time: wait difficulty * 800 ms, then echo the
     // random data back as ?challenge=. Nothing is hashed.
@@ -1992,10 +2013,30 @@ function buildModule(challenge) {
     // call), hashx_pow.wasm below has the same ABI and is always correct.
     if(algo==="hashx"){
       try{
-        say("building the HashX JIT for this challenge");
+        say("compiling this challenge's HashX program into wasm");
         const mod=new WebAssembly.Module(HASHX_JIT.buildModule(raw));
-        const ex=new WebAssembly.Instance(mod,{}).exports;
-        return run(ex);
+        const jx=new WebAssembly.Instance(mod,{}).exports;
+        // Windows of 2^18 nonces: long enough to measure a real rate (about a
+        // tenth of a second here), short enough that the bar keeps moving.
+        const win=1n<<18n, expected=Math.pow(2,diff);
+        let base=0n, t0=performance.now();
+        workShow("2^"+diff+" ("+expected.toLocaleString("en-US")+") hashes expected, "+
+                 "compiled for this challenge, 262,144 nonces per window");
+        for(;;){
+          const hit=Number(jx.solve(base,BigInt(diff),win));
+          base+=win;
+          const ms=performance.now()-t0, done=Number(base);
+          if(hit>=0){
+            jx.hash(BigInt(hit));
+            const digest=new Uint8Array(jx.memory.buffer,jx.result_hash_ptr(),jx.result_hash_size());
+            workUpdate(1,done,ms,expected);
+            workDone();
+            say("solved with nonce "+hit+" in "+ms.toFixed(0)+" ms");
+            return {hash:tohex(digest),nonce:hit,ms};
+          }
+          workUpdate(Math.min(0.99,done/expected),done,ms,expected);
+          await new Promise(r=>setTimeout(r,0));
+        }
       }catch(e){
         console.warn("HashX JIT failed, falling back to hashx_pow.wasm:",e);
       }
@@ -2058,9 +2099,22 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
              "body{font:16px/1.6 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;"
              "background:#12141a;color:#e6e9f0}a{color:#4d6bfe}"
              "code{font-family:ui-monospace,monospace;font-size:.85em;color:#98a0b3;word-break:break-all}"
+             "#work{margin:1.75rem 0 1rem}#work h2{font-size:1.7rem;line-height:1.1;"
+             "margin:0 0 .3rem;color:#f78166;letter-spacing:-.02em}"
+             "#work p{font-family:ui-monospace,monospace;font-size:.85rem;color:#98a0b3;margin:.5rem 0 0}"
+             ".bar{height:16px;border:1px solid #2b3040;border-radius:8px;background:#1a1d26;"
+             "overflow:hidden;margin-top:.9rem}#fill{height:100%;width:0;"
+             "background:linear-gradient(90deg,#1f6feb,#3fb950);transition:width .18s linear}"
+             ".bar.busy #fill{background-image:repeating-linear-gradient(115deg,"
+             "rgba(255,255,255,.16) 0 10px,transparent 10px 22px);background-size:22px 22px}"
              "</style></head><body>"
              "<h1>Proving you are not a robot</h1>"
              "<p id=\"status\">solving a %s challenge at difficulty %d&hellip;</p>"
+             "<div id=\"work\" hidden><h2>slowing you down!</h2>"
+             "<p id=\"worksub\"></p>"
+             "<div class=\"bar\" id=\"workbar\"><div id=\"fill\"></div></div>"
+             "<p><span id=\"pct\">0.0%%</span> &middot; <span id=\"rate\">&mdash;</span>"
+             " &middot; <span id=\"eta\"></span></p></div>"
              "<p><a id=\"manual\" href=\"#\">or pass the challenge manually</a></p>"
              "<p><small>If nothing happens, solve it yourself: the challenge is the JSON below, "
              "and the answer goes to <code>%spass-challenge?id=%s&amp;response=&lt;digest&gt;&amp;nonce=&lt;n&gt;</code>.</small></p>"

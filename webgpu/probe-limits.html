@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8"><title>WebGPU limits</title>
+<script type="module">
+// How many concurrent Argon2id hashes can this adapter hold?
+// One hash needs m_cost = 19,456 KiB of storage, so the binding limit decides
+// the parallelism, and the parallelism decides whether the GPU is worth using.
+const ARGON2_BYTES_PER_HASH = 19456 * 1024;
+try {
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const device = await adapter.requestDevice();
+  const L = device.limits;
+  const info = adapter.info ?? {};
+  window.__limits = {
+    adapter: { vendor: info.vendor, architecture: info.architecture, description: info.description },
+    maxStorageBufferBindingSize: L.maxStorageBufferBindingSize,
+    maxBufferSize: L.maxBufferSize,
+    maxComputeWorkgroupsPerDimension: L.maxComputeWorkgroupsPerDimension,
+    maxComputeInvocationsPerWorkgroup: L.maxComputeInvocationsPerWorkgroup,
+    maxComputeWorkgroupStorageSize: L.maxComputeWorkgroupStorageSize,
+    concurrentArgon2idHashes: Math.floor(L.maxStorageBufferBindingSize / ARGON2_BYTES_PER_HASH),
+  };
+} catch (e) { window.__limits = { error: String(e) }; }
+</script>

@@ -785,6 +785,33 @@ this. `webgpu/run.sh` runs it; without
 `--enable-features=Vulkan --use-angle=vulkan --use-vulkan=native` Chrome hands out
 SwiftShader and every number measured is a CPU emulator's.
 
+#### Argon2id on WebGPU: correct, and slower
+
+`webgpu/argon2id.wgsl` does the same for Argon2id (m=19456 KiB, t=2, p=1,
+32-byte tag) and the digest is bit-exact against `wasm/argon2id_pow.wasm` - nonce 0
+of the committed challenge is `99d43e7d...` from both, and the self-check passes
+4/4 on the Intel backend as well as on SwiftShader. It is also **3.9x slower than
+the WebAssembly module**, for a structural reason:
+
+| engine | ms/hash | hashes/s | concurrency |
+|---|---:|---:|---:|
+| **WebGPU, Intel Iris Xe** | **277** | **3.6** | 6 |
+| WebAssembly, same browser | 71 | 14.1 | 1 |
+| native C, one core | 13 | 75 | 1 |
+
+One hash needs 19,456 KiB and WebGPU caps a storage binding at 128 MiB here, so at
+most **six** hashes fit. Six hashes cannot fill a GPU. The native Vulkan backend
+on the same GPU reaches 326 h/s at d8 (8.6x the CPU) with **64** concurrent hashes
+and 1.24 GB of working set - memory that WebGPU will not hand out. Binding several
+storage buffers would raise the ceiling, but the per-hash cost is a serial chain of
+38,912 block fills, so it would still trail the native path and would not beat the
+wasm module.
+
+The useful side effect is a diagnostic: Argon2id passes on Intel while HashX does
+not. Argon2id uses add/sub/xor/rotate, `blamka` (32x32->64 `mulhi32`) and the whole
+fill, but never a full 64x64 multiply - so the Intel miscompile is pinned to
+`umulh64`/`mul64`, not to the u64 emulation as a whole.
+
 Correctness is not assumed: `wasm/verify.mjs` makes both engines solve the same
 difficulty-16 challenge, and they return the **same nonce (180078) and the same
 digest** — the official module is 7-9x slower on the same work. Three

@@ -18,7 +18,9 @@ if (!url || !expr) {
   console.error('usage: node tools/webgpu-run.mjs URL EXPRESSION [chrome flags...]');
   process.exit(2);
 }
-const PORT = 9261;
+// A random port per run: a leftover Chrome from an interrupted run would
+// otherwise hold a fixed port and the next run would attach to the wrong page.
+const PORT = 9100 + Math.floor(Math.random() * 800);
 const chrome = spawn('/usr/bin/google-chrome', [
   '--headless=new', '--no-sandbox', '--no-first-run', '--disable-dev-shm-usage',
   `--user-data-dir=${process.env.TMPDIR ?? '/tmp'}/webgpu-${Date.now()}`, `--remote-debugging-port=${PORT}`,
@@ -45,7 +47,9 @@ sock.addEventListener('message', (ev) => { const m = JSON.parse(ev.data);
   if (m.method === 'Runtime.consoleAPICalled') console.error('[console]', m.params.args.map((a) => a.value ?? a.description).join(' '));
   if (m.method === 'Runtime.exceptionThrown') console.error('[exception]', m.params.exceptionDetails.text, m.params.exceptionDetails.exception?.description ?? ''); });
 await send('Page.navigate', { url });
-for (let i = 0; i < 200; i++) {
+// Argon2id on the CPU backend needs ~12 s for one hash, so wait a generous
+// 90 s rather than timing out on a slow-but-correct backend.
+for (let i = 0; i < 900; i++) {
   const r = await send('Runtime.evaluate', { expression: `(typeof ${expr} !== 'undefined') ? ${expr} : undefined`, returnByValue: true, awaitPromise: true });
   if (r.result?.value !== undefined) { console.log(JSON.stringify(r.result.value, null, 2)); chrome.kill('SIGKILL'); process.exit(0); }
   await sleep(100);

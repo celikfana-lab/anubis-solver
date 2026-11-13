@@ -20,9 +20,22 @@ if ! curl -sf -o /dev/null "http://127.0.0.1:$PORT/webgpu/hashx.html"; then
     sleep 1
 fi
 
-FLAGS="--enable-unsafe-webgpu"
-if [ "${1:-}" != "swiftshader" ]; then
-    FLAGS="$FLAGS --enable-features=Vulkan --use-angle=vulkan --use-vulkan=native"
-fi
+PAGE=hashx.html
+case "${1:-}" in
+    argon2id)   PAGE=argon2id.html ;;
+    swiftshader) ;;                       # CPU backend, flags below
+    *)          ;;
+esac
 
-node "$(dirname "$0")/../tools/webgpu-run.mjs" "http://127.0.0.1:$PORT/webgpu/hashx.html?quick=1" $FLAGS
+FLAGS="--enable-unsafe-webgpu"
+case "${1:-}" in
+    swiftshader) ;;                       # no Vulkan flags: Chrome falls back to SwiftShader
+    *)          FLAGS="$FLAGS --enable-features=Vulkan --use-angle=vulkan --use-vulkan=native" ;;
+esac
+
+# QUICK=1 runs the self-check only. Worth it for Argon2id, where one hash is
+# seconds on the CPU backend and a few hundred ms even on the GPU.
+QUERY=""
+[ "${QUICK:-0}" = "1" ] && QUERY="?quick=1"
+
+node "$(dirname "$0")/../tools/webgpu-run.mjs" "http://127.0.0.1:$PORT/webgpu/$PAGE$QUERY" $FLAGS

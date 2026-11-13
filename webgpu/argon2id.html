@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Argon2id on WebGPU — self-check and measurement</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 2rem; max-width: 62rem; color: #e8e8e4; background: #14161a; }
+  h1 { font-size: 1.4rem; margin: 0 0 .4rem; }
+  h2 { font-size: 1rem; margin: 1.6rem 0 .4rem; color: #9ad; }
+  table { border-collapse: collapse; margin: .6rem 0; }
+  th, td { padding: .3rem .8rem .3rem 0; text-align: left; border-bottom: 1px solid #2b2f36; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  code, pre { font-family: ui-monospace, Menlo, monospace; font-size: .85rem; }
+  .ok { color: #6f6; } .bad { color: #f88; } .muted { color: #888; }
+  .banner { border-left: 3px solid #666; padding: .6rem 1rem; margin: 1rem 0; background: #1b1e23; }
+  .banner.gpu { border-left-color: #6f6; }
+  .banner.wasm { border-left-color: #fa6; }
+  .chosen { font-weight: 700; }
+  #log { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .8rem; color: #aaa; }
+</style>
+</head>
+<body>
+<h1>Argon2id on WebGPU</h1>
+<p class="muted">
+  The same Argon2id fill phase compiled to a WGSL compute shader and to
+  WebAssembly, in one browser and one process, on Anubis's parameters
+  (Argon2id v1.3, m&nbsp;=&nbsp;19456&nbsp;KiB, t&nbsp;=&nbsp;2,
+  p&nbsp;=&nbsp;1, 32-byte tag). <strong>The page does not trust the GPU:</strong>
+  before using it, it hashes a few known (challenge, nonce) pairs and compares
+  the full digests against <code>wasm/argon2id_pow.wasm</code>. If they disagree
+  the page reports it and falls back to WebAssembly instead of returning wrong
+  answers faster — the same rule the C engine applies to every GPU hit.
+</p>
+<p class="muted">
+  The ~19&nbsp;MiB working set per hash is the whole design constraint here:
+  concurrency is <code>maxStorageBufferBindingSize / 19456&nbsp;KiB</code>, and
+  the table below prints both the limit and what was actually used.
+</p>
+
+<p class="muted">
+  One hash is one workgroup of eight invocations: the 1 KiB block function is
+  8 independent BLAKE2 rounds, then a barrier, then 8 more, so eight lanes
+  share each block fill instead of one lane walking all 38,912 of them. That
+  matters: with a single invocation per hash the 19 MiB fill takes ~8 s per
+  hash on the Intel iGPU and the driver kills the dispatch
+  (<code>VK_ERROR_DEVICE_LOST</code>); with eight it completes and is bit-exact.
+</p>
+
+<div id="selection" class="banner"><span class="chosen">selecting a backend…</span></div>
+
+<h2>Adapter</h2>
+<table id="adapter"><tbody></tbody></table>
+
+<h2>Limits (one binding, 19456 KiB per hash)</h2>
+<table id="limits"><tbody></tbody></table>
+
+<h2>Self-check (digest compared with the WebAssembly module)</h2>
+<div id="verify">running…</div>
+
+<h2>Cost</h2>
+<table id="rates"><thead><tr><th>part</th><th>ms per hash</th><th>hashes/s</th><th>status</th></tr></thead><tbody></tbody></table>
+
+<h2>Log</h2>
+<div id="log"></div>
+
+<script type="module">
+import * as A2 from './argon2id-blake2b.js';
+
+const $ = (id) => document.getElementById(id);
+const log = (m) => { $('log').textContent += m + '\n'; console.error(m); };
+const row = (table, cells, cls) => {
+  const tr = document.createElement('tr');
+  if (cls) tr.className = cls;
+  for (const [i, c] of cells.entries()) {
+    const td = document.createElement('td');
+    if (i === 1) td.className = 'n';
+    td.textContent = c;
+    tr.append(td);
+  }
+  table.querySelector('tbody').append(tr);
+};
+const fmt = (n, d = 0) => Number(n).toLocaleString('en-US', { maximumFractionDigits: d });
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[s.length >> 1]; };
+const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+const bytes = (challengeHex) => new Uint8Array(challengeHex.match(/../g).map((h) => parseInt(h, 16)));
+
+const WGSL_URL = './argon2id.wgsl';
+const WASM_URL = '../wasm/argon2id_pow.wasm';
+const ARGON2_BYTES = 19459 * 1024;          // 19456 data blocks + 3 scratch blocks
+const WORDS = 256;                          // u32 per 1 KiB block
+
+// The same 32-byte challenge the HashX demo uses. Its last byte decides the
+// salt encoding: here 0x7d < 0x80, so the nonce goes in salt bytes 4..7,
+// big-endian. The second one ends in 0xfd >= 0x80 and exercises the other
+// branch of wasm/argon2id_pow.c (nonce in bytes 0..3, little-endian).
+const CHALLENGE = '6a1f8c2e4d0b9a7f3c5e2d1b0a9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d';
+const CHALLENGE_LE = CHALLENGE.slice(0, -2) + 'fd';
+
+// A hash costs ~72 BLAKE2b compressions on the host (1 for H0, 31 for each of
+// B0/B1, 9 for the tag) against 38,912 block fills on the GPU. The host side is
+// noise; it is measured separately below only so the GPU number cannot hide it.
+//
+// The first two checks are the default: nonce 0 on the big-endian-salt challenge (the
+// digest in the report) and nonce 1 on the little-endian one, so both branches
+// of the salt encoding in wasm/argon2id_pow.c are exercised. ?checks=4 adds
+// two more nonces.
+const CHECKS = [
+  { challenge: CHALLENGE, nonce: 0 },
+  { challenge: CHALLENGE_LE, nonce: 1 },
+  { challenge: CHALLENGE, nonce: 1 },
+  { challenge: CHALLENGE, nonce: 2 },
+];
+
+// ?quick=1 does the self-check and stops, like hashx.html. ?engine=wasm /
+// ?engine=webgpu force a side (the fallback path is worth being able to see).
+const params = new URLSearchParams(location.search);
+const quick = params.has('quick');
+const forced = params.get('engine');
+const dump = params.has('dump');
+const dumpMem = params.has('dumpmem');
+const checksParam = Number(params.get('checks') ?? 0);
+const slotsParam = Number(params.get('slots') ?? 0);
+
+async function main() {
+  const out = { ok: false, page: 'argon2id' };
+
+  if (!navigator.gpu) {
+    $('verify').innerHTML = '<span class="bad">navigator.gpu is missing</span>';
+    return { ...out, error: 'no navigator.gpu' };
+  }
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) {
+    $('verify').innerHTML = '<span class="bad">no adapter</span>';
+    return { ...out, error: 'no adapter' };
+  }
+  if (adapter.info) {
+    for (const [k, v] of Object.entries({ vendor: adapter.info.vendor, architecture: adapter.info.architecture,
+      device: adapter.info.device, description: adapter.info.description })) {
+      if (v) row($('adapter'), [k, v]);
+    }
+  }
+  const device = await adapter.requestDevice();
+  device.addEventListener('uncapturederror', (e) => log('GPU error: ' + e.error.message));
+  device.lost.then((info) => log(`device lost: ${info.reason}: ${info.message}`));
+
+  const info = adapter.info ?? {};
+  out.adapter = { vendor: info.vendor ?? '', arch: info.architecture ?? '', description: info.description ?? '' };
+  const software = /swiftshader/i.test(`${info.architecture ?? ''} ${info.description ?? ''} ${info.device ?? ''}`);
+
+  const L = device.limits;
+  const maxConcurrent = Math.max(1, Math.floor(L.maxStorageBufferBindingSize / ARGON2_BYTES));
+  out.limits = {
+    maxStorageBufferBindingSize: L.maxStorageBufferBindingSize,
+    maxBufferSize: L.maxBufferSize,
+    maxComputeWorkgroupsPerDimension: L.maxComputeWorkgroupsPerDimension,
+    concurrentArgon2idHashes: maxConcurrent,
+  };
+  for (const [k, v] of Object.entries(out.limits)) row($('limits'), [k, `${fmt(v)}${String(k).startsWith('max') && k.includes('Size') ? ` (${(v / 1048576).toFixed(0)} MiB)` : ''}`]);
+
+  /* ---------------- the WebAssembly reference ---------------- */
+  const wasmBytes = await (await fetch(WASM_URL)).arrayBuffer();
+  const { instance: wasm } = await WebAssembly.instantiate(wasmBytes, {});
+  const wx = wasm.exports;
+  let wasmChallenge = null;
+  const wasmDigest = (challengeHex, nonce) => {
+    const ch = bytes(challengeHex);
+    if (wasmChallenge !== challengeHex) {
+      new Uint8Array(wx.memory.buffer).set(ch, wx.data_ptr());
+      wx.set_data_length(ch.length);
+      wasmChallenge = challengeHex;
+    }
+    const n = wx.anubis_work(0, nonce, 1) >>> 0;   // difficulty 0: one hash, returns it
+    if (n !== nonce) throw new Error(`wasm returned nonce ${n}, expected ${nonce}`);
+    return new Uint8Array(wx.memory.buffer, wx.result_hash_ptr(), wx.result_hash_size()).slice();
+  };
+  out.wasmBytes = wasmBytes.byteLength;
+
+  /* ---------------- the GPU ---------------- */
+  const code = await (await fetch(WGSL_URL)).text();
+  const module = device.createShaderModule({ code, label: 'argon2id' });
+  const ci = await module.getCompilationInfo();
+  const errs = ci.messages.filter((m) => m.type === 'error');
+  for (const m of ci.messages) { log(`shader ${m.type} line ${m.lineNum}: ${m.message}`); console.error(`shader ${m.type} line ${m.lineNum}: ${m.message}`); }
+  let gpuUsable = errs.length === 0;
+  out.shaderCompiles = gpuUsable;
+  out.shaderMessages = ci.messages.slice(0, 8).map((m) => `${m.type} line ${m.lineNum}: ${m.message}`);
+  if (!gpuUsable) $('verify').innerHTML = '<span class="bad">the shader does not compile on this backend</span>';
+
+  // How many hashes to run at once. A real GPU only pays off if several hashes
+  // share a dispatch; SwiftShader is a CPU emulator, so one at a time is both
+  // honest and enough to test correctness without blowing the harness timeout.
+  // The default is two checks on a real GPU and one on a CPU emulator: one
+  // Argon2id hash is seconds of work there and the harness gives the page ~20 s
+  // in total. ?checks=2 / ?checks=4 run more (and ?quick=1 stops afterwards).
+  let activeChecks = CHECKS.slice(0, software ? 1 : 2);
+  if (checksParam > 0) activeChecks = CHECKS.slice(0, Math.min(checksParam, CHECKS.length));
+  const slots = slotsParam > 0 ? slotsParam
+    : Math.max(activeChecks.length, software ? 1 : Math.min(maxConcurrent, 16));
+  const benchCount = software ? 1 : Math.min(maxConcurrent, 16);
+  out.usedConcurrency = benchCount;
+  out.slots = slots;
+  row($('limits'), ['bytes per hash', `${(ARGON2_BYTES / 1048576).toFixed(3)} MiB = 19456 blocks + 3 scratch`]);
+  row($('limits'), ['used here', `${benchCount} hash(es) per dispatch (${slots} slot(s) allocated)`]);
+  row($('limits'), ['threads per hash', 'one workgroup of 8 (8 independent block rounds)']);
+
+  let pipeline, bind, paramsBuf, memoryBuf, initBuf, finalBuf, readBuf;
+  if (gpuUsable) {
+    pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+    paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    memoryBuf = device.createBuffer({ size: slots * ARGON2_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    initBuf = device.createBuffer({ size: slots * 2 * WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    finalBuf = device.createBuffer({ size: slots * WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    readBuf = device.createBuffer({ size: slots * WORDS * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    bind = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: paramsBuf } },
+        { binding: 1, resource: { buffer: memoryBuf } },
+        { binding: 2, resource: { buffer: initBuf } },
+        { binding: 3, resource: { buffer: finalBuf } },
+      ],
+    });
+  }
+
+  /** Run `count` fills; `init` is count*512 u32 of B0||B1. Returns finals + wall time. */
+  async function runGPU(count, init, difficulty = 0) {
+    device.queue.writeBuffer(initBuf, 0, init);
+    device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([0, count, difficulty, 0]));
+    const t0 = performance.now();
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bind);
+    pass.dispatchWorkgroups(count);
+    pass.end();
+    enc.copyBufferToBuffer(finalBuf, 0, readBuf, 0, count * WORDS * 4);
+    device.queue.submit([enc.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    await readBuf.mapAsync(GPUMapMode.READ);
+    const all = new Uint8Array(readBuf.getMappedRange()).slice(0);
+    readBuf.unmap();
+    return { finals: all, ms: performance.now() - t0 };
+  }
+
+  // Host side of the pipeline: challenge+nonce -> B0||B1 (512 u32), and
+  // final 1 KiB block -> 32-byte tag.
+  function hostInit(checks) {
+    const init = new Uint32Array(checks.length * 512);
+    for (const [i, c] of checks.entries()) {
+      const { b0, b1 } = A2.initialBlocks(bytes(c.challenge), c.nonce);
+      init.set(new Uint32Array(b0.buffer, b0.byteOffset, 256), i * 512);
+      init.set(new Uint32Array(b1.buffer, b1.byteOffset, 256), i * 512 + 256);
+    }
+    return init;
+  }
+  const tagsFrom = (finals, count) => Array.from({ length: count }, (_, i) =>
+    A2.tagFromFinalBlock(finals.subarray(i * 1024, (i + 1) * 1024), 32));
+
+  /* ---------------- step 1: does this GPU compute Argon2id correctly? ---------------- */
+  let gpuCorrect = false;
+  let checked = 0;
+  let mismatches = 0;
+  let gpuDigestNonce0 = null;
+  if (gpuUsable) {
+    try {
+      const init = hostInit(activeChecks);
+      const { finals, ms } = await runGPU(activeChecks.length, init);
+      log(`self-check dispatch: ${activeChecks.length} hashes in ${ms.toFixed(0)} ms`);
+      out.selfCheckMs = ms;
+      if (dump) out.finalBlock0 = hex(finals.subarray(0, 1024));
+      if (dumpMem) {
+        const dbgSize = 4 * 1024;
+        const dbg = device.createBuffer({ size: dbgSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+        const e2 = device.createCommandEncoder();
+        e2.copyBufferToBuffer(memoryBuf, 0, dbg, 0, dbgSize);
+        device.queue.submit([e2.finish()]);
+        await dbg.mapAsync(GPUMapMode.READ);
+        out.memHead = hex(new Uint8Array(dbg.getMappedRange()).slice(0));
+        dbg.unmap();
+      }
+      const tags = tagsFrom(finals, activeChecks.length);
+      for (const [i, c] of activeChecks.entries()) {
+        checked++;
+        const mine = hex(tags[i]);
+        const theirs = hex(wasmDigest(c.challenge, c.nonce));
+        if (c.nonce === 0) gpuDigestNonce0 = mine;
+        if (mine !== theirs) {
+          mismatches++;
+          if (mismatches <= 3) log(`self-check: challenge ...${c.challenge.slice(-4)} nonce ${c.nonce} gpu ${mine} wasm ${theirs}`);
+        }
+      }
+      gpuCorrect = checked === activeChecks.length && mismatches === 0;
+    } catch (e) {
+      log('self-check threw: ' + (e && e.stack ? e.stack : e));
+      out.selfCheckError = String(e);
+    }
+  }
+  out.selfCheck = gpuCorrect ? 'pass' : (gpuUsable ? 'fail' : 'unavailable');
+  out.digestNonce0 = gpuDigestNonce0;
+  out.checked = checked;
+  out.mismatches = mismatches;
+
+  if (gpuUsable) {
+    $('verify').innerHTML = gpuCorrect
+      ? `<span class="ok">${checked}/${checked} full digests match WebAssembly</span> — the WebGPU Argon2id fill is bit-exact on this backend.` +
+        `<br><span class="muted">nonce 0 (challenge <code>…${CHALLENGE.slice(-8)}</code>): <code>${gpuDigestNonce0}</code></span>`
+      : `<span class="bad">${mismatches} of ${checked} digests differ from WebAssembly</span> — ` +
+        `this GPU backend miscompiles the WGSL, so the page will use WebAssembly. ` +
+        `Wrong answers, not slow answers.`;
+  }
+
+  /* ---------------- step 2: pick a backend ---------------- */
+  let engine = gpuCorrect && gpuUsable ? 'webgpu' : 'wasm';
+  if (forced === 'wasm') engine = 'wasm';
+  if (forced === 'webgpu') engine = 'webgpu';
+  out.engine = engine;
+  out.forced = forced ?? null;
+  out.ok = engine === 'webgpu' ? gpuCorrect : true;
+
+  const why = forced ? `forced with ?engine=${forced}`
+    : !gpuUsable ? 'the shader did not compile on this backend'
+    : gpuCorrect ? 'self-check passed'
+    : 'self-check failed: wrong digests, so the GPU is not used';
+  $('selection').className = 'banner ' + (engine === 'webgpu' ? 'gpu' : 'wasm');
+  $('selection').innerHTML =
+    `<span class="chosen">using ${engine === 'webgpu' ? 'WebGPU' : 'WebAssembly'}</span> — ${why}.<br><span class="muted">` +
+    (engine === 'webgpu'
+      ? 'The GPU passed the known-answer test, so it is safe to use.'
+      : 'This is the same fallback the C engine performs for every GPU hit: a backend that cannot reproduce the reference digest is not used, however fast it is.') +
+    '</span>';
+
+  if (quick) {
+    log('quick mode: self-check only');
+    return out;
+  }
+
+  /* ---------------- step 3: cost, measured both ways ---------------- */
+  // GPU: benchCount hashes per dispatch, warmed up once, median of three.
+  let gpuMsPerHash = 0;
+  let gpuRate = 0;
+  if (gpuUsable && software) {
+    // On a CPU emulator a second dispatch just doubles the wall time this page
+    // needs inside the harness; the self-check already timed N whole hashes, so
+    // that measurement is used as-is (it is a whole-number-of-hashes dispatch,
+    // not a single hash, so per-hash is the right divisor even though the first
+    // dispatch also carries the pipeline compile).
+    gpuMsPerHash = out.selfCheckMs / checked;
+    gpuRate = 1000 / gpuMsPerHash;
+    row($('rates'), [`WebGPU fill (SwiftShader), ${checked} by the self-check`,
+      gpuMsPerHash.toFixed(1), fmt(gpuRate), engine === 'webgpu' ? 'selected' : 'not used: wrong digests'],
+      engine === 'webgpu' ? 'chosen' : 'rejected');
+  } else if (gpuUsable) {
+    const benchChecks = Array.from({ length: benchCount }, (_, i) => ({ challenge: CHALLENGE, nonce: 1000 + i }));
+    const init = hostInit(benchChecks);
+    await runGPU(benchCount, init);                     // warm up
+    const t0 = performance.now();
+    const runs = [];
+    for (let r = 0; r < 3; r++) {
+      const { ms } = await runGPU(benchCount, init);
+      runs.push(ms / benchCount);                        // ms per hash
+      // The harness kills the page after ~20 s; keep whatever runs we got
+      // rather than timing out with no number at all.
+      if (performance.now() - t0 > 8000) break;
+    }
+    gpuMsPerHash = median(runs);
+    gpuRate = 1000 / gpuMsPerHash;
+    row($('rates'), [`WebGPU fill, ${benchCount} concurrent`,
+      `${gpuMsPerHash.toFixed(2)} (${runs.map((x) => x.toFixed(1)).join(', ')} per hash)`,
+      fmt(gpuRate), engine === 'webgpu' ? 'selected' : 'not used: wrong digests'],
+      engine === 'webgpu' ? 'chosen' : 'rejected');
+    if (gpuCorrect && performance.now() - t0 < 12000) {
+      // Extra: a benchmark nonce that was not part of the self-check.
+      const { finals } = await runGPU(1, hostInit([benchChecks[0]]));
+      const tag = hex(tagsFrom(finals, 1)[0]);
+      const theirs = hex(wasmDigest(CHALLENGE, 1000));
+      log(`benchmark nonce 1000 digest ${tag === theirs ? 'verified against wasm' : 'MISMATCH ' + tag + ' != ' + theirs}`);
+      out.benchNonceVerified = tag === theirs;
+    }
+  }
+
+  // Host side, measured on the same nonces: B0/B1 derivation and the tag. The
+  // tag cost does not depend on where the 1 KiB block came from, so when the
+  // GPU is unusable it is measured over the B0 blocks instead.
+  {
+    const benchChecks = Array.from({ length: benchCount }, (_, i) => ({ challenge: CHALLENGE, nonce: 1000 + i }));
+    const t0 = performance.now();
+    const init = hostInit(benchChecks);
+    const initMs = (performance.now() - t0) / benchCount;
+    const finals = gpuUsable ? (await runGPU(benchCount, init)).finals
+      : new Uint8Array(init.buffer, 0, benchCount * 1024);
+    const t1 = performance.now();
+    for (let i = 0; i < benchCount; i++) A2.tagFromFinalBlock(finals.subarray(i * 1024, (i + 1) * 1024), 32);
+    const tagMs = (performance.now() - t1) / benchCount;
+    out.hostInitMsPerHash = initMs;
+    out.hostTagMsPerHash = tagMs;
+    row($('rates'), ['host: H0 + B0/B1 (JS BLAKE2b)', initMs.toFixed(2), fmt(1000 / initMs), 'needed once per nonce']);
+    row($('rates'), ['host: final tag (JS BLAKE2b)', tagMs.toFixed(2), fmt(1000 / tagMs), `${benchCount} tags`]);
+    if (gpuMsPerHash) row($('rates'), ['host + GPU per hash', (initMs + gpuMsPerHash + tagMs).toFixed(2), fmt(1000 / (initMs + gpuMsPerHash + tagMs)), 'if you count the host']);
+  }
+
+  // WebAssembly: difficulty 0 returns after exactly one hash, so N calls is a
+  // clean per-hash measurement of the same work the GPU fill does.
+  {
+    wasmDigest(CHALLENGE, 0);                            // warm up
+    const runs = [];
+    for (let r = 0; r < 3; r++) {
+      const t0 = performance.now();
+      for (let i = 0; i < benchCount; i++) wasmDigest(CHALLENGE, 5000 + r * 100 + i);
+      runs.push((performance.now() - t0) / benchCount);
+    }
+    const wasmMsPerHash = median(runs);
+    out.wasmMsPerHash = wasmMsPerHash;
+    out.wasmRate = 1000 / wasmMsPerHash;
+    row($('rates'), ['WebAssembly (wasm/argon2id_pow.wasm)', wasmMsPerHash.toFixed(2),
+      fmt(out.wasmRate), engine === 'wasm' ? 'selected' : 'reference'],
+      engine === 'wasm' ? 'chosen' : '');
+    if (gpuRate) {
+      const ratio = Math.max(gpuRate, out.wasmRate) / Math.min(gpuRate, out.wasmRate);
+      row($('rates'), ['ratio', `${ratio.toFixed(2)}x`, '',
+        gpuRate > out.wasmRate ? 'WebGPU is faster' : 'WebAssembly is faster']);
+    }
+  }
+
+  out.gpuMsPerHash = gpuMsPerHash;
+  out.gpuRate = gpuRate;
+  out.usedMsPerHash = engine === 'webgpu' ? gpuMsPerHash : out.wasmMsPerHash;
+  out.ok = engine === 'webgpu' ? gpuCorrect : true;
+  log(`done: ${engine} at ${fmt(engine === 'webgpu' ? gpuRate : out.wasmRate)} hashes/s` +
+      (engine === 'webgpu' ? '' : ' (Argon2id on WebGPU was not used)'));
+  return out;
+}
+
+main().then((out) => {
+  window.__result = out;
+}).catch((e) => {
+  log('failed: ' + (e && e.stack ? e.stack : e));
+  window.__result = { ok: false, page: 'argon2id', error: String(e) };
+});
+</script>
+</body>
+</html>

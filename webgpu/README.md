@@ -38,8 +38,25 @@ can apply it: up front, once, instead of never.
 ## Running it
 
 ```bash
-./run.sh                # native Vulkan adapter (Intel Iris Xe here)
-./run.sh swiftshader    # CPU backend: correct, and slow
+./run.sh                # HashX, native Vulkan adapter (Intel Iris Xe here)
+./run.sh swiftshader    # HashX, CPU backend: correct, and slow
+./run.sh argon2id       # Argon2id instead of HashX
+```
+
+Both pages take `?quick=1` (self-check only), `?engine=wasm` / `?engine=webgpu`
+(force a side, so the fallback can be seen on purpose) and both print a
+`window.__result` object that `tools/webgpu-run.mjs` returns.
+
+`run.sh` is a convenience wrapper; the canonical command is the direct one below,
+which is what the numbers in this file were measured with. Give each run its own
+page load — a headless Chrome left over from an interrupted run is the usual
+reason a second run appears to hang:
+
+```bash
+python3 -m http.server 8092 --bind 127.0.0.1 &
+node tools/webgpu-run.mjs "http://127.0.0.1:8092/webgpu/argon2id.html?quick=1" \
+  "window.__result" --enable-features=Vulkan --use-angle=vulkan --use-vulkan=native \
+  --enable-unsafe-webgpu
 ```
 
 `run.sh` serves the repository, starts headless Chrome with the flags that give a
@@ -81,11 +98,11 @@ costs one readback rather than one per hash.
 
 Three machines, four configurations, and the digests do not agree:
 
-| backend | digests | hashes/s | note |
+| backend | HashX digests | Argon2id digests | note |
 |---|---|---|---|
-| Intel Iris Xe, Vulkan (`gen-12lp`) | **wrong** | 11.5 M – 47.2 M | the fast one, and the broken one |
-| SwiftShader, this laptop | exact | — | CPU emulator |
-| SwiftShader, Xeon 56c / 64 GB box | **exact 8/8** | 0.89 M | CPU emulator; wasm there does 5.99 M |
+| Intel Iris Xe, Vulkan (`gen-12lp`) | **wrong** | **exact (4/4)** | the fast one, and the broken one for HashX only |
+| SwiftShader, this laptop | exact | **exact** | CPU emulator |
+| SwiftShader, Xeon 56c / 64 GB box | **exact 8/8** | — | CPU emulator; wasm there does 5.99 M |
 | AMD FirePro V3800 | exact | — | ran on SwiftShader: that card has no Vulkan to run on |
 
 The fourth row is worth explaining, because it is the one people ask about. The
@@ -138,6 +155,67 @@ next person does not have to rewrite them:
 | `dump.html` | r0..r7 (+`result`) after a chosen instruction, via `--dump-after` |
 
 Debug flags on the generator: `--dump-after K`, `--truncate K`, `--no-branch`.
+
+## Argon2id
+
+`webgpu/argon2id.wgsl` is the same idea for Argon2id with Anubis's parameters
+(m=19456 KiB, t=2, p=1, 32-byte tag) and it is **bit-exact**: nonce 0 of the
+committed challenge produces
+
+```
+99d43e7d61c5c6ac76345d531cf754f1a86081c9bcce1c1a8ff7756b7a3425d2
+```
+
+which is what `wasm/argon2id_pow.wasm` produces, and the page's self-check passes
+**4/4 on the Intel backend** as well as on SwiftShader.
+
+It is also **3.9x slower than the WebAssembly module**, and the reason is
+structural rather than a bug:
+
+| engine | ms/hash | hashes/s | concurrency |
+|---|---:|---:|---:|
+| **WebGPU, Intel Iris Xe** | **277** | **3.6** | 6 |
+| WebAssembly, same browser | 71 | 14.1 | 1 |
+| native C, one core | 13 | 75 | 1 |
+
+One Argon2id hash needs 19,456 KiB. WebGPU caps a storage binding at
+**128 MiB** here (`maxBufferSize` 256 MiB), so at most **six** hashes fit in one
+binding, and six hashes is not enough to fill a GPU. The repository's native
+Vulkan backend on the *same* GPU reaches 326 h/s at d8 — **8.6x** the CPU — and it
+uses **64** concurrent hashes, 1.24 GB of working set, which WebGPU will not give
+it. That is the whole gap. Binding several storage buffers (each up to 128 MiB)
+would raise the ceiling, but the per-hash cost is dominated by a serial chain of
+38,912 block fills, so the honest expectation is that it would still trail the
+native path — and it would not beat the wasm module, which needs no such
+gymnastics.
+
+Design notes: one workgroup of **8 invocations per hash**, because the block
+function is 8 independent BLAKE2 rounds then a `workgroupBarrier()` then 8 more, so
+the lanes split each 1 KiB fill. The block lives in `var<workgroup>` (2 KiB), and
+the three scratch blocks Argon2id's data-independent addressing needs are appended
+to each hash's storage region (19,459 KiB per hash, not 19,456). The host computes
+H0, B0, B1 and the final tag in JavaScript — about **6 ms per hash** (4.8 ms init,
+1.2 ms tag) against 38,912 GPU block fills, so it is noise but it is not zero and
+it is reported separately.
+
+Two things this cost that are worth recording:
+
+- **A serial kernel gets killed by the driver.** One invocation per hash runs
+  ~8 s of serial work and the Intel driver returns `VK_ERROR_DEVICE_LOST`. The
+  8-invocation version completes.
+- **The address input block must be re-initialised per segment.** Not doing so
+  changes the first address block of the first segment and every digest after it —
+  the classic Argon2id port break, and the one bug found here.
+
+## The Intel diagnostic this produced
+
+Argon2id **passes** on the Intel backend, which narrows the HashX failure. Argon2id
+exercises add/sub/xor/rotate, `blamka` (which uses the 32x32->64 `mulhi32`) and
+the whole fill — but it never performs a full 64x64 multiply, so it never touches
+`umulh64`/`mul64`. HashX's divergence was exactly in the high halves of registers
+produced by those two functions. So the open Intel bug is now pinned to the 64x64
+multiply path (or to HashX's control flow around it), not to the u64 emulation in
+general. That is a much smaller haystack than before.
 
 ## The numbers
 

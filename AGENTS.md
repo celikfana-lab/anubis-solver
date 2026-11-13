@@ -55,7 +55,7 @@ webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see 
 | `results/` | committed benchmark JSON |
 | `wasm/` | WebAssembly kernels (HashX interpreter and a runtime compiler, SHA-256 4-wide, Argon2id fill) + benchmarks + the module tests |
 | `web/` | the static documentation site: beginner guide, algorithms, comparison, benchmarks. `cd web && make check` |
-| `webgpu/` | HashX compiled to WGSL and run on WebGPU; an experiment with a negative result — see its README before quoting any number from it |
+| `webgpu/` | HashX and Argon2id compiled to WGSL and run on WebGPU; HashX is fast but wrong on the Intel backend, Argon2id is correct but slower than wasm — see its README before quoting any number from it |
 | `betterAnusbis/` | an Anubis-compatible PoW gate in one C file; links this library |
 | `firefox-extension/` | native messaging host so the browser uses `libanubis_solver.so` |
 | `beyond/`, `card/` | the hardware half: RTL, testbenches, QEMU PCI device + driver |

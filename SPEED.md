@@ -574,6 +574,50 @@ arithmetic is proven separately: per block against the reference, per hash
 against argon2-cffi, and once end to end by `make vlreal` solving a real
 challenge.
 
+### One die, three machines
+
+The three Anubis families want three different machines, so
+`chip/rtl/top/anubis_tri_chip.v` puts the right machine next to each other
+instead of forcing one datapath to be three things. Only the host interface and
+the board are shared.
+
+| sub-chip | machine | why that shape | rate @ 1 GHz | cells |
+|---|---|---|---:|---:|
+| **A2I** | 365 engines x 3 contexts + 8 HBM3e stacks | the permutation is 133 cycles and the HBM link is the wall | **70,122 h/s** | 68.1 M |
+| **HX** | `hashx_pool`, 128 lanes of `hashx_top` | a 533-cycle *serial* VM: latency-bound, so throughput is lanes | **240 M h/s** | 7.5 M+ |
+| **SHA** | `sha256_pool`, 128 x `anubis_pow` | 128 cycles and ~8.5k cells: pure ALU, so throughput is lanes | **1.0 Ghash/s** | 1.1 M |
+
+Roughly **77 M generic cells** (the HX figure counts only `hashx_exec` per lane, so it is a floor), and the Argon2 array is 88% of it — which is the
+whole point: the two cheap algorithms cost almost nothing next to the memory
+machine, so there is no reason to compromise any of the three.
+
+Measured per lane (these are the numbers the pool sizes multiply):
+1.88 M h/s for one HashX lane, 7.81 M h/s for one SHA-256 lane, and the Argon2id
+array is the measured 70,122 h/s at 365 engines.
+
+**Why not one universal core.** SHA-256's round is a wide combinational network:
+on a general register ALU it is ~12 micro-operations, i.e. **6x slower** than the
+hardwired 128-cycle core. HashX genuinely is a sequence of register ops, so it
+runs natively on an ALU. Argon2id is a 128 x 64-bit permutation gated by DRAM.
+Unifying the datapath would slow SHA-256 down to save at most 67 k cells against
+a 68.1 M-cell array — a bad trade by three orders of magnitude.
+
+**Where sharing *is* right:** the HashX program. It is up to 512 instructions
+(8 KiB) and fixed for every nonce of a challenge, so all 128 HX lanes read one
+copy. That is the only genuinely shareable resource in the design.
+
+**And the honest note on the SHA-256 block:** replication is not the area-optimal
+form of it. A fully unrolled, 64-stage pipelined SHA-256 reaches 1 hash/cycle for
+~100 k cells, where 128 replicated scanners cost ~1.1 M for the same 1 Ghash/s.
+PoW has no latency requirement, so the pipeline is the right answer — it just
+isn't written yet, and the pooled version is built from a core that is already
+verified against known vectors.
+
+`make -C chip tri-chip` runs all three on one die and checks each against its
+reference: HashX must find nonce 228 (9 leading zero bits, the C reference's
+first hit), SHA-256 must find nonce 83 with digest `008fa7f1...`, and the
+Argon2id array's traffic must match its engine count and block cost.
+
 ### Against the GPUs
 
 | machine | argon2id hashes/s | hashx hashes/s |

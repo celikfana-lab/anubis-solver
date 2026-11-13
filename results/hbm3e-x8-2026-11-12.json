@@ -686,5 +686,56 @@
       "more_engines": "550 engines -> 70,518 hashes/s: +0.13% for 50% more silicon",
       "realistic_dram": "75% link efficiency -> 46,582 hashes/s"
     }
+  },
+  "tri_chip_three_algorithms": {
+    "rtl": "chip/rtl/top/anubis_tri_chip.v",
+    "new_blocks": [
+      "chip/rtl/hashx/anubis_hashx_solve.v (HashX nonce search in RTL; it used to live in the testbench)",
+      "chip/rtl/hashx/hashx_pool.v (N lanes over one shared 8 KiB program RAM)",
+      "chip/rtl/sha256/sha256_pool.v (N anubis_pow scanners, disjoint nonce chunks)"
+    ],
+    "rationale": "each family wants a different microarchitecture; sharing a datapath would slow SHA-256 ~6x (its round is a wide combinational network, not a sequence of register ops) to save at most 67k cells against a 68.1M-cell Argon2 array",
+    "design_point": {
+      "a2i": {
+        "engines": 365,
+        "contexts": 3,
+        "hbm3e_stacks": 8,
+        "hashes_per_s": 70122,
+        "cells": 68106810,
+        "measured": "card-argon2-max"
+      },
+      "hx": {
+        "lanes": 128,
+        "cycles_per_hash": 533,
+        "hashes_per_s": 240225140,
+        "cells_floor": 7507712,
+        "note": "hashx_exec per lane only; PRF and finalisation are extra"
+      },
+      "sha": {
+        "lanes": 128,
+        "cycles_per_hash": 128,
+        "hashes_per_s": 1000000000,
+        "cells": 1085056
+      },
+      "total_cells_approx": 76689578
+    },
+    "verified_by": "chip/tb/tb_tri_chip.v, in TBS/sim: HashX finds nonce 228 with 9 leading zero bits (C reference), SHA-256 finds nonce 83 with digest 008fa7f1... (tb_pow), and the Argon2id array's traffic matches engines / cycles-per-block",
+    "test_output_small_config": {
+      "hx_lanes": 4,
+      "sha_lanes": 4,
+      "a2i_engines": 12,
+      "hx_hit_nonce": 228,
+      "hx_hit_lz": 9,
+      "hx_hashes": 230,
+      "sha_found_nonce": 83,
+      "sha_digest_prefix": "008fa7f19286d1464dc7523e3d126b8f",
+      "a2i_blocks_in_400_cycles": 241,
+      "a2i_bpc": 2150.4
+    },
+    "known_better_forms": [
+      "SHA-256: a fully unrolled 64-stage pipeline reaches 1 hash/cycle for ~100k cells, where 128 replicated iterative scanners need ~1.09M for the same 1 Ghash/s. PoW has no latency requirement, so the pipeline is the area-optimal answer; it is not written yet",
+      "HashX: pipelining across nonces needs the full 512-bit register state per stage (~256 Kbit for 512 stages), which costs more than replicating lanes, so replication is the right shape",
+      "Argon2id: 365 engines is the measured saturation point of eight HBM3e stacks; a 366th buys nothing"
+    ]
   }
 }

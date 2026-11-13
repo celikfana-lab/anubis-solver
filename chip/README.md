@@ -22,12 +22,17 @@ rtl/
               hashx_prf.v         SipHash-2-4 counter-mode PRF (nonce -> r[])
               hashx_exec.v        the 11-opcode HashX VM
               hashx_top.v         PRF, program, finalisation
+              anubis_hashx_solve.v nonce scanner: the search used to be in a tb
+              hashx_pool.v        N scanners over one shared program RAM
   mem/        lpddr6_model.v      behavioural LPDDR6 model
               lpddr6_if.v         1 KiB block <-> 32-byte packet adaptor
               hbm3_model.v        one HBM3/HBM3e link: BW, latency, byte credits
               hbm3e_mem.v         eight HBM3e stacks, blk%8 routing, N lanes
   top/        anubis_argon2_card.v  THE 365-ENGINE CHIP: engine array, 8x HBM3e,
                                     BAR0 and UART wired together
+              anubis_tri_chip.v     one die, three sub-chips: A2I array, HashX
+                                    lane pool, SHA-256 pool (each as fast as its
+                                    algorithm allows)
   periph/     uart_tx.v           8N1 serial transmitter
               uart_log.v          console: banner, and a HIT line per solve
               axil_regs.v         BAR0 register file on AXI4-Lite (the PCIe side)
@@ -421,6 +426,40 @@ copies of the datapath is ~68 M generic cells and cannot be simulated. The real
 datapath is verified on its own — `tb_argon2_fill` against the reference block,
 `tb_argon2_engine` against argon2-cffi, and `make vlreal` solving a real
 challenge.
+
+## One die, three machines
+
+`rtl/top/anubis_tri_chip.v` carries the three Anubis families on one die, each
+on the machine its algorithm actually wants:
+
+| sub-chip | machine | rate @ 1 GHz |
+|---|---|---:|
+| **A2I** | 365 engines x 3 contexts + 8 HBM3e stacks | 70,122 Argon2id h/s |
+| **HX** | `hashx_pool`: 128 lanes of `hashx_top` | 240 M hashes/s |
+| **SHA** | `sha256_pool`: 128 x `anubis_pow` | 1.0 G hashes/s |
+
+```bash
+make tri-chip      # all three, checked against their references
+```
+
+```
+tri-chip: HX 4 lanes, SHA 4 lanes x 32 nonces, A2I 12 engines x 3 contexts
+  HX : hit nonce 228, 9 leading zero bits, 230 hashes across 4 lanes
+  SHA: hit nonce 83, digest 008fa7f19286d1464dc7523e3d126b8f
+  A2I: 241 blocks in 400 cycles, 2150.4 B/cycle of 9824, 15419 hashes/s
+tb_tri_chip: PASS - three algorithms, three machines, one die
+```
+
+Why not one universal core: SHA-256's round is a wide combinational network
+(~12 micro-ops on a general ALU, 6x slower), HashX really is a sequence of
+register-register ops, and Argon2id is a 128 x 64-bit permutation gated by DRAM.
+The sizes are parameters, so the HX and SHA lane counts are a die-budget choice
+independent of the Argon2 engine count. The HashX *program* (8 KiB) is the one
+thing genuinely shared: it is fixed per challenge, so all lanes read one copy.
+
+The SHA-256 block has a known better form: a 64-stage pipeline does 1 hash/cycle
+for ~100k cells where 128 replicated scanners need ~1.1M for the same rate. It is
+not written yet; what is here is built from the already-verified iterative core.
 
 ## Notes / next steps
 

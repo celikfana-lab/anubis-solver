@@ -38,6 +38,12 @@ ARGON := rtl/argon2/argon2_fill.v rtl/argon2/argon2_index.v rtl/argon2/argon2_ad
 HASHX := rtl/hashx/sipround.v rtl/hashx/hashx_prf.v rtl/hashx/hashx_exec.v \
          rtl/hashx/hashx_top.v
 PERIPH := rtl/periph/uart_tx.v rtl/periph/uart_log.v rtl/periph/axil_regs.v
+# one die, three sub-chips: Argon2id array, HashX lane pool, SHA-256 pool
+TRI := rtl/top/anubis_tri_chip.v rtl/argon2/argon2_mpipe.v \
+       rtl/mem/hbm3e_mem.v rtl/mem/hbm3_model.v \
+       rtl/hashx/hashx_pool.v rtl/hashx/anubis_hashx_solve.v $(HASHX) \
+       rtl/sha256/sha256_pool.v $(POW)
+
 # the whole card: engine array + eight HBM3e stacks + BAR0 + UART
 CARD := rtl/top/anubis_argon2_card.v rtl/argon2/argon2_mpipe.v \
         rtl/mem/hbm3e_mem.v rtl/mem/hbm3_model.v \
@@ -49,11 +55,11 @@ ENGINE := rtl/argon2/argon2_engine.v $(ARGON) $(HASH)
 # name: dependencies | vector generator
 TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
        tb_h_prime tb_h0 tb_argon2_addr tb_argon2_index tb_argon2_engine \
-       tb_hashx tb_uart tb_axil tb_argon2_card
+       tb_hashx tb_uart tb_axil tb_argon2_card tb_tri_chip
 
   .PHONY: all sim $(TBS) run-all pow argon blake2b stream hprime h0 addr index engine \
         hashx solve solve-hashx mpipe vectors vl64 vlreal synth area clean \
-        sync hbm3e-capacity hbm3e-mpipe card-argon2 card-argon2-max
+        sync hbm3e-capacity hbm3e-mpipe card-argon2 card-argon2-max tri-chip
 .DEFAULT_GOAL := all
 
 all: sim
@@ -241,6 +247,14 @@ $(B)/tb_argon2_card_max: tb/tb_argon2_card.v $(CARD) | $(B)
 # the real 365-engine chip; several minutes of Icarus
 card-argon2-max: $(B)/tb_argon2_card_max
 	$(V) $(B)/tb_argon2_card_max
+
+# ---- the three-block chip --------------------------------------------------
+$(B)/tb_tri_chip: tb/tb_tri_chip.v $(TRI) $(B)/gen_hashx_vectors | $(B)
+	$(B)/gen_hashx_vectors vectors/hx_vectors.hex
+	$(IVERILOG) -g2012 -o $@ tb/tb_tri_chip.v $(TRI)
+
+tri-chip: $(B)/tb_tri_chip
+	$(V) $(B)/tb_tri_chip
 
 # ---- Verilator ------------------------------------------------------------
 # Compiling the RTL to C++ is ~1000x faster than Icarus here: 0.17 s instead of

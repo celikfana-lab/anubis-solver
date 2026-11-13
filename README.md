@@ -184,6 +184,8 @@ bindings/csharp/         C# bindings (P/Invoke, no NuGet)
 bindings/r/              R bindings (.Call shim)
 bindings/java/           Java bindings (JNI, no jars)
 bindings/asm/            assembly macros + demos (x86-64 and AArch64)
+dsh-plugin/              DSH tool: anubis_fetch, a web_fetch for Anubis pages
+tools/anubis_fetch.py    the fetch driver the plugin calls
 tools/                   kernel generators, build scripts, benchmarks
 results/                 raw benchmark JSON
 ```

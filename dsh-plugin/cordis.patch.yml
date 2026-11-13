@@ -1,0 +1,10 @@
+# anubis-fetch: a web_fetch for pages behind TecharoHQ/anubis.
+# The proof-of-work is solved locally by libanubis_solver (repo/ + python).
+- insert:
+    - id: anubis-fetch
+      name: '@local/anubis-fetch'
+      config:
+        repo: /media/miku6/kubuntu_2404/home/miku/DOWN/pyani/anubis-solver
+        python: python3
+        timeoutMs: 60000
+        maxChars: 100000

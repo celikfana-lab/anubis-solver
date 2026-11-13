@@ -1,0 +1,24 @@
+{
+  "name": "@local/anubis-fetch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DSH tool: fetch web pages that are protected by Anubis, solving the proof-of-work locally",
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test.mjs",
+    "check": "node --check index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

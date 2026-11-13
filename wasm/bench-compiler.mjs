@@ -42,7 +42,8 @@ const trials = [];
 }
 
 const CASES = [
-  ['hand-written WAT', fileURLToPath(new URL('./argon2_fill.wasm', import.meta.url))],
+  ['WAT, scalar', fileURLToPath(new URL('./argon2_fill.wasm', import.meta.url))],
+  ['WAT, v128 (hand)', fileURLToPath(new URL('./argon2_fill_simd.wasm', import.meta.url))],
   ['rustc, scalar', fileURLToPath(new URL('./compiler/fill_scalar.wasm', import.meta.url))],
   ['rustc, +simd128', fileURLToPath(new URL('./compiler/fill_simd.wasm', import.meta.url))],
 ];

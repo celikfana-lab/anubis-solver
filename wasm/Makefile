@@ -8,7 +8,7 @@ REPO    ?= ..
 HASHES  ?= 2000000
 OFFICIAL ?= /media/miku6/kubuntu_2404/home/miku/DOWN/pyani/anubis/web/static/wasm
 
-all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm
+all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm argon2_fill_simd.wasm
 
 hashx_jit.wat: $(REPO)/tools/gen_hashx_wat.py $(REPO)/beyond/vectors/hx_vectors.hex
 	python3 $(REPO)/tools/gen_hashx_wat.py --out wasm/hashx_jit.wat
@@ -22,6 +22,13 @@ demo/hashx_jit.wasm: hashx_jit.wasm
 
 argon2_fill.wat: $(REPO)/tools/gen_argon2_wat.py
 	python3 $(REPO)/tools/gen_argon2_wat.py --out wasm/argon2_fill.wat
+
+argon2_fill_simd.wat: $(REPO)/tools/gen_argon2_wat_simd.py
+	python3 $(REPO)/tools/gen_argon2_wat_simd.py --out wasm/argon2_fill_simd.wat
+
+argon2_fill_simd.wasm: argon2_fill_simd.wat
+	wat2wasm argon2_fill_simd.wat -o argon2_fill_simd.wasm
+	@ls -l argon2_fill_simd.wasm
 
 argon2_fill.wasm: argon2_fill.wat
 	wat2wasm argon2_fill.wat -o argon2_fill.wasm
@@ -39,6 +46,8 @@ vectors: fill_vectors.txt
 a2i: all
 	node verify-a2i.mjs
 	node bench-a2i.mjs
+	node bench-memory.mjs
+	node bench-threads.mjs --hashes 6
 
 # the same fill_block compiled from Rust, for the WAT-vs-compiler question
 compiler/%.wasm: compiler/fill.rs
@@ -63,6 +72,7 @@ serve: all
 	python3 -m http.server 8933 --bind 127.0.0.1
 
 clean:
-	rm -f compiler/fill_*.wasm hashx_jit.wasm hashx_jit.wat demo/hashx_jit.wasm argon2_fill.wasm argon2_fill.wat
+	rm -f compiler/fill_*.wasm hashx_jit.wasm hashx_jit.wat demo/hashx_jit.wasm \
+	      argon2_fill.wasm argon2_fill.wat argon2_fill_simd.wasm argon2_fill_simd.wat
 
 .PHONY: all bench a2i vectors compare serve clean

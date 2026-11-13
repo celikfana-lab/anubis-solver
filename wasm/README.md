@@ -91,27 +91,80 @@ Three things fall out of that:
 3. **We are already at parity with what ships.** Within noise of the official
    module, whose figure is a whole hash and ours is the mixing loop only.
 
-## So: raw WAT or C?
+## So: raw WAT or C? — all three levers, measured
 
-**Write C or Rust.** Measured, not argued:
+Four implementations of the same block function, all bit-exact against the C
+reference, warmed and measured twice: cache-resident, and memory-bound over the
+19 MiB arena a real hash uses. Best of three passes each.
 
-- the compiler is **7× smaller** for the same speed (3.7 KB vs 27 KB),
-- speed is a wash: it even wins the cache-resident regime,
-- and the compile step is where a vectorising compiler *could* help you — though
-  as the `+simd128` row shows, it does not always.
+| implementation | cache-resident | memory-bound | module size |
+|---|---:|---:|---:|
+| WAT, scalar (generated) | 1.40 µs | 2.55 µs | 26,859 B |
+| **WAT, v128 hand-written** | 2.21 µs | 2.45 µs | 35,292 B |
+| **rustc, scalar** | 2.08 µs | **1.90 µs** | **3,742 B** |
+| rustc, `+simd128` | 2.10 µs | 2.33 µs | 5,784 B |
+| official Anubis baseline | — | 1.81–1.97 µs | 35,813 B |
 
-Hand-written WAT is worth it only when a compiler **cannot express** the
-optimisation. That is exactly the HashX case: a challenge-defined program has to
-be interpreted or code-generated, and removing the interpreter is the whole 6×.
-For a fixed numeric kernel like Argon2id's block mix there is no interpreter to
-remove, so the compiler's scheduling is free and hand-written wasm is just harder
-to maintain.
+### 1. Explicit `v128`: it works, and it is not worth it
 
-If someone wants to go further on Argon2id in wasm, the remaining levers are not
-WAT-vs-C: they are explicit `v128` intrinsics with the 16 words held in vector
-registers across both phases (what `third_party/argon2/blake2/blamka-round-opt.h`
-does with `__m128i`), and the memory access pattern — not the instruction
-scheduling.
+`tools/gen_argon2_wat_simd.py` emits the round with two u64 per vector register.
+The column G's pair exactly — `G(i,i+4,i+8,i+12)` for i=0,1 is one vector G over
+`(q0,q2,q4,q6)` — and the diagonal G's need the same alignr-style shuffles the C
+SSE2 path uses. It is bit-exact on all three trials (128/128 words).
+
+**And it buys nothing**: 2.45 µs against 2.55 µs scalar in the memory-bound
+regime, inside the run-to-run noise. Halving the multiply count does not help
+because the kernel is not multiply-bound in the way the op count suggests — every
+round also round-trips 16 words through memory, and the shuffles for `fBlaMka`'s
+unsigned 32×32→64 multiply cost most of what the vector lanes save.
+
+One thing it *did* need: `i64x2.extmul_low_i32x4_u`. Rust's stable
+`core::arch::wasm32` exposes only the **signed** variant, so a Rust intrinsics
+version cannot express fBlaMka without a correction sequence that erases the win.
+In WAT the unsigned opcode is one instruction. That is the one place in this whole
+exercise where hand-written WAT could do something Rust could not — and it still
+was not faster.
+
+### 2. The memory access pattern: no headroom
+
+The same fill_block, 15,000 blocks, working set swept from 16 KiB to the real
+19 MiB (`node bench-memory.mjs`):
+
+```
+16 KiB   1.72 µs/block      1 MiB   1.86     16 MiB  1.60
+64 KiB   1.90 µs/block      4 MiB   1.89     19 MiB  1.62
+```
+
+**Flat.** Argon2id is called memory-hard, and it is — for the whole 19 MiB
+hash — but a single 1 KiB block mixes three blocks (3 KiB of traffic in ~1.6 µs
+= under 2 GB/s), so the arithmetic dominates and the cache does not matter.
+There is nothing to prefetch your way out of, which is why no reordering was
+written: the measurement said not to bother.
+
+### 3. Threads across nonces: the real win
+
+`p=1` inside a hash is fixed by the challenge, so parallelism goes *across*
+nonces — which is why the official module takes an `iterand` parameter. Each
+nonce is an independent 19 MiB hash, so this scales:
+
+```
+ 1 worker    8.5 hashes/s
+ 2 workers  17.9 hashes/s    2.11x   (ideal 2x)
+ 4 workers  31.9 hashes/s    3.75x   (ideal 4x)
+```
+
+`node bench-threads.mjs` — near-linear, and the only lever with real headroom.
+Worker startup is included, so this understates it slightly at these hash counts.
+In a browser this is Web Workers; a tab gets one per core.
+
+### The answer
+
+**Write C or Rust, and spend the parallel budget on nonces.** Hand-written WAT is
+worth it only where a compiler *cannot express* the optimisation — a
+challenge-defined program that must be interpreted or code-generated, which is the
+HashX case and where removing the interpreter was the whole 6×. For a fixed
+numeric kernel: the compiler is 7× smaller for the same speed, its scheduling is
+free, and here even a hand-written vector kernel did not beat it.
 
 ## The demo
 

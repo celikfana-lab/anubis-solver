@@ -99,6 +99,28 @@ The toolkit in `nvida/bin` was taken out of Ubuntu's `nvidia-cuda-toolkit`
 driver stack; `dpkg-deb -x` of the toolkit alone is enough for `ptxas`,
 `nvdisasm` and `cuobjdump`).
 
+## Prior art, found after this was started
+
+There are existing SASS assemblers, which changes what this directory is for:
+
+| project | scope | note |
+|---|---|---|
+| [TuringAs](https://github.com/luoyujun/turingas) | Volta SM70, Turing SM75 | Python. Input is **body-only** SASS with explicit control codes (`--:-:-:Y:0`), no ELF directives; labels allowed. Its TODO lists type conversion, MUFU, LDSM, texture and surface instructions as unimplemented. |
+| [CuAssembler](https://github.com/cloudcores/CuAssembler) | "all generations"; sm_75 from v10, Ampere v11+ | Python 3.8 + sympy, round-trips `cuasm` <-> `cubin` via `nvdisasm`/`cuobjdump`. Closest to a drop-in for this repo. |
+| [MaxAs](https://github.com/NervanaSystems/maxas) | Maxwell | Archived/discontinued, but the reference for the **control-code** problem and a scheduler. |
+| [F2Asm](https://arxiv.org/abs/2608.20532) (2026) | recent data-centre GPUs | Learns exact 128-bit encoders as affine maps over GF(2), from paired disassembly and cubin words. This is the rigorous version of the oracle method used here, and worth reading before deriving more families by hand. |
+
+Tried TuringAs on `src/sass/nvidiaT4_sha256.sass` as-is: it rejects the file at
+line 0, because nvdisasm output carries directives (`.section`, `.global`,
+`.size`) and no control-code prefixes, while TuringAs wants a bare instruction
+body with `--:-:-:Y:0`-style control codes on every line. Converting a listing
+into that form is a script, not a research problem.
+
+So: **if the goal is to assemble an sm_75 listing today, use CuAssembler or
+TuringAs.** This directory is a derivation harness with a byte-exact selftest --
+useful for checking what an encoder should produce, and for the control-word
+question -- not a replacement for either.
+
 ## Status, plainly
 
 Two instruction forms out of the dozens a real kernel needs. This is a working

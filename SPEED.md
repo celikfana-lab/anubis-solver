@@ -708,6 +708,27 @@ difficulty-16 challenge, and they return the **same nonce (180078) and the same
 digest** — the official module is 7-9x slower on the same work. Three
 implementations (our C engine, our WAT, Anubis's Rust) agreeing is the evidence.
 
+### WebAssembly: Argon2id, and the limit of this trick
+
+The same "compile it, do not interpret it" approach, applied to the other
+memory-hard algorithm, **fails** — and the failure is the useful part.
+
+`tools/gen_argon2_wat.py` emits the reference `fill_block` (8 column + 8 row
+rounds of BlaMka, unrolled, bit-exact against vectors compiled from the vendored
+C reference). Measured against the official Anubis module, m=19456 KiB t=2:
+
+| | per block | whole hash |
+|---|---:|---:|
+| WAT fill_block (scalar) | 7.99 us | ~3.2 hashes/s |
+| official baseline | 2.25 us | ~11 hashes/s |
+| official simd128 | 1.79 us | ~14 hashes/s |
+
+So a scalar hand-written port is 3.5-4.5x **slower** than the compiler's output.
+Argon2id has no interpreter to remove — it is a numeric kernel — and LLVM's
+simd128, scheduling and register allocation beat hand-emitted wasm. The HashX
+wins (19.9x on CUDA, 6x in wasm) were interpreter removal, not hand optimisation;
+take the interpreter away and there is nothing left to win.
+
 ### Tesla T4 (sm_75): the SHA-256 kernel and its SASS
 
 `src/sass/nvidiaT4_sha256.sass` is the shipped `src/cuda/cuda_sha256.cu` kernel

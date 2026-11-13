@@ -8,7 +8,7 @@ REPO    ?= ..
 HASHES  ?= 2000000
 OFFICIAL ?= /media/miku6/kubuntu_2404/home/miku/DOWN/pyani/anubis/web/static/wasm
 
-all: hashx_jit.wasm demo/hashx_jit.wasm
+all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm
 
 hashx_jit.wat: $(REPO)/tools/gen_hashx_wat.py $(REPO)/beyond/vectors/hx_vectors.hex
 	python3 $(REPO)/tools/gen_hashx_wat.py --out wasm/hashx_jit.wat
@@ -20,14 +20,35 @@ hashx_jit.wasm: hashx_jit.wat
 demo/hashx_jit.wasm: hashx_jit.wasm
 	cp hashx_jit.wasm demo/hashx_jit.wasm
 
+argon2_fill.wat: $(REPO)/tools/gen_argon2_wat.py
+	python3 $(REPO)/tools/gen_argon2_wat.py --out wasm/argon2_fill.wat
+
+argon2_fill.wasm: argon2_fill.wat
+	wat2wasm argon2_fill.wat -o argon2_fill.wasm
+	@ls -l argon2_fill.wasm
+
+# the fill_block vectors come from compiling the vendored C reference itself
+fill_vectors.txt: ref_fill_vectors.c
+	cc -O1 -pthread -I$(REPO)/third_party/argon2 -I$(REPO)/third_party/argon2/blake2 \
+	   -o /tmp/fillref ref_fill_vectors.c \
+	   $(REPO)/third_party/argon2/blake2/blake2b.c $(REPO)/third_party/argon2/thread.c
+	/tmp/fillref > fill_vectors.txt
+
+vectors: fill_vectors.txt
+
+a2i: all
+	node verify-a2i.mjs
+	node bench-a2i.mjs
+
 bench: all
 	node bench.mjs --hashes $(HASHES) --official $(OFFICIAL)
+	node verify.mjs
 
 serve: all
 	@echo "demo: http://127.0.0.1:8933/demo/"
 	python3 -m http.server 8933 --bind 127.0.0.1
 
 clean:
-	rm -f hashx_jit.wasm hashx_jit.wat demo/hashx_jit.wasm
+	rm -f hashx_jit.wasm hashx_jit.wat demo/hashx_jit.wasm argon2_fill.wasm argon2_fill.wat
 
-.PHONY: all bench serve clean
+.PHONY: all bench a2i vectors serve clean

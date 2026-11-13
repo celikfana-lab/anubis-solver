@@ -147,6 +147,12 @@ make serve                # http://127.0.0.1:8933/demo/ — the browser demo
 The demo solves the challenge with each engine, reports hashes/s, and shows
 whether the official module finds the same nonce and digest as ours.
 
+The same trick applied to **Argon2id** is a negative result worth having: the fill
+core ported to scalar WAT is bit-exact against the C reference but **3.5–4.5×
+slower** than the official module, because Argon2id has no interpreter to remove
+and a vectorising compiler beats hand-emitted wasm at a numeric kernel. See
+[`wasm/README.md`](wasm/README.md).
+
 ### Configuration: `make config`
 
 Before building, ask the machine what it is:

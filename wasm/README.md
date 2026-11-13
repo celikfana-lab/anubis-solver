@@ -54,6 +54,47 @@ Three independent implementations — our C engine, our compiled WAT and Anubis'
 Rust module — produce the same digest for the same nonce. That is the strongest
 verification available here, and it is the demo page's centrepiece.
 
+## Argon2id: the same trick, and why it does not work
+
+HashX's win came from removing an **interpreter**. Argon2id has no interpreter to
+remove — it is a tight numeric kernel over 38,912 blocks of memory — so the
+question worth asking is whether hand-written WAT beats an optimising compiler at
+a numeric kernel. It does not.
+
+`tools/gen_argon2_wat.py` emits the reference `fill_block` (8 column rounds + 8
+row rounds of BlaMka, fully unrolled, 16 words per round in wasm locals).
+`wasm/verify-a2i.mjs` checks it against vectors produced by **compiling the
+vendored C reference** — bit-exact on all three trials:
+
+```
+  ok   trial 0 (with_xor=0): 128/128 words identical to the C reference
+  ok   trial 1 (with_xor=1): 128/128 words identical to the C reference
+  ok   trial 2 (with_xor=1): 128/128 words identical to the C reference
+```
+
+`node wasm/bench-a2i.mjs` then measures it (m=19456 KiB, t=2 → 38,912 blocks per
+hash; H0 and H' are under 0.1% of the work, so a per-block rate converts directly):
+
+| | per block | whole hash | |
+|---|---:|---:|---|
+| WAT `fill_block` (scalar) | 7.99 µs | 3.2 hashes/s equivalent | |
+| official baseline | 2.25 µs | ~11 hashes/s | **3.5× faster** |
+| official simd128 | 1.79 µs | ~14 hashes/s | **4.5× faster** |
+
+**So the answer is no.** A scalar hand-emitted port loses to LLVM by 3.5–4.5×: the
+kernel is ~3,000 64-bit multiply-heavy instructions per block, and the Rust build
+gets SIMD (`simd128`, two 64-bit lanes per operation), better scheduling and
+fewer round trips to memory. Hand-written WAT has none of those.
+
+That is worth stating plainly, because it is where the HashX result came from: the
+19.9× and the 6× were **interpreter removal**, not hand-optimisation. Where there
+is no interpreter, there is nothing to win — and a person writing wasm by hand is
+not going to out-schedule a compiler.
+
+What *would* help Argon2id in wasm is the same thing that helps it anywhere: use
+the `simd128` module, keep the block in registers across all 16 rounds, and let a
+vectorising compiler do it. That is exactly what the official module already does.
+
 ## The demo
 
 ```bash
@@ -86,6 +127,9 @@ because `fetch()` is used for the modules.
 | `verify.mjs` | cross-implementation correctness check (exit status is CI-usable) |
 | `demo/index.html`, `demo/app.js` | the browser demo |
 | `demo/official/` | the two official modules, copied verbatim (see its README) |
+| `argon2_fill.wat`, `argon2_fill.wasm` | the Argon2id fill core, generated |
+| `verify-a2i.mjs`, `bench-a2i.mjs` | its correctness check and benchmark |
+| `ref_fill_vectors.c`, `fill_vectors.txt` | vectors from the vendored C reference |
 
 `make` regenerates the WAT and the wasm; `make bench`, `make serve`, `make clean`.
 

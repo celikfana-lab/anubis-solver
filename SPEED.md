@@ -395,7 +395,7 @@ measured, the clock is assumed. No static timing analysis has been run, so
 | Simulator | Icarus Verilog 12.0 (function), Verilator 5.020 (single-hash speed) |
 | Machine | 56-core Xeon, Ubuntu 24.04 |
 | Run | `make -C chip remote-sim`, `make -C chip remote-mpipe`, 2026-11-12 |
-| Raw data | [`results/chip-throughput-2026-11-12.json`](results/chip-throughput-2026-11-12.json) |
+| Raw data | [`results/chip-throughput-2026-11-12.json`](results/chip-throughput-2026-11-12.json), [`results/chip-fill-writeback-2026-11-12.json`](results/chip-fill-writeback-2026-11-12.json), [`results/hbm3e-x8-2026-11-12.json`](results/hbm3e-x8-2026-11-12.json) |
 
 ### One engine
 
@@ -437,36 +437,86 @@ link saturates at ~30 engines instead of 59: half the die for the same
 ### Scaling Argon2id: engines vs HBM3
 
 The question for Argon2id is never the datapath, it is whether memory keeps
-the engines fed. `chip/rtl/argon2/argon2_mpipe.v` carries N engines with two
+the engines fed. `chip/rtl/argon2/argon2_mpipe.v` carries N engines with K
 hashes each against `chip/rtl/mem/hbm3_model.v` (819 B/cycle, 350-cycle
 latency, byte-credit admission). `fill_block` is a 133-cycle counter there, so
 this measures arbitration, occupancy and latency hiding.
 
-At 1 GHz against one HBM3 stack, 118 hashes in flight at 59 engines:
+A block costs `max(133, 350 / K)` engine cycles, because each hash in flight has
+exactly one outstanding request. Two contexts per engine therefore floor at 175
+cycles and three reach the datapath's 133:
 
-| engines | in flight | link | hashes/s @ 1 GHz | cycles/engine/block |
+| engines | contexts | link | hashes/s @ 1 GHz | cycles/engine/block |
 |---:|---:|---:|---:|---:|
-| 24 | 48 | 331 / 819 GB/s | 2,074 | 297 |
-| 48 | 96 | 662 / 819 GB/s | 4,151 | 297 |
-| **59** | **118** | **813 / 819 GB/s** | **5,090** | 298 |
-| 64 | 128 | 819 / 819 GB/s | 5,870 | 280 |
-| 96 | 192 | 819 / 819 GB/s | 5,881 | 420 (33 idle) |
+| 40 | 2 | 809.5 / 819 GB/s | 5,813 | 176.8 |
+| 59 | 2 | 819 / 819 GB/s | 5,888 | 257.5 |
 
-59 engines is where the link runs out. 64 buys another 15% because the model
-still costs ~37 cycles of request-grant latency per block that a design with
-per-engine request queues would not have; 96 adds 0.2% and wastes 33 engines.
+40 engines is where one stack runs out: 819 B/cycle is 0.229 blocks/cycle at
+3,584 B per block, times 175 cycles per block. 59 buys nothing more, it just
+sits idle — the write-back did not raise this ceiling, it lowered the engine
+count that reaches it.
 
-One caveat moves this more than any other. A random 1 KiB Argon2 block costs a
-DRAM row activate, so the link does not achieve its headline bandwidth:
+One caveat moves the ceiling more than any other. A random 1 KiB Argon2 block
+costs a DRAM row activate, so the link does not achieve its headline bandwidth:
 
-| engines | link efficiency | hashes/s @ 1 GHz |
+| link efficiency | effective link | ceiling @ 1 GHz |
 |---:|---:|---:|
-| 59 | 100% (ideal) | 5,090 |
-| 59 | 75% (realistic) | **4,406** |
-| 59 | 50% (pessimistic) | 2,935 |
+| 100% (ideal) | 819 GB/s | 5,888 |
+| 75% (realistic) | 614 GB/s | 4,406 |
+| 50% (pessimistic) | 409 GB/s | 2,935 |
 
-So the honest range for a 59-engine, 1 GHz, single-HBM3 design is **4.4–5.1 k
-Argon2id hashes/s**.
+So the honest range for a 1 GHz, single-HBM3 design is **4.4–5.9 k Argon2id
+hashes/s**, and it is the memory that decides it, not the engines.
+
+### Eight HBM3e stacks
+
+HBM3e is 9.6 Gb/s/pin on a 1024-bit bus: 1,228.8 GB/s per stack, so eight of
+them are 9.82 TB/s. `chip/rtl/mem/hbm3e_mem.v` is that subsystem — eight
+instances of the same per-stack link model (byte-credit admission and the
+350-cycle pipeline, unchanged) behind a router that sends
+`stack = block % 8`. Only the *selected* stack can backpressure a request; a
+shared ready would serialise eight independent links behind the slowest one.
+
+| | measured |
+|---|---|
+| per stack | 1,228.0 B/cycle ×8 |
+| aggregate | **9,824 B/cycle = 9.82 TB/s** at 1 GHz |
+| balance | 12.50% per stack |
+| integrity | 0 responses reordered, 0 lost, 0 overflow |
+
+**The wall is the request port, not the DRAM.** One request per cycle at
+Argon2's 3,584-byte average block is 3,584 B/cycle, so a single-port design
+uses 36% of the memory it paid for. Measured, with everything else wide open:
+
+| request lanes | offered | used | hashes/s @ 1 GHz |
+|---:|---:|---:|---:|
+| 1 | 3,584 B/cycle | 3,575 (36%) | 25,699 |
+| **3** | 10,752 B/cycle | **9,801 (99.8%)** | **70,282** |
+
+Three lanes are enough because 9,824 / 3,584 = 2.74 requests per cycle fill the
+memory. Lanes are per-engine (`lane = engine % 3`), each with its own rotating
+arbiter, and responses stay id-tagged through a compaction network: at most one
+response per stack per cycle, so three lanes can never lose one and the design
+needs no queue at all.
+
+And contexts, not engines, are what hide the latency — `max(133, 350/K)`:
+
+| contexts | cycles/engine/block | engines to fill 9.82 TB/s |
+|---:|---:|---:|
+| 1 | 387 | ~1,060 |
+| 2 | 176.5 | 484 |
+| **3** | **133** (the datapath) | **365** |
+
+The last third of the engine count is bought with DRAM (19 MiB of extra hash in
+flight) rather than silicon, which is the cheapest trade in this document. The
+measured 365-engine point:
+
+| engines | in flight | memory | hashes/s @ 1 GHz | cycles/engine/block |
+|---:|---:|---:|---:|---:|
+| 177 | 354 | 3,575 / 9,824 (36%) | 25,699 | port-bound |
+| 365 | 1,095 | 9,801 / 9,824 (99.8%) | **70,282** | 133 |
+
+That is 11.9× the single-HBM3 design and 40× the measured 2× T4 pair.
 
 ### Against the GPUs
 
@@ -474,21 +524,28 @@ Argon2id hashes/s**.
 |---|---:|---:|
 | 1 CPU thread (i7-1260P) | 73 | 8.8 M |
 | 2× Tesla T4 (measured) | 1,759 | 108.5 M |
-| 100 chip engines @ 1 GHz + HBM3 | **5,090** (59 engines) | 188 M |
+| 59 chip engines @ 1 GHz + HBM3 | 5,888 | 188 M (100 engines) |
+| 365 chip engines @ 1 GHz + 8× HBM3e | **70,282** | — |
 | RTX 4090 (estimate, bandwidth-bound) | ~7,000 | — |
 | H100 (estimate, bandwidth-bound) | ~20,000 | — |
 
-Argon2id: the 59-engine design beats the 2× T4 pair by **2.9×** and loses to a
-4090 by ~1.4× — it has become a pure DRAM-bandwidth contest at that point, and
-a single HBM3 stack (819 GB/s) buys less bandwidth than a 4090 (1,008 GB/s).
+Argon2id: one HBM3 stack beats the 2× T4 pair by **3.4×** and roughly matches a
+4090 — it is a pure DRAM-bandwidth contest at that point, and 819 GB/s buys about
+what a 4090's 1,008 GB/s buys. Eight HBM3e stacks change the character of the
+argument: 70,282 hashes/s is 40× the T4 pair and 3.5× a (bandwidth-extrapolated)
+H100, because 9.82 TB/s is more bandwidth than any single GPU has.
 HashX: 100 engines beat the T4 pair by 1.7×, which is the one place custom
 silicon genuinely wins, because the core has no memory to wait on.
 
 ### Caveats
 
-- **The memory is the machine.** 59 engines are ~11 M generic yosys cells
-  (2–4 mm² at 12 nm); the HBM stack and its PHY that feed them cost far more
-  than the logic does. That is Argon2id working as designed.
+- **The memory is the machine.** 40 engines are ~7.5 M generic yosys cells and
+  already saturate one HBM3 stack; the stack and its PHY cost far more than the
+  logic does. The eight-stack design needs 365 engines (~68 M cells, and 8 PHYs)
+  to use its 9.82 TB/s. That is Argon2id working as designed.
+- **The eight-stack number depends on K=3.** At two contexts per engine the
+  floor is 175 cycles/block and the same 9.82 TB/s needs 484 engines instead of
+  365, for the same 70,282 hashes/s. Nothing else in the design changes.
 - **Area, not throughput, is where a core is big.** `argon2_fill` synthesises
   to 186,594 generic cells against `sha256_core`'s 8,477 and `hashx_exec`'s
   58,654 — roughly 10× a CUDA core, because it holds a 128 × 64-bit block and

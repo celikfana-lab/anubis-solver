@@ -49,7 +49,7 @@ TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
 
   .PHONY: all sim $(TBS) run-all pow argon blake2b stream hprime h0 addr index engine \
         hashx solve solve-hashx mpipe vectors vl64 vlreal synth area clean \
-        sync
+        sync hbm3e-capacity hbm3e-mpipe
 .DEFAULT_GOAL := all
 
 all: sim
@@ -164,9 +164,52 @@ $(B)/tb_mpipe: tb/tb_mpipe.v rtl/argon2/argon2_mpipe.v rtl/mem/hbm3_model.v | $(
 mpipe: $(B)/tb_mpipe
 	$(V) $(B)/tb_mpipe
 
+# ---- HBM3e x8 --------------------------------------------------------------
+# Eight HBM3e stacks behind rtl/mem/hbm3e_mem.v: 1228 B/cycle per stack
+# (1228.8 at 1 GHz rounded down 0.07%) => 9824 B/cycle = 9.82 TB/s aggregate.
+# `hbm3e-capacity` measures the subsystem alone (and the client-port limit);
+# `hbm3e-mpipe` is the engine sweep. Deliberately not in TBS/sim: these are
+# architecture studies, and the sweep rebuilds per engine count.
+HBM3E     := rtl/mem/hbm3e_mem.v rtl/mem/hbm3_model.v
+HBM3E_BW  ?= 1228
+HBM3E_LAT ?= 350
+HBM3E_EFF ?= 100
+MP_NENG   ?= 236
+MP_KCTX   ?= 2
+MP_CYC    ?= 260
+MP_NSTACK ?= 8
+MP_NPORT  ?= 1
+MP_NRESP  ?= 1
+MP_TARGET ?= 10000
+MP_WARMUP ?= 500
+
+$(B)/tb_hbm3e_capacity: tb/tb_hbm3e_x8.v $(HBM3E) | $(B)
+	$(IVERILOG) -g2012 -s tb_hbm3e_capacity \
+	  -Ptb_hbm3e_capacity.BW=$(HBM3E_BW) -Ptb_hbm3e_capacity.LAT=$(HBM3E_LAT) \
+	  -Ptb_hbm3e_capacity.EFF=$(HBM3E_EFF) -o $@ tb/tb_hbm3e_x8.v $(HBM3E)
+
+$(B)/tb_hbm3e_mpipe: tb/tb_hbm3e_x8.v $(HBM3E) rtl/argon2/argon2_mpipe.v | $(B)
+	$(IVERILOG) -g2012 -s tb_hbm3e_mpipe \
+	  -Ptb_hbm3e_mpipe.NENG=$(MP_NENG) -Ptb_hbm3e_mpipe.KCTX=$(MP_KCTX) \
+	  -Ptb_hbm3e_mpipe.CYC_BLOCK=$(MP_CYC) -Ptb_hbm3e_mpipe.NSTACK=$(MP_NSTACK) \
+	  -Ptb_hbm3e_mpipe.BW=$(HBM3E_BW) -Ptb_hbm3e_mpipe.LAT=$(HBM3E_LAT) \
+	  -Ptb_hbm3e_mpipe.EFF=$(HBM3E_EFF) \
+	  -Ptb_hbm3e_mpipe.NPORT=$(MP_NPORT) -Ptb_hbm3e_mpipe.NRESP=$(MP_NRESP) \
+	  -Ptb_hbm3e_mpipe.TARGET=$(MP_TARGET) -Ptb_hbm3e_mpipe.WARMUP=$(MP_WARMUP) \
+	  -o $@ tb/tb_hbm3e_x8.v $(HBM3E) rtl/argon2/argon2_mpipe.v
+
+hbm3e-capacity: $(B)/tb_hbm3e_capacity
+	$(V) $(B)/tb_hbm3e_capacity
+
+# sweep: rebuild per point with e.g.
+#   make -B hbm3e-mpipe MP_NENG=236 MP_CYC=260 MP_NSTACK=8
+hbm3e-mpipe: $(B)/tb_hbm3e_mpipe
+	$(V) $(B)/tb_hbm3e_mpipe
+
 # ---- Verilator ------------------------------------------------------------
 # Compiling the RTL to C++ is ~1000x faster than Icarus here: 0.17 s instead of
-# 174 s for 19 nonces, and 3.9 s instead of ~36 min for one real hash.
+# 174 s for 19 nonces, and 2.2 s instead of ~18 min for one real hash (the
+# write-back change that halved cycles/hash also halved this).
 # the C++ file must be absolute: Verilator's generated makefile runs inside the
 # Mdir and otherwise cannot find a nested source path
 SIM_MAIN := $(abspath sim/sim_main.cpp)

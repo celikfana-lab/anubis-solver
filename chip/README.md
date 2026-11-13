@@ -306,6 +306,7 @@ Two modules answer "what if" without building silicon:
 |---|---|
 | `rtl/argon2/argon2_mpipe.v` | NENG engines, each carrying KCTX hashes, sharing one link. `fill_block` is a 133-cycle counter, so what it measures is whether the memory system keeps the engines busy |
 | `rtl/mem/hbm3_model.v` | the link: 819 B/cycle, configurable latency, in-order service, byte accounting |
+| `rtl/mem/hbm3e_mem.v` | eight HBM3e stacks: 8 x 1,228 B/cycle = 9.82 TB/s, routed by `block % 8`, with N request lanes and a response compaction network |
 
 ```bash
 make mpipe        # 24 engines x 2 contexts vs HBM3, ~1 minute of Icarus
@@ -344,6 +345,42 @@ For scale: the 2x Tesla T4 measured elsewhere in this repo do 1759 Argon2id
 hashes/s, so this configuration is ~1.35x faster than the pair - and still
 ~3x behind an estimate for an RTX 4090, because at 24 engines it is a DRAM
 bandwidth contest.
+
+## Scaling further: eight HBM3e stacks
+
+One HBM3 stack runs out at ~40 engines. `rtl/mem/hbm3e_mem.v` replaces it with
+eight HBM3e stacks (9.6 Gb/s/pin x 1024 bits = 1,228.8 GB/s each, 9.82 TB/s
+total), reusing the same per-stack link model behind a router that sends
+`stack = block % 8`. Only the selected stack can backpressure a request.
+
+```bash
+make hbm3e-capacity   # 8 links alone, and the one-port limit
+make hbm3e-mpipe MP_NENG=365 MP_KCTX=3 MP_NPORT=3 MP_NRESP=3 MP_CYC=133
+```
+
+```
+per-stack B/cycle: 1228.0 x8
+aggregate: 9824.0 B/cycle = 9824 GB/s at 1 GHz
+MPIPE NENG=365 KCTX=3 CYC=133 ... bpc=9801.52 (99.8% of 9824) reqport=2.740
+```
+
+Two things are easy to get wrong and both were:
+
+* **The request port, not the DRAM, is the wall.** At most one request per cycle
+  at Argon2's 3,584-byte average block is 3,584 B/cycle, so a single-port design
+  uses 36% of the memory it paid for (measured: 3,575 B/cycle, 25,699 hashes/s,
+  flat from 177 engines upward). Three lanes reach 9,801 B/cycle and 70,282
+  hashes/s. A lane is per engine (`engine % 3`) with its own rotating arbiter.
+* **`ready` must not depend on `valid`.** Gating the memory's ready on the
+  requester's valid deadlocks any master that waits for ready first — it produced
+  0 B/cycle with 2,000 of 2,000 requests "accepted". The per-stack lane pointer
+  also has to be reset, or the request path is X and every stack quietly rejects
+  everything while ready still reads high.
+
+Contexts, not engines, hide the latency: a block costs `max(133, 350/K)` engine
+cycles, so K=2 floors at 175 and K=3 reaches the datapath's 133. Filling 9.82 TB/s
+therefore needs 484 engines at K=2 but only 365 at K=3 — the difference is DRAM,
+not silicon.
 
 ## Notes / next steps
 

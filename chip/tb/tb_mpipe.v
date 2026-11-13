@@ -5,12 +5,16 @@ module tb_mpipe;
     parameter integer NENG  = 24;
     parameter integer KCTX  = 2;
     parameter integer CLOCK = 1_000_000_000;   // Hz
-    parameter integer IDW   = 6;               // context id width
+    // NCTX has to exist before IDW: argon2_mpipe keeps the request id in
+    // gsel[IDW-1:0], so a fixed IDW=6 silently starved every context above 63
+    // as soon as NENG*KCTX > 64 (i.e. above 32 engines). Deriving it from NCTX
+    // keeps `-Ptb_mpipe.NENG=59` honest without a manual override, and the
+    // parameter can still be overridden explicitly.
+    localparam integer NCTX = NENG*KCTX;
+    parameter integer IDW   = (NCTX < 2) ? 1 : $clog2(NCTX);
     parameter integer EFF   = 100;             // HBM3 link efficiency, %
     parameter integer WARMUP = 480;            // blocks before measuring
     parameter integer TARGET = 4800;           // blocks measured in steady state
-
-    localparam integer NCTX = NENG*KCTX;
 
     reg clk = 0, rst_n = 0, start = 0;
     wire [31:0] blocks_done;

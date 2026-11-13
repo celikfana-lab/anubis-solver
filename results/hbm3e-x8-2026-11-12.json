@@ -1,0 +1,555 @@
+{
+  "title": "Eight HBM3e stacks (1228 B/cycle each) against the Argon2id memory architecture",
+  "date": "2026-11-12",
+  "status": "measured in RTL simulation; analytic figures separated below",
+  "rtl": {
+    "wrapper": "chip/rtl/mem/hbm3e_mem.v (8 x hbm3_model #(.BW(1228), .LAT(350), .EFF(EFF), .IDW(IDW)))",
+    "engine": "chip/rtl/argon2/argon2_mpipe.v (one new output: mem_req_blk = nxt[gsel])",
+    "testbench": "chip/tb/tb_hbm3e_x8.v (tb_hbm3e_capacity, tb_hbm3e_mpipe)"
+  },
+  "sim": {
+    "simulator": "Icarus Verilog 12.0",
+    "host": "airobots@192.168.1.15, 56 cores, Ubuntu 24.04",
+    "clock": "1 GHz equivalent (1 ns timescale, B/cycle == GB/s)",
+    "commands": [
+      "make -C chip sync",
+      "ssh airobots@192.168.1.15 'cd ~/anubis-solver/chip && make -B hbm3e-capacity'",
+      "ssh airobots@192.168.1.15 'cd ~/anubis-solver/chip && make -B B=build/<tag> hbm3e-mpipe MP_NENG=N MP_CYC=C MP_NSTACK=S MP_TARGET=10000'",
+      "python3 chip/tools/perf_model.py"
+    ],
+    "window_cycles": 10000,
+    "warmup": "blocks_done >= 500 and cycles >= 3000"
+  },
+  "spec": {
+    "hbm3e_per_stack": "9.6 Gb/s/pin x 1024 bit / 8 = 1228.8 GB/s = 1228.8 B/cycle at 1 GHz",
+    "bw_integer_used": 1228,
+    "bw_conservatism_pct": 0.07,
+    "nstack": 8,
+    "aggregate_bpc": 9824,
+    "aggregate_TBps": 9.824,
+    "latency_cycles": 350,
+    "efficiency_pct": 100,
+    "blocks_per_hash": 38912,
+    "bytes_per_block_pass0": 3072,
+    "bytes_per_block_pass1": 4096,
+    "bytes_per_block_avg": 3584,
+    "bytes_per_hash": 139460608,
+    "pyhsical_note": "8 x 16 GiB = 128 GiB of stacks, but Argon2id m=19456 KiB needs only 19 MiB resident: the stacks are bought for bandwidth, not capacity"
+  },
+  "measured_capacity": {
+    "description": "tb_hbm3e_capacity, eight hbm3e_mem #(NSTACK=1) instances, one always-ready 4096 B request stream each, 1024 cycles (exactly 307 requests per link)",
+    "windows_cycles": 1024,
+    "per_stack_bpc": [
+      1228.0,
+      1228.0,
+      1228.0,
+      1228.0,
+      1228.0,
+      1228.0,
+      1228.0,
+      1228.0
+    ],
+    "aggregate_bpc": 9824.0,
+    "aggregate_GBps": 9824,
+    "requests": 2456,
+    "bytes": 10059776,
+    "responses": 2456,
+    "id_or_order_errors": 0,
+    "result": "PASS: all 8 links run at 1228 B/cycle independently; aggregate 9824 B/cycle"
+  },
+  "measured_router": {
+    "description": "tb_hbm3e_capacity, one hbm3e_mem #(NSTACK=8), single request port, blk++ on every accept, 1024 cycles",
+    "aggregate_bpc": 4096.0,
+    "aggregate_GBps": 4096,
+    "requests_per_cycle": 1.0,
+    "per_stack_share_pct": [
+      12.5,
+      12.5,
+      12.5,
+      12.5,
+      12.5,
+      12.5,
+      12.5,
+      12.5
+    ],
+    "response_collisions": 0,
+    "id_gaps": 0,
+    "responses_in_flight": 0,
+    "independence_test": {
+      "stack0_drained_selected_stack_busy": 1,
+      "unrelated_stack3_ready": 1,
+      "result": "PASS: req_ready is the selected stack's ready only, an unrelated busy stack cannot stall a request"
+    },
+    "result": "PASS: merged responses intact, 12.50% per stack",
+    "port_limit_note": "4096 B/cycle is the single request port (one 4096 B request per cycle), not the memory: only 42% of the 9824 B/cycle of stacks are used"
+  },
+  "measured_sweep": {
+    "dut": "argon2_mpipe (KCTX=2, IDW=clog2(NENG*KCTX)) -> hbm3e_mem -> 8 x hbm3_model #(BW=1228, LAT=350, EFF=100)",
+    "columns": [
+      "neng",
+      "kctx",
+      "cyc_block",
+      "nstack",
+      "cycles_per_block",
+      "cycles_per_engine_per_block",
+      "bpc",
+      "gbs_1ghz",
+      "hashes_per_s_1ghz",
+      "requests_per_cycle"
+    ],
+    "rows": [
+      [
+        59,
+        2,
+        260,
+        8,
+        4.314,
+        254.5,
+        831.2,
+        831.2,
+        5957,
+        0.232
+      ],
+      [
+        118,
+        2,
+        260,
+        8,
+        2.542,
+        299.9,
+        1630.0,
+        1630.0,
+        10110,
+        0.457
+      ],
+      [
+        236,
+        2,
+        260,
+        8,
+        1.109,
+        261.6,
+        3229.5,
+        3229.5,
+        23180,
+        0.902
+      ],
+      [
+        260,
+        2,
+        260,
+        8,
+        1.002,
+        260.5,
+        3576.5,
+        3576.5,
+        25650,
+        0.998
+      ],
+      [
+        472,
+        2,
+        260,
+        8,
+        1.0,
+        472.0,
+        3578.1,
+        3578.1,
+        25699,
+        1.0
+      ],
+      [
+        713,
+        2,
+        260,
+        8,
+        1.0,
+        713.0,
+        3577.3,
+        3577.3,
+        25699,
+        1.0
+      ],
+      [
+        59,
+        2,
+        133,
+        8,
+        3.027,
+        178.6,
+        1181.3,
+        1181.3,
+        8491,
+        0.33
+      ],
+      [
+        118,
+        2,
+        133,
+        8,
+        1.498,
+        176.7,
+        2394.1,
+        2394.1,
+        17159,
+        0.668
+      ],
+      [
+        177,
+        2,
+        133,
+        8,
+        1.0,
+        177.0,
+        3581.5,
+        3581.5,
+        25699,
+        1.0
+      ],
+      [
+        236,
+        2,
+        133,
+        8,
+        1.0,
+        236.0,
+        3577.6,
+        3577.6,
+        25699,
+        1.0
+      ],
+      [
+        365,
+        2,
+        133,
+        8,
+        1.0,
+        365.0,
+        3577.9,
+        3577.9,
+        25699,
+        1.0
+      ],
+      [
+        472,
+        2,
+        133,
+        8,
+        1.0,
+        472.0,
+        3578.1,
+        3578.1,
+        25699,
+        1.0
+      ],
+      [
+        236,
+        2,
+        260,
+        1,
+        2.899,
+        684.3,
+        1227.9,
+        1227.9,
+        8864,
+        0.342
+      ],
+      [
+        472,
+        2,
+        260,
+        1,
+        2.959,
+        1396.9,
+        1227.9,
+        1227.9,
+        8684,
+        0.343
+      ]
+    ],
+    "per_stack_share_pct": {
+      "n59_c260": [
+        12.49,
+        12.53,
+        12.54,
+        12.55,
+        12.52,
+        12.48,
+        12.43,
+        12.46
+      ],
+      "n118_c260": [
+        12.95,
+        11.44,
+        12.66,
+        12.96,
+        12.96,
+        11.44,
+        12.63,
+        12.95
+      ],
+      "n236_c260": [
+        13.08,
+        11.92,
+        13.08,
+        11.93,
+        13.08,
+        11.92,
+        13.08,
+        11.91
+      ],
+      "n260_c260": [
+        12.94,
+        12.06,
+        12.94,
+        12.07,
+        12.94,
+        12.06,
+        12.94,
+        12.06
+      ],
+      "n472_c260": [
+        12.5,
+        12.5,
+        12.51,
+        12.5,
+        12.49,
+        12.49,
+        12.5,
+        12.5
+      ],
+      "n713_c260": [
+        12.49,
+        12.5,
+        12.5,
+        12.5,
+        12.5,
+        12.5,
+        12.5,
+        12.51
+      ],
+      "n59_c133": [
+        12.48,
+        12.47,
+        12.47,
+        12.49,
+        12.52,
+        12.53,
+        12.53,
+        12.51
+      ],
+      "n118_c133": [
+        12.93,
+        12.35,
+        12.35,
+        12.35,
+        12.96,
+        12.35,
+        12.35,
+        12.35
+      ],
+      "n177_c133": [
+        12.51,
+        12.5,
+        12.5,
+        12.51,
+        12.49,
+        12.5,
+        12.5,
+        12.49
+      ],
+      "n236_c133": [
+        12.63,
+        12.36,
+        12.63,
+        12.37,
+        12.64,
+        12.37,
+        12.63,
+        12.37
+      ],
+      "n365_c133": [
+        12.5,
+        12.5,
+        12.49,
+        12.5,
+        12.5,
+        12.51,
+        12.5,
+        12.5
+      ],
+      "n472_c133": [
+        12.5,
+        12.5,
+        12.51,
+        12.5,
+        12.49,
+        12.49,
+        12.5,
+        12.5
+      ]
+    },
+    "responses_lost": 0
+  },
+  "measured_extras": {
+    "long_run_236_c260_60000cyc": {
+      "cycles_per_block": 1.105,
+      "cycles_per_engine_per_block": 260.7,
+      "bpc": 3242.7,
+      "hashes_per_s": 23265,
+      "per_stack_share_pct": [
+        12.6,
+        12.4,
+        12.6,
+        12.4,
+        12.6,
+        12.4,
+        12.6,
+        12.4
+      ],
+      "note": "the 13.08/11.92 split at 10k cycles relaxes to 12.60/12.40 over 60k cycles: the router is even, the mpipe traffic is not (all context start offsets are even multiples of BPH/NCTX = 82)"
+    },
+    "kctx1_latency_floor": [
+      {
+        "neng": 118,
+        "kctx": 1,
+        "cyc_block": 133,
+        "cycles_per_engine_per_block": 387.5,
+        "bpc": 1172.7,
+        "hashes_per_s": 7825
+      },
+      {
+        "neng": 118,
+        "kctx": 1,
+        "cyc_block": 260,
+        "cycles_per_engine_per_block": 369.4,
+        "bpc": 1172.7,
+        "hashes_per_s": 8208
+      }
+    ],
+    "kctx3": [
+      {
+        "neng": 118,
+        "kctx": 3,
+        "cyc_block": 133,
+        "cycles_per_engine_per_block": 176.5,
+        "bpc": 2394.1,
+        "hashes_per_s": 17180
+      },
+      {
+        "neng": 133,
+        "kctx": 3,
+        "cyc_block": 133,
+        "cycles_per_engine_per_block": 176.7,
+        "bpc": 2694.5,
+        "hashes_per_s": 19346
+      }
+    ]
+  },
+  "analytic": {
+    "description": "closed-form only, no simulation",
+    "aggregate_bpc": 9824,
+    "bytes_per_hash": 139460608,
+    "hash_ceiling_1ghz": 70443,
+    "blocks_per_cycle_to_fill": 2.741,
+    "engines_to_fill_formula": "9824 B/cycle / 3584 B/block * cycles/block",
+    "engines_to_fill_at_133": 365,
+    "engines_to_fill_at_260": 713,
+    "request_lanes_to_fill": 2.741,
+    "single_port_ceiling_bpc": 3584,
+    "single_port_ceiling_hashes_per_s": 25699,
+    "single_stack_ceiling_bpc": 1228,
+    "single_stack_ceiling_hashes_per_s": 8804
+  },
+  "findings": [
+    "The eight links are real: measured 1228.0 B/cycle each and 9824.0 B/cycle aggregate, 0.0% error against the analytic 9824 (one request port per stack).",
+    "The single request port is the wall, not the DRAM: 8 stacks reach only 3578 B/cycle (36% of 9.82 TB/s) and plateau at 25699 hashes/s because argon2_mpipe can present at most one 3-4 KiB request per cycle (3584 B/cycle average).",
+    "8 stacks vs 1 stack at 236 engines / CYC_BLOCK=260: 3229.5 vs 1227.9 B/cycle (2.63x); at the plateau 25699 vs 8864 hashes/s (2.90x). Not 8x.",
+    "CYC_BLOCK=133 (the landed write-back): with KCTX=2 the engine costs 176.5-178.6 cycles/block, not 133, because one outstanding 350-cycle request per context cannot be hidden by 2x133 cycles of compute. The knee moves 260 -> 177 engines (measured exactly 1.000 blocks/cycle at 177), not to 365, and hashes/s stay 25699 (port-bound).",
+    "The write-back therefore lowers the engine count needed and leaves the throughput ceiling where the request port puts it; turning it into throughput needs >= 3 request lanes (2.741 needed, 3 gives the 70443 hashes/s link ceiling).",
+    "Per-stack load balance is exact (12.50% each) when the port is saturated; mpipe traffic shows 12.60/12.40 (even/odd stacks) on a 60 s window because argon2_mpipe starts context c at c*(BPH/NCTX)=82c, an even block, biasing block parity.",
+    "Existing-model caveat: argon2_mpipe stores the request id in gsel[IDW-1:0]; the checked-in tb_mpipe leaves IDW=6, which is correct only up to 64 contexts (32 engines). Measured at NENG=59: 410.6 B/cycle with IDW=6 vs 811.7 B/cycle with IDW=8 (matches the 813 B/cycle in SPEED.md). This study derives IDW = clog2(NENG*KCTX)."
+  ],
+  "multi_lane_request_ports": {
+    "why": "one request per cycle x 3584 B is 3584 B/cycle, so a single-port design uses 36% of 9.82 TB/s",
+    "rtl": "argon2_mpipe NPORT/NRESP (lane = engine % NPORT) + hbm3e_mem NPORT/NRESP with a response compaction network",
+    "lanes_isolated_test": {
+      "how": "3 lanes always asserted, 4096 B each, 2000 cycles, block index incremented per lane",
+      "measured_bpc": 9793.5,
+      "measured_GBps": 9794,
+      "per_stack_bpc": [
+        1224,
+        1226,
+        1224,
+        1224,
+        1224,
+        1222,
+        1222,
+        1222
+      ],
+      "response_overflow": 0,
+      "note": "99.7% of 9824; the 0.3% is startup, since the first requests cannot return before LAT=350"
+    },
+    "mpipe_8_stacks": [
+      {
+        "neng": 177,
+        "kctx": 2,
+        "nport": 1,
+        "bpc": 3574.8,
+        "pct_of_9824": 36.4,
+        "hashes_per_s": 25699,
+        "cycles_per_engine_block": 177.0,
+        "note": "request-port bound: 1.000 blocks/cycle exactly"
+      },
+      {
+        "neng": 365,
+        "kctx": 3,
+        "nport": 3,
+        "bpc": 9801.52,
+        "pct_of_9824": 99.8,
+        "hashes_per_s_derived": 70282,
+        "requests_per_cycle": 2.74,
+        "per_stack_share_pct": [
+          12.5,
+          12.5,
+          12.49,
+          12.5,
+          12.5,
+          12.5,
+          12.5,
+          12.5
+        ],
+        "response_overflow": 0,
+        "collisions_absorbed": 12189
+      }
+    ],
+    "single_stack_hbm3_baseline_cyc133": [
+      {
+        "neng": 40,
+        "bw": 819,
+        "bpc": 809.5,
+        "hashes_per_s": 5813,
+        "cycles_per_engine_block": 176.8,
+        "note": "link-bound at 40 engines, i.e. 819/3584 x 175"
+      },
+      {
+        "neng": 59,
+        "bw": 819,
+        "bpc": 819.0,
+        "hashes_per_s": 5888,
+        "cycles_per_engine_block": 257.5
+      }
+    ],
+    "ratio_8_stacks_vs_1": 11.9
+  },
+  "bugs_found_and_fixed_after_the_first_report": [
+    "hbm3e_mem's per-stack lane round-robin pointer was never reset, so the lane select was X, every stack rejected every request, yet req_ready read high: 0 B/cycle with 2000/2000 requests 'accepted'",
+    "hbm3e_mem's response queue gated req_ready on req_valid, which deadlocks any master that waits for ready first (the capacity testbench does exactly that forever)",
+    "the 32-deep response FIFO was replaced by a compaction network: with at most one response per stack per cycle and NRESP >= NSTACK nothing can be lost, so no queue is needed",
+    "the testbench did not pass NPORT/NRESP to hbm3e_mem, so both defaulted to 1 and the multi-lane buses were silently truncated"
+  ],
+  "known_limitations": [
+    "argon2_mpipe's blocks_done increments by one per cycle even when several contexts finish together, so its cycles/block and hashes/s read low above one block per cycle. The published hashes/s figures are derived from measured bytes/cycle (/3584 B per block / 38912 blocks) instead, which is why the table quotes bytes first.",
+    "the 484-engine / KCTX=2 point reached only 1592 B/cycle (0.44 blocks/cycle) instead of the ~9800 the latency model predicts; unexplained, so it is not quoted as a result. KCTX=3 with 365 engines reaches 99.8% of the link and is the configuration reported."
+  ]
+}

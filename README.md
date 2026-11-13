@@ -1,5 +1,8 @@
 # anubis-solver
 
+<img src="mascot/anti-anti-ai.png" alt="anubis-solver mascot" width="200">
+
+
 A C proof-of-work engine with a Python face, for solving
 [TecharoHQ/anubis](https://github.com/TecharoHQ/anubis) challenges. It does the
 same flow a browser does — fetch the challenge page, compute the proof-of-work,

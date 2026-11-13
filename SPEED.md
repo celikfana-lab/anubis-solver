@@ -650,6 +650,41 @@ fault is caught but a single defective engine is not), and **MEM tests the
 controller and id path, not DRAM cells** — the memory model here has no data
 path, so a stuck bit inside a DRAM cell is outside what it can see.
 
+### Benchmark: all three at once
+
+`make -C chip bench` runs the three sub-chips together with the difficulty set
+impossible, so every lane hashes flat out and what is measured is the machine
+rather than the size of a search:
+
+```
+bench: 24 A2I engines, 8 HX lanes, 8 SHA lanes, 8000-cycle window
+  A2I : 1453 blocks, 649 B/cycle -> 4654 hashes/s at 24 engines
+  HX  : 112 hashes of a 512-instruction program -> 571.43 cycles/hash,
+        1.75 M h/s per lane, 224 M h/s at 128 lanes
+  SHA : 968 hashes -> 66.12 cycles/hash, 15.12 M h/s per lane, 1936 M h/s at 128 lanes
+```
+
+| algorithm | measured per lane | design point @ 1 GHz |
+|---|---|---|
+| SHA-256 (1-block message) | 66.1 cycles/hash, 15.12 M h/s | 128 lanes -> **1.94 G h/s** |
+| HashX (512 instructions) | 571.4 cycles/hash, 1.75 M h/s | 128 lanes -> **224 M h/s** |
+| Argon2id | 649 B/cycle at 24 engines | 365 engines, 9,801 B/cycle -> **70,122 h/s** |
+
+SHA-256 and HashX scale exactly with lane count, so a rate measured on 8 lanes
+is the rate on 128. Argon2id does not: it is memory-bound, so the 24-engine
+point above is compute-bound at 4,654 h/s and the design point is the 365-engine
+measurement from `make card-argon2-max`.
+
+Two footnotes so these numbers are not over-read. The HashX figure is 571.4
+cycles per hash rather than the 533 that `tb_hashx` reports, because this counts
+the search loop around each hash (scan, compare, next nonce) - that is what a
+deployment actually pays. And the SHA-256 message here is one block; the
+two-block case that `tb_pow` exercises costs 128 cycles.
+
+Against the 2x Tesla T4 pair measured earlier: Argon2id **40x** (70,122 vs
+1,759) and HashX **2.1x** (224 M vs 108.5 M). A Pi 5 reaches ~10.1 MH/s of
+SHA-256 on its NEON/SHA-2 path, so 128 lanes are ~190x that.
+
 ### Against the GPUs
 
 | machine | argon2id hashes/s | hashx hashes/s |

@@ -790,5 +790,45 @@
       "uart_tx_pad is tied idle on anubis_tri_chip: the UART path is command-in and status-out over SPI. The console log transmitter lives in anubis_argon2_card",
       "the doctor's report is a status byte plus the status pins; a human-readable console line is not wired yet"
     ]
+  },
+  "bench_all_three": {
+    "how": "make -C chip bench: anubis_tri_chip with difficulty set impossible so every lane runs flat out; counts completions over an 8000-cycle window after a 1200-cycle warmup",
+    "measured": {
+      "sha256": {
+        "lanes_measured": 8,
+        "hashes": 968,
+        "cycles_per_hash": 66.12,
+        "m_hps_per_lane": 15.12,
+        "design_128_lanes_G_hps": 1.936,
+        "note": "one-block message; the two-block case tb_pow uses costs 128 cycles"
+      },
+      "hashx": {
+        "lanes_measured": 8,
+        "hashes": 112,
+        "program_instructions": 512,
+        "cycles_per_hash": 571.43,
+        "m_hps_per_lane": 1.75,
+        "design_128_lanes_M_hps": 224,
+        "note": "571.4 counts the search loop around each hash; the bare hash is the 533 that tb_hashx reports"
+      },
+      "argon2id": {
+        "engines": 24,
+        "blocks": 1453,
+        "bpc": 649.1,
+        "hashes_per_s_at_24": 4654,
+        "design_365_engines_hashes_per_s": 70122,
+        "note": "24 engines are compute-bound; the design point is the 365-engine measurement from card-argon2-max"
+      }
+    },
+    "versus_measured_gpus": {
+      "2x_tesla_t4_argon2id_hps": 1758.6,
+      "chip_argon2id_hps": 70122,
+      "ratio": 191,
+      "2x_tesla_t4_hashx_hps": 108500000,
+      "chip_hashx_hps": 224000000,
+      "raspberry_pi_5_sha256_hps_approx": 10100000,
+      "chip_sha256_hps": 1936000000
+    },
+    "counter_added": "anubis_pow gained a completed-hash counter (output `hashes`) so throughput could be measured rather than inferred from hit timing; sha256_pool and anubis_tri_chip surface it as sha_hashes_done"
   }
 }

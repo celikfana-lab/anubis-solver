@@ -34,11 +34,13 @@ module sha256_pool #(
     output wire         found,
     output wire [31:0]  found_nonce,
     output wire [255:0] found_digest,
-    output wire         busy
+    output wire         busy,
+    output wire [31:0]  hashes_done
 );
     wire [NSHA-1:0] lane_found, lane_busy;
     wire [NSHA*32-1:0]  lane_nonce;
     wire [NSHA*256-1:0] lane_digest;
+    wire [NSHA*32-1:0]  lane_hashes;
 
     genvar g;
     generate
@@ -52,7 +54,8 @@ module sha256_pool #(
                 .nonce_start(nonce_base + LSTART),
                 .busy(lane_busy[g]), .found(lane_found[g]),
                 .found_nonce(lane_nonce[g*32 +: 32]),
-                .found_digest(lane_digest[g*256 +: 256]));
+                .found_digest(lane_digest[g*256 +: 256]),
+                .hashes(lane_hashes[g*32 +: 32]));
         end
     endgenerate
 
@@ -70,4 +73,15 @@ module sha256_pool #(
 
     assign found_nonce  = lane_nonce[win*32 +: 32];
     assign found_digest = lane_digest[win*256 +: 256];
+
+    function [31:0] sum_hashes;
+        input [NSHA*32-1:0] v;
+        integer i;
+        begin
+            sum_hashes = 32'd0;
+            for (i = 0; i < NSHA; i = i + 1) sum_hashes = sum_hashes + v[i*32 +: 32];
+        end
+    endfunction
+
+    assign hashes_done = sum_hashes(lane_hashes);
 endmodule

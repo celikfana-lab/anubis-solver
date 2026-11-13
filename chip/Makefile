@@ -69,7 +69,7 @@ TBS := tb_sha256 tb_pow tb_lpddr6 tb_argon2_fill tb_blake2b tb_blake2b_stream \
   .PHONY: all sim $(TBS) run-all pow argon blake2b stream hprime h0 addr index engine \
         hashx solve solve-hashx mpipe vectors vl64 vlreal synth area clean \
         sync hbm3e-capacity hbm3e-mpipe card-argon2 card-argon2-max tri-chip \
-        spi spi-all doctor tri-chip-cmd
+        spi spi-all doctor tri-chip-cmd bench
 .DEFAULT_GOAL := all
 
 all: sim
@@ -293,6 +293,18 @@ $(B)/tb_tri_chip_cmd: tb/tb_tri_chip_cmd.v $(TRI) | $(B)
 
 tri-chip-cmd: $(B)/tb_tri_chip_cmd
 	$(V) $(B)/tb_tri_chip_cmd
+
+# ---- the three-algorithm benchmark ---------------------------------------
+BENCH_ENG ?= 24
+BENCH_HX  ?= 8
+BENCH_SHA ?= 8
+
+$(B)/tb_bench: tb/tb_bench.v $(TRI) | $(B)
+	$(IVERILOG) -g2012 -Ptb_bench.NENG=$(BENCH_ENG) -Ptb_bench.NHX=$(BENCH_HX) \
+	  -Ptb_bench.NSHA=$(BENCH_SHA) -o $@ tb/tb_bench.v $(TRI)
+
+bench: $(B)/tb_bench
+	$(V) $(B)/tb_bench
 
 # ---- Verilator ------------------------------------------------------------
 # Compiling the RTL to C++ is ~1000x faster than Icarus here: 0.17 s instead of

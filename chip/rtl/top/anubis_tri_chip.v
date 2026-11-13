@@ -84,6 +84,7 @@ module anubis_tri_chip #(
     output wire [31:0]  sha_found_nonce,
     output wire [255:0] sha_found_digest,
     output wire         sha_busy,
+    output wire [31:0]  sha_hashes_done,
 
     // ---- serial host interface: a Pi (SPI/QSPI) or an ESP32 (OSPI) --------
     input  wire         spi_sclk,
@@ -238,5 +239,6 @@ module anubis_tri_chip #(
         .nonce_le(sha_nonce_le), .difficulty(sha_difficulty),
         .nonce_base(sha_nonce_base),
         .found(sha_found), .found_nonce(sha_found_nonce),
-        .found_digest(sha_found_digest), .busy(sha_busy));
+        .found_digest(sha_found_digest), .busy(sha_busy),
+        .hashes_done(sha_hashes_done));
 endmodule

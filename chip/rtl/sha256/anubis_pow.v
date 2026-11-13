@@ -20,7 +20,8 @@ module anubis_pow (
     output reg          busy,
     output reg          found,
     output reg  [31:0]  found_nonce,
-    output reg  [255:0] found_digest
+    output reg  [255:0] found_digest,
+    output reg  [31:0]  hashes          // hashes completed since start
 );
     reg [31:0] nonce;
     reg        phase;   // 0: block0, 1: block1
@@ -72,9 +73,11 @@ module anubis_pow (
             nonce        <= 32'b0;
             found_nonce  <= 32'b0;
             found_digest <= 256'b0;
+            hashes       <= 32'd0;
         end else begin
             core_start <= 1'b0;
             if (start && !found) begin
+                hashes <= 32'd0;
                 nonce  <= nonce_start;
                 phase  <= 1'b0;
                 busy   <= 1'b1;
@@ -88,12 +91,14 @@ module anubis_pow (
                     waiting <= 1'b1;
                     core_start <= 1'b1;
                 end else if (ok_bits(core_digest, difficulty)) begin
+                    hashes       <= hashes + 32'd1;
                     found        <= 1'b1;
                     found_nonce  <= nonce;
                     found_digest <= core_digest;
                     running      <= 1'b0;
                     busy         <= 1'b0;
                 end else begin
+                    hashes <= hashes + 32'd1;
                     nonce <= nonce + 32'd1;
                     phase <= 1'b0;
                     waiting <= 1'b1;

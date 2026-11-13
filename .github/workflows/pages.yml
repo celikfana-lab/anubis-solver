@@ -48,13 +48,16 @@ jobs:
           # the repository root would 404 every one of them
           python3 -m http.server 8090 --bind 127.0.0.1 --directory web >/dev/null 2>&1 &
           sleep 1
-          node web/check-layout.mjs --width 390;  rc1=$?
-          node web/check-layout.mjs --width 1280; rc2=$?
-          if [ "$rc1" -eq 2 ] || [ "$rc2" -eq 2 ]; then
-            echo "::warning::headless Chrome could not start on this runner; layout check skipped"
+          # Actions runs this with `bash -e`, so a bare `node ...; rc=$?` exits
+          # before the assignment: capture with `||` instead.
+          rc=0
+          node web/check-layout.mjs --width 390  || rc=$?
+          node web/check-layout.mjs --width 1280 || rc=$?
+          if [ "$rc" -eq 2 ]; then
+            echo "::warning::headless Chrome could not be driven on this runner; layout check skipped"
             exit 0
           fi
-          [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ]
+          exit "$rc"
 
       - uses: actions/configure-pages@v5
 

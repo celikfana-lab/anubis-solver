@@ -78,6 +78,7 @@ const chrome = spawn(CHROME, [
   '--disable-extensions',
   '--disable-dev-shm-usage',
   `--user-data-dir=${profile}`,
+  '--remote-debugging-address=127.0.0.1',
   `--remote-debugging-port=${PORT}`,
   `--window-size=${WIDTH},${HEIGHT}`,
   'about:blank',

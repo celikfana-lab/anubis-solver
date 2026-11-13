@@ -3100,3 +3100,9 @@
     // hit: a real kernel claims a slot with an atomic and sends nonce+digest
         mov (8|M0)  null.0<1>:ud  r20.0<8;8,1>:ud                      // results[slot] = W0
 miss:
+
+    // end of thread: a thread that never sends EOT never retires, and the
+
+    // dispatch faults with CL_OUT_OF_RESOURCES instead of returning
+        mov (8|M0)  r127.0<1>:ud  0x00000000:ud                          // message header
+(W)     send.ts (1|M0)  null  r127  null  0x0  0x02000010  {EOT}          // end of thread

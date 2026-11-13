@@ -348,6 +348,12 @@ def build(base_nonce: int) -> Emitter:
     e.raw("        mov (8|M0)  null.0<1>:ud  r20.0<8;8,1>:ud             "
           "         // results[slot] = W0")
     e.lines.append("miss:")
+    e.banner("end of thread: a thread that never sends EOT never retires, and the")
+    e.banner("dispatch faults with CL_OUT_OF_RESOURCES instead of returning")
+    e.raw("        mov (8|M0)  r127.0<1>:ud  0x00000000:ud                          "
+          "// message header")
+    e.raw("(W)     send.ts (1|M0)  null  r127  null  0x0  0x02000010  {EOT}          "
+          "// end of thread")
 
     return e
 

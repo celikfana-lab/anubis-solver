@@ -37,6 +37,7 @@ cd wasm && make verify-jit                 # the runtime HashX compiler, 63 chec
 cd web  && make check                      # the site: links, anchors, layout
 webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see webgpu/README.md)
 gcc -O2 -o /tmp/clrun tools/xe-sha256-opencl.c -lOpenCL && /tmp/clrun   # SHA-256 on Intel Xe, needs intel-opencl-icd
+make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the hand-written Xe listing
 ```
 
 ## Layout

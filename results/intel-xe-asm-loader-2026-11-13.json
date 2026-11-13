@@ -1,0 +1,28 @@
+{
+ "title": "Hand-written Intel Xe assembly executed on the GPU through a Zebin splice",
+ "date": "2026-11-13",
+ "loader": "build/xe-loader (tools/xe_load.c, make xe-loader)",
+ "method": "compile a reference kernel with IGC, keep its zebin metadata, append the IGA-assembled listing, repoint .text.sha256_pow at it, clCreateProgramWithBinary",
+ "patch": {
+  "section": ".text.sha256_pow",
+  "ref_bytes": 20544,
+  "patched_bytes": 45536
+ },
+ "kernel": {
+  "instructions": 2846,
+  "source": "src/intel/xe/intelXe_sha256.xe"
+ },
+ "ran": true,
+ "dispatch": {
+  "nonces": 65536,
+  "reps": 2
+ },
+ "observed_mhps": 155.1,
+ "igc_same_dispatch_mhps": 50.5,
+ "results_buffer": {
+  "total": 0,
+  "note": "expected: this listing has no result store"
+ },
+ "first_attempt": "faulted with CL_OUT_OF_RESOURCES because a gen kernel must end with an end-of-thread send; adding send.ts ... {EOT} fixed it, which is also the evidence that our instructions are what executes",
+ "caveat": "not a race. The listing ignores base and count, runs 8 lanes and stores nothing; IGC's kernel reads arguments, runs 16 lanes and writes digests. This run proves execution, not speed."
+}

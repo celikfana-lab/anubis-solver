@@ -129,5 +129,25 @@ test: $(LIB)
 shader:
 	bash tools/build_shader.sh
 
+# Intel Xe assembly loader: patches a listing assembled by IGA into an IGC Zebin
+# and loads it through OpenCL, which is the only way to execute hand-written gen
+# instructions on this machine (Vulkan and OpenCL both take SPIR-V otherwise).
+# Opt-in, because it is a research tool, not part of the library.
+#
+#   make xe-loader
+#   build/xe-loader --text /tmp/ours.krn --count 65536
+#
+# Needs OpenCL headers; the driver is loaded at runtime.
+XE_CL_HDR ?= $(wildcard /usr/include/CL/cl.h)
+.PHONY: xe-loader
+xe-loader: | $(BUILD)
+ifneq ($(XE_CL_HDR),)
+	$(CC) -O2 -DCL_TARGET_OPENCL_VERSION=300 -o $(BUILD)/xe-loader tools/xe_load.c -lOpenCL
+	@echo "built $(BUILD)/xe-loader"
+else
+	@echo "xe-loader needs OpenCL headers: apt install ocl-icd-opencl-dev opencl-headers"
+	@false
+endif
+
 clean:
 	rm -rf $(BUILD) $(LIB)

@@ -90,10 +90,13 @@ test('execute solves a real Anubis challenge and render shows it', async () => {
   assert.ok(value.challenge !== null, 'expected a challenge to have been solved');
 
   const c = value.challenge;
-  assert.ok(['fast', 'slow', 'sha256', 'argon2id', 'hashx'].includes(c.algorithm), `algorithm ${c.algorithm}`);
+  assert.ok(
+    ['fast', 'slow', 'sha256', 'argon2id', 'hashx', 'metarefresh'].includes(c.algorithm),
+    `algorithm ${c.algorithm}`,
+  );
   assert.ok(Number.isInteger(c.difficulty) && c.difficulty > 0);
-  assert.ok(Number.isInteger(c.nonce) && c.nonce >= 0);
-  assert.match(c.response, /^[0-9a-f]{64}$/);
+  if (c.algorithm !== 'metarefresh') assert.ok(Number.isInteger(c.nonce) && c.nonce >= 0);
+  if (c.algorithm !== 'metarefresh') assert.match(c.response, /^[0-9a-f]{64}$/);
   assert.ok(c.elapsedMs >= 0);
 
   assert.equal(value.stillChallenged, false, 'the returned body must not still be the challenge page');
@@ -104,11 +107,25 @@ test('execute solves a real Anubis challenge and render shows it', async () => {
   assert.equal(blocks.length, 1);
   assert.equal(blocks[0].type, 'text');
   assert.match(blocks[0].text, /untrusted/i);
-  assert.match(blocks[0].text, new RegExp(`Anubis challenge solved locally: ${c.algorithm}`));
+  // metarefresh is "passed", the PoW algorithms are "solved"
+  assert.match(blocks[0].text, new RegExp(`Anubis challenge (solved|passed) locally: ${c.algorithm}`));
+  assert.doesNotMatch(blocks[0].text, /undefined/);
   assert.ok(blocks[0].text.includes(value.content.slice(0, 80)));
 
   console.log(`    solved ${c.algorithm}/${c.difficulty}: nonce ${c.nonce} in ${c.elapsedMs} ms, ` +
               `${value.content.length} chars of "${value.title}"`);
+});
+
+test('engine "js" solves without ever touching the Python driver', async () => {
+  const { ctx, registered } = stubContext();
+  // a repo with the JS engine but no .py driver at all: if this passes, the
+  // Python path was never taken
+  apply(ctx, { repo: REPO, engine: 'js', python: '/nonexistent/python' });
+  const tool = registered[0].definition;
+  const value = await tool.execute({ url: 'https://anubis.techaro.lol/', maxChars: 2000 }, {});
+  assert.equal(value.statusCode, 200);
+  assert.ok(value.challenge !== null);
+  assert.ok(value.content.length > 50);
 });
 
 test('a missing driver is reported, not swallowed', async () => {

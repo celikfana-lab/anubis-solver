@@ -18,21 +18,28 @@ Weigh the soul of incoming HTTP requests to protect your website!
 ## How it works
 
 ```
-model ──anubis_fetch(url)──► plugin ──spawn──► tools/anubis_fetch.py
-                                                      │
-                                              AnubisClient (repo root)
-                                                      │
-                                       GET → challenge → libanubis_solver.so
-                                                      │          (C engine)
-                                       pass-challenge → cookie → GET → page
+model ──anubis_fetch(url)──► plugin ──► tools/anubis_fetch.js   (default)
+                                   │      crypto + fetch, no Python
+                                   └──► tools/anubis_fetch.py   (fallback)
+                                          AnubisClient → libanubis_solver.so
 ```
 
-The plugin does not reimplement the protocol. It runs `tools/anubis_fetch.py`,
-which is the same `AnubisClient` the Python library exposes, so every algorithm
-the engine supports works — `fast`, `slow`, `sha256`, `argon2id` and `hashx` — and
-the challenge parsing lives in the one place that is already tested. The proof of
-work is done by `libanubis_solver.so` (the C core, or its GPU backends if
-configured), not by JavaScript.
+**Two engines, and the default needs nothing but Node.**
+
+`tools/anubis_fetch.js` is a pure-Node implementation: `node:crypto` for the proof
+of work, the built-in `fetch` for HTTP, and a cookie jar of its own. No Python, no
+native library, no child process, no npm packages. It handles `fast`, `slow`,
+`sha256` and `metarefresh`.
+
+`tools/anubis_fetch.py` is the original driver, and it is still the way to reach
+`argon2id` and `hashx`, which are memory-hard or VM-based and are not implemented
+in JS. The plugin uses it only when the challenge names one of those and the file
+is present.
+
+The JS proof of work was checked against the C engine rather than trusted: for the
+same challenge both find the same nonce and produce the same digest, and the C
+engine accepts the JS nonce — including the little-endian edge case for challenges
+whose last byte is >= 0x80.
 
 Returns a JSON value matching the tool's declared schema: `url`, `finalUrl`,
 `statusCode`, `title`, `challenge` (algorithm, difficulty, nonce, response,
@@ -61,15 +68,17 @@ It appears as an entry with id `anubis-fetch`. Uninstall with
 
 | key | default | meaning |
 |---|---|---|
-| `repo` | this checkout | where `tools/anubis_fetch.py` lives |
-| `python` | `python3` | interpreter to run the driver |
+| `repo` | this checkout | where `tools/anubis_fetch.js` lives |
+| `engine` | `auto` | `auto` = JS, Python only for argon2id/hashx; `js` = never spawn; `python` = always use the driver |
+| `python` | `python3` | interpreter for the fallback driver |
 | `timeoutMs` | `60000` | tool timeout; the driver gets 5 s less |
 | `maxChars` | `100000` | default body cap (the tool also accepts `maxChars`) |
 | `threads` | library default | solver worker threads |
 | `impersonate` | off | `chrome` / `firefox` / `safari` via curl_cffi, for deployments that weigh JA3/JA4H |
 
-Requirements: `python3` with `requests`, and the library built at the repo root
-(`make`). `impersonate` additionally needs `curl_cffi`.
+Requirements for the default engine: **Node 20+ and nothing else**. Only the
+argon2id/hashx fallback needs `python3` with `requests` and the library built at the
+repo root (`make`); `impersonate` additionally needs `curl_cffi`.
 
 ## Test
 
@@ -106,3 +115,20 @@ object is enough: `register()` requires `name`, `parameters` as JSON Schema,
 `output.schema` plus `output.render(args, value)`, and an optional positive
 `timeoutMs`. `export const inject = ['tools', 'systemPrompt']` states the services
 the plugin needs.
+
+## The metarefresh discovery
+
+`anubis.techaro.lol` serves `metarefresh` (a redirect proof, no maths) as often as
+`sha256`. When the page carries a `<meta http-equiv="refresh">` the plugin follows
+it. When it does **not** - the deployment's own JS builds the call instead - the
+plugin synthesises it from the same parameters `main.mjs` uses, and there is one
+that matters:
+
+```
+pass-challenge?challenge=<randomData>&id=<id>&redir=<url>&elapsedTime=<ms>
+               ^^^^^^^^^^^^^^^^^^^ omitting this is a 403, every time
+```
+
+That was found by probing the live endpoint: without `challenge=` every delay from
+1.6 s to 2.4 s returned 403, and with it 12/12 attempts passed at every delay. The
+delay itself is not what the server checks here.

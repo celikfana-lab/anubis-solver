@@ -185,7 +185,8 @@ bindings/r/              R bindings (.Call shim)
 bindings/java/           Java bindings (JNI, no jars)
 bindings/asm/            assembly macros + demos (x86-64 and AArch64)
 dsh-plugin/              DSH tool: anubis_fetch, a web_fetch for Anubis pages
-tools/anubis_fetch.py    the fetch driver the plugin calls
+tools/anubis_fetch.js    the fetch driver the plugin uses (pure Node)
+tools/anubis_fetch.py    the same driver via the Python client (argon2id/hashx)
 tools/                   kernel generators, build scripts, benchmarks
 results/                 raw benchmark JSON
 ```

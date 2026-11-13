@@ -19,6 +19,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export const name = 'anubis-fetch';
 
@@ -93,6 +94,31 @@ function runDriver({ python, repo, url, maxChars, threads, timeoutS, impersonate
   });
 }
 
+/**
+ * The pure-JS engine (repo/tools/anubis_fetch.js), loaded once per repo and
+ * cached. Keyed by repo rather than a single slot: two plugins pointing at
+ * different checkouts must not share one engine, and a cache that ignored the
+ * path made a missing driver look present in the tests.
+ */
+const jsEngines = new Map();
+
+function loadJsEngine(repo) {
+  let promise = jsEngines.get(repo);
+  if (promise === undefined) {
+    const file = join(repo, 'tools', 'anubis_fetch.js');
+    promise = existsSync(file)
+      ? import(pathToFileURL(file).href).catch(() => null)
+      : Promise.resolve(null);
+    jsEngines.set(repo, promise);
+  }
+  return promise;
+}
+
+/** The Python driver is only needed for argon2id/hashx now. */
+function hasPythonDriver(repo) {
+  return existsSync(join(repo, 'tools', 'anubis_fetch.py'));
+}
+
 /** Trim the challenge object to the fields the schema declares. */
 function shapeChallenge(challenge) {
   if (!challenge || typeof challenge !== 'object') return null;
@@ -111,11 +137,13 @@ function formatResult(value) {
 
   if (value.challenge) {
     const c = value.challenge;
-    lines.push(
-      `Anubis challenge solved locally: ${c.algorithm} difficulty ${c.difficulty} ` +
-        `nonce ${c.nonce} in ${c.elapsedMs} ms` +
-        (c.rounds > 1 ? ` (${c.rounds} rounds)` : ''),
-    );
+    // metarefresh is a redirect proof, so it has no nonce to report
+    const what = c.algorithm === 'metarefresh' ? 'passed' : 'solved';
+    const bits = [`${c.algorithm} difficulty ${c.difficulty}`];
+    if (c.nonce !== null && c.nonce !== undefined) bits.push(`nonce ${c.nonce}`);
+    if (c.elapsedMs !== null && c.elapsedMs !== undefined) bits.push(`${c.elapsedMs} ms`);
+    if (c.rounds > 1) bits.push(`${c.rounds} rounds`);
+    lines.push(`Anubis challenge ${what} locally: ${bits.join(', ')}`);
   } else {
     lines.push('No Anubis challenge was served (the page was reachable directly).');
   }
@@ -142,6 +170,8 @@ export function apply(ctx, config = {}) {
   const python = config.python ?? 'python3';
   const timeoutMs = config.timeoutMs ?? 60000;
   const maxChars = config.maxChars ?? 100000;
+  // 'auto' = pure-JS engine, falling back to the Python driver for argon2id/hashx;
+  // 'js' or 'python' pin one. The JS engine needs no Python and no child process.
 
   // Prompt sections are ordered by a plain number; sit just after web_fetch so the
   // guidance about untrusted page content reads next to the other web tools.
@@ -231,6 +261,37 @@ export function apply(ctx, config = {}) {
           throw new Error(`anubis_fetch needs an http(s) URL, got ${JSON.stringify(url)}`);
         }
         const limit = Number.isInteger(args.maxChars) && args.maxChars > 0 ? args.maxChars : maxChars;
+        const engine = config.engine ?? 'auto';
+
+        // Prefer the dependency-free JS engine: no child process, and the proof of
+        // work is done in-process. It covers fast, slow, sha256 and metarefresh.
+        if (engine !== 'python') {
+          const js = await loadJsEngine(repo);
+          if (js !== null) {
+            try {
+              const result = await js.anubisFetch(url, {
+                maxChars: limit,
+                timeoutMs,
+                signal: exec?.signal,
+              });
+              return {
+                url: result.url ?? url,
+                finalUrl: result.finalUrl ?? url,
+                statusCode: Number(result.statusCode ?? 0),
+                title: String(result.title ?? ''),
+                content: String(result.content ?? ''),
+                truncated: Boolean(result.truncated),
+                stillChallenged: Boolean(result.stillChallenged),
+                challenge: shapeChallenge(result.challenge),
+              };
+            } catch (err) {
+              // argon2id / hashx need the C engine, which the Python driver runs.
+              const canFallBack =
+                err?.name === 'UnsupportedAlgorithmError' && engine === 'auto' && hasPythonDriver(repo);
+              if (!canFallBack) throw err;
+            }
+          }
+        }
 
         const result = await runDriver({
           python,

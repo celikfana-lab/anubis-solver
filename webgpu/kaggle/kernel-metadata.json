@@ -1,0 +1,14 @@
+{
+  "id": "monktelv31/anubis-webgpu-on-nvidia",
+  "title": "anubis webgpu on nvidia",
+  "code_file": "run.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "keywords": [],
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

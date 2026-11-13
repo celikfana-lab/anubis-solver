@@ -103,7 +103,25 @@ Three machines, four configurations, and the digests do not agree:
 | Intel Iris Xe, Vulkan (`gen-12lp`) | **wrong** | **exact (4/4)** | the fast one, and the broken one for HashX only |
 | SwiftShader, this laptop | exact | **exact** | CPU emulator |
 | SwiftShader, Xeon 56c / 64 GB box | **exact 8/8** | — | CPU emulator; wasm there does 5.99 M |
+| SwiftShader, 2x Tesla T4 host (Kaggle) | **exact** | **exact** | Chromium 158, Python 3.13; wasm does 5.25 M there |
 | AMD FirePro V3800 | exact | — | ran on SwiftShader: that card has no Vulkan to run on |
+
+Two of those rows are machines whose GPU cannot be reached at all, and the reason
+is the same in both cases: a Vulkan-capable driver. The Kaggle row is the clearest
+example - two Tesla T4s with CUDA 13.0 work fine (`nvidia-smi` lists them), but the
+container has no graphics userspace:
+
+```
+/usr/share/vulkan/icd.d/           does not exist
+libGLX_nvidia.so*                  not present; only libGLX_mesa.so.0
+vulkaninfo --summary               "Found no drivers!", ERROR_INCOMPATIBLE_DRIVER
+```
+
+The Vulkan ICD is part of NVIDIA's *graphics* driver, and CUDA-only images install
+only the compute half; `nvidia-container-toolkit` mounts the graphics libraries
+only when `NVIDIA_DRIVER_CAPABILITIES` includes them, which a Kaggle kernel cannot
+change from inside. So a T4 on Kaggle is unreachable from a browser, and the tests
+there run on SwiftShader. The same caveat applies to most hosted notebooks.
 
 The fourth row is worth explaining, because it is the one people ask about. The
 FirePro V3800 is a 2010 Terascale 2 part with 512 MB: Mesa drives it with the

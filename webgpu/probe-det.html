@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HashX on WebGPU — does the wrong answer depend on the dispatch?</title>
+<style>
+  body { font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; background: #111; color: #ddd; margin: 2rem; max-width: 70rem; }
+  h1 { font-size: 1.15rem; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  td, th { border: 1px solid #444; padding: 3px 9px; text-align: left; }
+  th { color: #9cf; font-weight: 600; }
+  .ok { color: #6f6; } .bad { color: #f88; } .muted { color: #888; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Does the Intel HashX miscompile depend on the dispatch shape?</h1>
+<p class="muted">
+  One shader, one nonce, several dispatch sizes. A nonce is computed with 1, 2&hellip;8 active
+  invocations in the workgroup, and once more with the nonce sitting at invocation index
+  <em>n</em> instead of 0. If any of those disagree with each other, the wrong answer is not
+  a property of the arithmetic alone &mdash; it depends on how the work was scheduled. If they
+  all agree and all differ from WebAssembly, it is arithmetic-level and a smaller reproducer
+  can be extracted from the shader.
+</p>
+<table id="t">
+  <thead><tr><th>nonce</th><th>WebAssembly</th><th>count=1 (index 0)</th><th>count=8 (index 0)</th><th>index n, count n+1</th></tr></thead>
+  <tbody></tbody>
+</table>
+<pre id="log"></pre>
+<script type="module">
+const WGSL_URL = './hashx.wgsl';
+const WASM_URL = '../wasm/hashx_jit.wasm';
+const GROUPS = 64;                 // must match @workgroup_size in the shader
+const NONCES = [0, 1, 2, 3, 7];
+
+const log = (m) => { document.getElementById('log').textContent += m + '\n'; };
+const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+const digestHex = (words) => {
+  const bytes = new Uint8Array(32), dv = new DataView(bytes.buffer);
+  for (let i = 0; i < 4; i++) {
+    dv.setUint32(8 * i, words[2 * i] >>> 0, true);
+    dv.setUint32(8 * i + 4, words[2 * i + 1] >>> 0, true);
+  }
+  return hex(bytes);
+};
+
+/* ---------------- reference ---------------- */
+const wasmBytes = await (await fetch(WASM_URL)).arrayBuffer();
+const { instance: wasm } = await WebAssembly.instantiate(wasmBytes, {});
+const wx = wasm.exports;
+const wasmDigest = (nonce) => {
+  wx.hash(BigInt(nonce));
+  return hex(new Uint8Array(wx.memory.buffer, 0, 32));
+};
+
+/* ---------------- GPU ---------------- */
+if (!navigator.gpu) { log('no navigator.gpu'); window.__result = { ok: false, error: 'no WebGPU' }; }
+const adapter = await navigator.gpu.requestAdapter();
+const device = await adapter.requestDevice();
+const info = adapter.info ?? {};
+log(`adapter ${info.vendor}/${info.architecture} — ${info.description ?? ''}`);
+
+const code = await (await fetch(WGSL_URL)).text();
+const module = device.createShaderModule({ code, label: 'hashx' });
+const ci = await module.getCompilationInfo();
+for (const m of ci.messages.filter((m) => m.type === 'error')) log(`shader error line ${m.lineNum}: ${m.message}`);
+
+const paramsBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+const resultsSize = 16 + 8 * 4 + 64 * 4;
+const resultsBuf = device.createBuffer({
+  size: resultsSize,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+});
+const readBuf = device.createBuffer({ size: resultsSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+const bind = device.createBindGroup({
+  layout: pipeline.getBindGroupLayout(0),
+  entries: [
+    { binding: 0, resource: { buffer: paramsBuf } },
+    { binding: 1, resource: { buffer: resultsBuf } },
+  ],
+});
+
+// difficulty 0, so every invocation is a hit and writes a digest; slots are
+// claimed by atomicAdd, so hits are matched back by their own nonce, not by order.
+async function run(base, count) {
+  device.queue.writeBuffer(resultsBuf, 0, new Uint32Array(resultsSize / 4));
+  device.queue.writeBuffer(paramsBuf, 0, new Uint32Array([0, 0, base >>> 0, count >>> 0]));
+  const enc = device.createCommandEncoder();
+  const pass = enc.beginComputePass();
+  pass.setPipeline(pipeline);
+  pass.setBindGroup(0, bind);
+  pass.dispatchWorkgroups(Math.ceil(count / GROUPS));
+  pass.end();
+  device.queue.submit([enc.finish()]);
+  await device.queue.onSubmittedWorkDone();
+
+  const enc2 = device.createCommandEncoder();
+  enc2.copyBufferToBuffer(resultsBuf, 0, readBuf, 0, resultsSize);
+  device.queue.submit([enc2.finish()]);
+  await readBuf.mapAsync(GPUMapMode.READ);
+  const u32 = new Uint32Array(readBuf.getMappedRange().slice(0));
+  readBuf.unmap();
+
+  const total = u32[0], byNonce = new Map();
+  for (let s = 0; s < Math.min(8, total); s++) {
+    byNonce.set(u32[4 + s], digestHex(Array.from(u32.slice(12 + s * 8, 12 + s * 8 + 8))));
+  }
+  return { total, byNonce };
+}
+
+const rows = [];
+const tb = document.querySelector('#t tbody');
+for (const n of NONCES) {
+  const ref = wasmDigest(n);
+  // The nonce at invocation index 0, with 1..8 invocations active in the group.
+  const alone = (await run(n, 1)).byNonce.get(n) ?? 'not captured';
+  const eight = (await run(n, 8)).byNonce.get(n) ?? 'not captured';
+  // The same nonce at index n, so index 0 belongs to a different nonce.
+  const atIndex = (await run(0, n + 1)).byNonce.get(n) ?? 'not captured';
+  rows.push({ nonce: n, ref, alone, eight, atIndex });
+
+  const cell = (v) => `<span class="${v === ref ? 'ok' : 'bad'}">${v === ref ? 'match' : v}</span>`;
+  tb.insertAdjacentHTML('beforeend',
+    `<tr><td>${n}</td><td class="muted">${ref}</td><td>${cell(alone)}</td>` +
+    `<td>${cell(eight)}</td><td>${cell(atIndex)}</td></tr>`);
+  log(`nonce ${n}: alone=${alone === ref ? 'ok' : alone} count8=${eight === ref ? 'ok' : eight} index${n}=${atIndex === ref ? 'ok' : atIndex}`);
+}
+
+const stable = (key) => rows.every((r) => r[key] === rows[0][key]);
+const agree = rows.every((r) => r.alone === r.eight && r.eight === r.atIndex);
+log('');
+log(`dispatch-independent: ${agree ? 'yes' : 'no'}`);
+log(`all three also equal the reference: ${rows.every((r) => r.alone === r.ref)}`);
+window.__result = {
+  ok: true,
+  adapter: { vendor: info.vendor, arch: info.architecture },
+  dispatchIndependent: agree,
+  allCorrect: rows.every((r) => r.alone === r.ref),
+  rows,
+};
+</script>
+</body>
+</html>

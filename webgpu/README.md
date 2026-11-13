@@ -160,8 +160,20 @@ instructions are correct. Something further into the program is miscompiled, and
 the divergence appears only in the **high halves of two registers** (`r2.hi`,
 `r7.hi`), both of which are produced by the emulated 64x64 multiply.
 
-I could not reduce it further. What that needs is either a disassembly from the
-Intel Vulkan compiler (not accessible from here) or a second GPU to test on. The
+What it *does* do is fail deterministically, which is the more useful property. The
+same nonce returns the same wrong digest when it is the only active invocation in the
+workgroup, when it is one of eight, and when it sits at a different invocation index;
+and it returns it again on a repeat run, on Chrome 154 as well as on 145
+(`webgpu/probe-det.html`). So this is not a race, not occupancy-sensitive register
+allocation and not a cross-lane effect: the compiler deterministically miscomputes
+one particular instruction sequence, and the same sequence gives the right answer on
+SwiftShader. That is what makes a bisect worth doing — generate the shader truncated
+at instruction `k` (`--truncate k`) and compare its digest against the same prefix
+compiled by the wasm JIT, which shares `load_program` with `gen_hashx_wat.py`, until
+the first divergent `k` appears.
+
+Beyond that, reducing it further needs either a disassembly from the Intel Vulkan
+compiler (not accessible from here) or a second GPU to test on. The
 `webgpu/probe-*.html` pages are the isolated tests I used — they are kept so the
 next person does not have to rewrite them:
 
@@ -169,6 +181,7 @@ next person does not have to rewrite them:
 |---|---|
 | `probe-cmp.html` | `(result & imm) == 0` on chosen operands |
 | `probe-mul.html` | `mul64`/`umulh64` against 32 random operand pairs (needs `probe-mul.wgsl`) |
+| `probe-det.html` | one nonce at three dispatch shapes, to separate a miscompile from a scheduling effect |
 | `digest.html` | the digest for nonce 0, one dispatch |
 | `dump.html` | r0..r7 (+`result`) after a chosen instruction, via `--dump-after` |
 

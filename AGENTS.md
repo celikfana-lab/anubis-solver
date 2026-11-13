@@ -100,6 +100,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `src/cpu/avx2.s`, `src/cpu/avx512.s` | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` |
 | `src/intel/xe/intelXe_sha256.xe` | `tools/gen_xe_sha256.py` (needs `IGA64` to assemble) |
 | `src/intel/xe/intelXe_sha256.igc.xe` | run `tools/xe-sha256-opencl.c`, `dd` the `.text.sha256_pow` section out of the Zebin, `iga64 -p 12p1 -d` |
+| (none yet) | `sassasm/` is a partial SASS assembler, checked by `python3 sassasm/selftest.py` against ptxas |
 
 ## Pitfalls we hit
 

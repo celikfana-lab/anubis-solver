@@ -1,6 +1,6 @@
 # betterAnusbis
 
-**1.50.0 "headslam"**
+**1.50.1 "headslam"**
 
 An Anubis-compatible proof-of-work gate in **one C file**. It issues the same
 challenges, on the same routes, with the same JSON and the same cookie name — so
@@ -17,7 +17,7 @@ solves itself and you land on your backend.
 
 ```
 $ ./betterAnusbis --target http://127.0.0.1:3000 --algorithm sha256 --difficulty 12
-[betterAnusbis] betterAnusbis 1.50.0 listening on :8080 -> http://127.0.0.1:3000 (sha256, difficulty 12)
+[betterAnusbis] betterAnusbis 1.50.1 listening on :8080 -> http://127.0.0.1:3000 (sha256, difficulty 12)
 [betterAnusbis] open http://127.0.0.1:8080/ and the challenge page solves it for you
 ```
 
@@ -154,9 +154,12 @@ policy, honeypot, assets, TLS, metrics
   --difficulty-in-jwt  --webmaster-email ADDR  --preserve-referer-query-param
   --target-disable-keepalive (accepted; this gate always closes)
   --geoip-country PATH  --geoip-asn PATH  --geoip-lookup IP  --dnsbl
-  --og-passthrough  --og-expiry-time SECS  --og-override "og:title=..." 
+  --og-passthrough  --og-expiry-time SECS  --og-override "og:title=..."
+  --og-cache-consider-host               key the cache on host and path
   --challenge-extension css-load
   --store file:PATH      keep the challenge ledger and honeypot counters
+  (upstream's --bind, --policy-fname and --target-insecure-skip-verify are
+   accepted as aliases)
 ```
 
 Every flag is also an environment variable, upper case with dashes as
@@ -340,11 +343,18 @@ MaxMind's test files checked in under `tools/geoip-testdata`, and
 `--geoip-lookup IP` prints what it thinks about an address. `dnsbl: true` is
 honoured too, through DroneBL, cached for a day.
 
+**The file also configures the gate.** `store`, `metrics`, `geoip`, `openGraph`,
+`impressum`, `logging`, `dns_ttl`, `status_codes`, `honeypot` and `dnsbl` are
+read from the same document as the rules, so an Anubis deployment's config
+travels rather than being retyped as flags. Flags win where both are given. What
+is still missing there is said out loud: a `bbolt`, `valkey` or `s3api` store is
+named as unimplemented (the ledger stays in memory), as are the metrics
+listener's `tls`/`basic_auth` and `pprof`, and `botstopper` is enterprise.
+
 What is reported and skipped, by name, at load: `geoip` and `asns` matchers when
-no database is configured, `verifyFCrDNS` in shapes the evaluator cannot read,
-the `openGraph`, `store`, `metrics`, `logging` and `impressum` blocks. Nothing is silently reinterpreted: a rule that
-cannot be evaluated logs "will never match" rather than quietly matching
-everything or nothing.
+no database is configured, and `verifyFCrDNS` in shapes the evaluator cannot
+read. Nothing is silently reinterpreted: a rule that cannot be evaluated logs
+"will never match" rather than quietly matching everything or nothing.
 
 Two translation notes, both reported when they happen: POSIX ERE has no
 non-capturing groups or `\d`, so `(?:` becomes `(`, `\d` becomes `[0-9]`, and a

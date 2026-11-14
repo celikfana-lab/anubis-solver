@@ -514,7 +514,7 @@ def main():
               'anubis_challenges_issued{method="sha256"} 1' in metrics
               and 'anubis_challenges_validated{method="sha256"} 1' in metrics, metrics)
         check("/metrics carries the build identity",
-              'betteranusbis_build_info{version="1.50.0"' in metrics, metrics[:120])
+              'betteranusbis_build_info{version="1.50.1"' in metrics, metrics[:120])
     with Gate("--difficulty", "6", "--metrics-bind", f"127.0.0.1:{METRICS_PORT}",
               policy="deny ua contains ParityBot\n"):
         request("GET", "/", headers={"User-Agent": "ParityBot/1.0"})
@@ -1110,6 +1110,56 @@ def main():
                        "nonce": str(sol.nonce), "redir": "/"})
         st, hdrs, body = request("GET", API + "pass-challenge?" + q)
         check("a challenge issued before the restart still verifies", st == 302, st)
+
+    # ---- 23h. the policy file configures the gate, not just the rules
+    cdb = os.path.join(HERE, "tools", "geoip-testdata", "GeoIP2-Country-Test.mmdb")
+    storepath = os.path.join(tempfile.mkdtemp(), "dropin.txt")
+    if os.path.exists(cdb):
+        dropin = (
+            "bots:\n"
+            "  - name: deny-gb\n"
+            "    geoip:\n"
+            "      countries: [GB]\n"
+            "    action: DENY\n"
+            "thresholds:\n"
+            "  - name: minimal-suspicion\n"
+            "    expression: weight <= 0\n"
+            "    action: ALLOW\n"
+            "store:\n"
+            "  backend: file\n"
+            "  parameters:\n"
+            "    path: " + storepath + "\n"
+            "metrics:\n"
+            "  enabled: true\n"
+            "  bind: \"127.0.0.1:9099\"\n"
+            "geoip:\n"
+            "  country:\n"
+            "    path: " + cdb + "\n"
+            "openGraph:\n"
+            "  enabled: true\n"
+            "  expiryTime: 90m\n"
+            "impressum:\n"
+            "  enabled: true\n"
+            "  footer: a drop-in footer\n"
+            "dns_ttl: 600\n")
+        with Gate("--difficulty", "6", "--deny-status", "403", policy=dropin):
+            st, _, body = request("GET", "/", headers={"X-Forwarded-For": "2.125.160.216"})
+            check("a country rule configured in the file denies (flow list)", st == 403, st)
+            st, _, body = request("GET", "/ogpage")
+            check("openGraph.enabled in the file puts tags on the page",
+                  b"og:title" in body and b"Cached Title" in body, body[:120])
+            st, _, body = request("GET", API + "imprint")
+            check("impressum.enabled in the file answers the imprint route",
+                  st == 200 and b"Impressum" in body, st)
+            m = http.client.HTTPConnection("127.0.0.1", 9099, timeout=5)
+            m.request("GET", "/metrics")
+            mr = m.getresponse()
+            mbody = mr.read()
+            m.close()
+            check("metrics.bind in the file starts the listener", mr.status == 200 and
+                  b"anubis_requests_total" in mbody, mr.status)
+        check("store.backend file in the file writes its snapshot",
+              os.path.exists(storepath), "absent")
 
     # ---- 24. DNS: the shipped policy is fully understood, and DNSBL answers
     if os.path.exists(policy):

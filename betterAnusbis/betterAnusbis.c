@@ -49,7 +49,7 @@
 
 /* ----------------------------------------------------------------- config */
 
-#define VERSION "1.50.0"
+#define VERSION "1.50.1"
 #define CODENAME "headslam"
 #define API_PREFIX "/.within.website/x/cmd/anubis/api/"
 #define DEFAULT_COOKIE_PREFIX "techaro.lol-anubis"
@@ -133,6 +133,8 @@ typedef struct {
     int ext_css_load;             /* require the css-load extension */
     int og_passthrough;           /* copy the protected page's og: tags */
     long og_ttl;                  /* how long a page's tags are cached */
+    int og_consider_host;         /* include the Host in the cache key */
+    long dns_ttl;                 /* how long a DroneBL answer is kept */
     const char *og_override;      /* key=value;... replaces the tags entirely */
     const char *challenge_extension; /* "css-load", and only for now */
     const char *store;            /* file:PATH keeps the ledger across restarts */
@@ -186,6 +188,8 @@ static config cfg = {
     .healthcheck = 0,
     .og_passthrough = 0,
     .og_ttl = 86400,
+    .og_consider_host = 0,
+    .dns_ttl = 86400,
     .og_override = NULL,
     .bind_network = "tcp",
     .socket_mode = "0770",
@@ -2148,7 +2152,7 @@ static int dnsbl_verdict(const char *ip) {
     int result;
     pthread_mutex_lock(&dnsbl_lock);
     dnsbl_entry *e = &dnsbl_cache[slot];
-    if (e->used && !strcmp(e->ip, ip) && now - e->when < DNSBL_TTL) {
+    if (e->used && !strcmp(e->ip, ip) && now - e->when < cfg.dns_ttl) {
         result = e->verdict;
         pthread_mutex_unlock(&dnsbl_lock);
         return result;
@@ -2968,11 +2972,15 @@ static void og_snippet(const char *path, char *out, size_t cap) {
 
     time_t now = time(NULL);
     uint32_t h = 2166136261u;
-    for (const char *q = path; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    /* considerHost: two paths can be different pages on different vhosts */
+    char key[320];
+    if (cfg.og_consider_host) snprintf(key, sizeof key, "%s%s", cfg.target, path);
+    else snprintf(key, sizeof key, "%s", path ? path : "/");
+    for (const char *q = key; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
     int slot = (int)(h % OG_SLOTS);
     pthread_mutex_lock(&og_lock);
     og_entry *e = &og_cache[slot];
-    if (e->used && !strcmp(e->path, path) && now - e->when < cfg.og_ttl) {
+    if (e->used && !strcmp(e->path, key) && now - e->when < cfg.og_ttl) {
         snprintf(out, cap, "%s", e->snippet);
         pthread_mutex_unlock(&og_lock);
         return;
@@ -2984,7 +2992,7 @@ static void og_snippet(const char *path, char *out, size_t cap) {
 
     pthread_mutex_lock(&og_lock);
     e = &og_cache[slot];
-    snprintf(e->path, sizeof e->path, "%s", path);
+    snprintf(e->path, sizeof e->path, "%s", key);
     snprintf(e->snippet, sizeof e->snippet, "%s", fetched);
     e->when = now;
     e->used = 1;
@@ -4754,6 +4762,59 @@ static int y_looks_like_pair(const char *s) {
 static y_node *y_parse_block(y_file *f, int indent);
 
 /* One `key: value` pair. f->pos already points past the line it came from. */
+/* Flow collections: [a, b] and {k: v, k2: v2}. Anubis's own policies are
+ * block style, but configs in the wild use both, and "the file loads" has to
+ * mean the file. */
+static void y_take_flow(y_node *member, const char *val) {
+    char close_ch = val[0] == '[' ? ']' : '}';
+    const char *close = strrchr(val, close_ch);
+    if (!close || close <= val) return;
+    y_node **tail = &member->child;
+    const char *p = val + 1;
+    int pairs = val[0] == '{';
+    while (p < close) {
+        while (p < close && (*p == ' ' || *p == ',')) p++;
+        if (p >= close) break;
+        char item[512];
+        size_t o = 0;
+        if (*p == '"' || *p == '\'') {
+            char q = *p++;
+            while (p < close && *p != q && o + 1 < sizeof item) item[o++] = *p++;
+            if (p < close) p++;
+        } else {
+            while (p < close && *p != ',' && !(pairs && *p == ':') && o + 1 < sizeof item)
+                item[o++] = *p++;
+        }
+        while (o && item[o - 1] == ' ') o--;
+        item[o] = 0;
+        y_node *c = y_new(Y_SCALAR);
+        if (!c) break;
+        if (pairs && *p == ':') {
+            p++;
+            while (p < close && *p == ' ') p++;
+            char v[512];
+            size_t vo = 0;
+            if (p < close && (*p == '"' || *p == '\'')) {
+                char q = *p++;
+                while (p < close && *p != q && vo + 1 < sizeof v) v[vo++] = *p++;
+                if (p < close) p++;
+            } else {
+                while (p < close && *p != ',' && vo + 1 < sizeof v) v[vo++] = *p++;
+            }
+            while (vo && v[vo - 1] == ' ') vo--;
+            v[vo] = 0;
+            c->key = y_dup(item);
+            c->scalar = y_dup(v);
+        } else {
+            if (!item[0]) break;
+            c->scalar = y_dup(item);
+        }
+        *tail = c;
+        tail = &c->next;
+    }
+    member->type = pairs ? Y_MAP : Y_SEQ;
+}
+
 static void y_take_pair(y_file *f, y_node *map, const char *text, int indent) {
     int q = 0;
     const char *colon = NULL;
@@ -4799,6 +4860,8 @@ static void y_take_pair(y_file *f, y_node *map, const char *text, int indent) {
         } else {
             member->scalar = y_dup("");
         }
+    } else if (*val == '[' || *val == '{') {
+        y_take_flow(member, val);
     } else if (y_is_block_marker(val)) {
         member->scalar = y_block_scalar(f, indent, y_is_literal(val));
     } else {
@@ -5785,13 +5848,9 @@ static void yml_load_document(const y_node *root, const char *from, int depth,
                "DroneBL once a day");
     }
 
-    /* blocks we knowingly do not implement */
-    static const char *const ignored[] = {
-        "openGraph", "impressum", "store", "metrics", "geoip", "logging", NULL
-    };
-    for (int i = 0; ignored[i]; i++)
-        if (y_get(root, ignored[i]))
-            logmsg("policy: the '%s' block is ignored by betterAnusbis", ignored[i]);
+    /* what is left of the blocks this gate still has no equivalent for */
+    if (y_get(root, "botstopper"))
+        logmsg("policy: the 'botstopper' block is an enterprise feature; it is ignored");
 }
 
 /* ---- matching ---------------------------------------------------------- */
@@ -5875,6 +5934,136 @@ static int yml_decide(const request *rq, const char *ip, int *difficulty,
     return 0;
 }
 
+/* ---------------------------------------------------- the policy's own config
+ *
+ * The blocks that configure the gate rather than describe a bot: store,
+ * metrics, geoip, openGraph, impressum, logging, dns_ttl. An Anubis deployment
+ * carries these in the same file as the rules, and a config that only works
+ * half-way is not a drop-in.
+ *
+ * Flags win. The file fills in what the command line left alone, so an operator
+ * can always override a policy file without editing it.
+ */
+static int geoip_open_databases(void) {
+    if (cfg.geoip_country_path && *cfg.geoip_country_path && !mm_country.ok &&
+        mmdb_open(&mm_country, cfg.geoip_country_path) != 0)
+        return -1;
+    if (cfg.geoip_asn_path && *cfg.geoip_asn_path && !mm_asn.ok &&
+        mmdb_open(&mm_asn, cfg.geoip_asn_path) != 0)
+        return -1;
+    return 0;
+}
+
+/* "24h", "90m", "3600" and "3600s" are the shapes Anubis accepts. */
+static long parse_seconds(const char *s, long def) {
+    if (!s || !*s) return def;
+    char *end = NULL;
+    double v = strtod(s, &end);
+    if (v <= 0) return def;
+    if (end && *end) {
+        if (*end == 'h') v *= 3600;
+        else if (*end == 'm') v *= 60;
+        else if (*end == 's') v *= 1;
+        else if (*end == 'd') v *= 86400;
+        else return def;
+    }
+    return (long)v;
+}
+
+static void policy_apply_blocks(const y_node *root) {
+    const y_node *store = y_get(root, "store");
+    if (store) {
+        const char *backend = y_str(y_get(store, "backend"), "memory");
+        const y_node *params = y_get(store, "parameters");
+        const char *path = y_str(y_get(params, "path"), NULL);
+        if (!strcasecmp(backend, "memory")) {
+            logmsg("policy: store backend memory");
+        } else if (!strcasecmp(backend, "file") && path && *path) {
+            if (!cfg.store) {
+                char spec[600];
+                snprintf(spec, sizeof spec, "file:%s", path);
+                cfg.store = y_dup(spec);
+            }
+            logmsg("policy: store backend file, %s", path);
+        } else if (!strcasecmp(backend, "bbolt") || !strcasecmp(backend, "valkey") ||
+                   !strcasecmp(backend, "s3api")) {
+            logmsg("policy: store backend %s is not implemented by betterAnusbis; the "
+                   "challenge ledger stays in memory (--store file:PATH is the one that "
+                   "survives a restart)", backend);
+        } else {
+            logmsg("policy: store backend %s is unknown here, using memory", backend);
+        }
+    }
+
+    const y_node *metrics = y_get(root, "metrics");
+    if (metrics) {
+        int enabled = y_bool(y_get(metrics, "enabled"), 1);
+        const char *bind = y_str(y_get(metrics, "bind"), NULL);
+        if (!enabled) logmsg("policy: metrics are disabled");
+        else if (bind && *bind && !cfg.metrics_bind) {
+            cfg.metrics_bind = y_dup(bind);
+            logmsg("policy: metrics on %s", bind);
+        } else if (!bind) {
+            logmsg("policy: metrics enabled with no bind address; use --metrics-bind");
+        }
+        if (y_get(metrics, "tls") || y_get(metrics, "basic_auth"))
+            logmsg("policy: the metrics listener's tls/basic_auth are not implemented here");
+        if (y_get(metrics, "pprof"))
+            logmsg("policy: metrics.pprof has no equivalent here (it is a Go runtime view)");
+    }
+
+    const y_node *geo = y_get(root, "geoip");
+    if (geo) {
+        const char *c = y_str(y_get(y_get(geo, "country"), "path"), NULL);
+        const char *a = y_str(y_get(y_get(geo, "asn"), "path"), NULL);
+        if (c && *c && !cfg.geoip_country_path) cfg.geoip_country_path = y_dup(c);
+        if (a && *a && !cfg.geoip_asn_path) cfg.geoip_asn_path = y_dup(a);
+        geoip_open_databases();     /* rules that match on geography need it now */
+    }
+
+    const y_node *og = y_get(root, "openGraph");
+    if (og) {
+        if (!cfg.og_passthrough) cfg.og_passthrough = y_bool(y_get(og, "enabled"), 0);
+        const y_node *ch = y_get(og, "considerHost");
+        if (ch) cfg.og_consider_host = y_bool(ch, cfg.og_consider_host);
+        const char *exp = y_str(y_get(og, "expiryTime"), NULL);
+        if (exp) cfg.og_ttl = parse_seconds(exp, cfg.og_ttl);
+        const y_node *ov = y_get(og, "override");
+        if (ov && ov->type == Y_MAP && !cfg.og_override) {
+            char joined[1024] = "";
+            size_t used = 0;
+            for (const y_node *c = ov->child; c; c = c->next) {
+                if (!c->key) continue;
+                const char *v = y_str(c, NULL);
+                if (!v) continue;
+                used += (size_t)snprintf(joined + used, sizeof joined - used, "%s%s=%s",
+                                         used ? ";" : "", c->key, v);
+            }
+            if (joined[0]) cfg.og_override = y_dup(joined);
+        }
+        logmsg("policy: openGraph %s, cache %lds%s", cfg.og_passthrough ? "on" : "off",
+               cfg.og_ttl, cfg.og_consider_host ? ", keyed on host" : "");
+    }
+
+    const y_node *imp = y_get(root, "impressum");
+    if (imp && y_bool(y_get(imp, "enabled"), 0)) {
+        if (!cfg.impressum_title) cfg.impressum_title = "Impressum";
+        const char *footer = y_str(y_get(imp, "footer"), NULL);
+        if (footer && *footer && !cfg.impressum_body) cfg.impressum_body = y_dup(footer);
+        logmsg("policy: the imprint page is on");
+    }
+
+    const y_node *logging = y_get(root, "logging");
+    if (logging) {
+        const char *lvl = y_str(y_get(logging, "level"), NULL);
+        if (lvl && !strcasecmp(lvl, "debug")) cfg.verbose = 1;
+        else if (lvl && (!strcasecmp(lvl, "warn") || !strcasecmp(lvl, "error"))) log_quiet = 1;
+    }
+
+    const char *ttl = y_str(y_get(root, "dns_ttl"), NULL);
+    if (ttl) cfg.dns_ttl = parse_seconds(ttl, cfg.dns_ttl);
+}
+
 static void policy_load_yaml(const char *path) {
     y_file f;
     if (y_open(path, &f) != 0) {
@@ -5889,6 +6078,7 @@ static void policy_load_yaml(const char *path) {
         logmsg("policy: %s parsed as empty; challenging everything", path);
         return;
     }
+    policy_apply_blocks(root);
     char dir[1024];
     snprintf(dir, sizeof dir, "%s", path);
     char *slash = strrchr(dir, '/');
@@ -7062,11 +7252,15 @@ static const arg_spec args[] = {
     {"metrics-bind-network", ARG_STR, &cfg.metrics_network},
     {"public-url", ARG_STR, &cfg.public_url},
     {"dnsbl", ARG_BOOL, &cfg.dnsbl},
+    {"bind", ARG_STR, &cfg.listen},                          /* upstream's name */
+    {"policy-fname", ARG_STR, &cfg.policy_file},              /* upstream's name */
+    {"target-insecure-skip-verify", ARG_BOOL, &cfg.target_insecure},
     {"geoip-lookup", ARG_STR, &cfg.geoip_lookup},
     {"challenge-extension", ARG_STR, &cfg.challenge_extension},
     {"store", ARG_STR, &cfg.store},
     {"og-passthrough", ARG_BOOL, &cfg.og_passthrough},
     {"og-expiry-time", ARG_LONG, &cfg.og_ttl},
+    {"og-cache-consider-host", ARG_BOOL, &cfg.og_consider_host},
     {"og-override", ARG_STR, &cfg.og_override},
     {"geoip-country", ARG_STR, &cfg.geoip_country_path},
     {"geoip-asn", ARG_STR, &cfg.geoip_asn_path},
@@ -7485,6 +7679,32 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (cfg.challenge_extension && *cfg.challenge_extension) {
+        if (!strcasecmp(cfg.challenge_extension, "css-load")) {
+            if (!cfg.stateful) {
+                fprintf(stderr, "betterAnusbis: --challenge-extension css-load needs the "
+                                "challenge ledger; it cannot work with --stateless\n");
+                return 2;
+            }
+            cfg.ext_css_load = 1;
+        } else if (!strcasecmp(cfg.challenge_extension, "headless")) {
+            logmsg("--challenge-extension headless: this tree has no implementation of it "
+                   "(it exists only in the enterprise build), so nothing is checked");
+        } else {
+            fprintf(stderr, "betterAnusbis: --challenge-extension wants css-load or "
+                            "headless\n");
+            return 2;
+        }
+    }
+
+    if (geoip_open_databases() != 0) {
+        fprintf(stderr, "betterAnusbis: the GeoIP database did not load\n");
+        return 1;
+    }
+
+    if (cfg.policy_file) policy_load(cfg.policy_file);
+    else policy_digest_finish();
+
     if (cfg.store && *cfg.store) {
         if (!strncmp(cfg.store, "file:", 5)) {
             snprintf(store_path, sizeof store_path, "%s", cfg.store + 5);
@@ -7510,33 +7730,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (cfg.challenge_extension && *cfg.challenge_extension) {
-        if (!strcasecmp(cfg.challenge_extension, "css-load")) {
-            if (!cfg.stateful) {
-                fprintf(stderr, "betterAnusbis: --challenge-extension css-load needs the "
-                                "challenge ledger; it cannot work with --stateless\n");
-                return 2;
-            }
-            cfg.ext_css_load = 1;
-        } else if (!strcasecmp(cfg.challenge_extension, "headless")) {
-            logmsg("--challenge-extension headless: this tree has no implementation of it "
-                   "(it exists only in the enterprise build), so nothing is checked");
-        } else {
-            fprintf(stderr, "betterAnusbis: --challenge-extension wants css-load or "
-                            "headless\n");
-            return 2;
-        }
-    }
-
-    if (cfg.geoip_country_path && *cfg.geoip_country_path &&
-        mmdb_open(&mm_country, cfg.geoip_country_path) != 0)
-        return 1;
-    if (cfg.geoip_asn_path && *cfg.geoip_asn_path &&
-        mmdb_open(&mm_asn, cfg.geoip_asn_path) != 0)
-        return 1;
-
-    if (cfg.policy_file) policy_load(cfg.policy_file);
-    else policy_digest_finish();
     if (cfg.subrequest) {
         snprintf(cfg.target_host, sizeof cfg.target_host, "%s", "unix");
         cfg.target_port = 0;

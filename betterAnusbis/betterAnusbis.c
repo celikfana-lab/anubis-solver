@@ -49,7 +49,7 @@
 
 /* ----------------------------------------------------------------- config */
 
-#define VERSION "1.50.1"
+#define VERSION "1.50.2"
 #define CODENAME "headslam"
 #define API_PREFIX "/.within.website/x/cmd/anubis/api/"
 #define DEFAULT_COOKIE_PREFIX "techaro.lol-anubis"

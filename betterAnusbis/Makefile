@@ -5,8 +5,14 @@
 CC      ?= cc
 CFLAGS  ?= -O2 -g -Wall -Wextra -pthread
 LIBDIR  ?= ..
-# our engine for verification, OpenSSL for the TLS listener and the TLS backend
-LDLIBS  ?= -L$(LIBDIR) -lanubis_solver -Wl,-rpath,$(abspath $(LIBDIR)) -lssl -lcrypto
+# Our engine for verification, OpenSSL for the TLS listener and the TLS backend.
+# The runpath is $ORIGIN, not the build directory: a released binary and its
+# .so sit next to each other, and a binary that points at /home/someone/build
+# is not an artifact, it is a souvenir.
+# $ORIGIN covers a release directory (both files side by side); $ORIGIN/.. is
+# the build tree, where the library lives one level up.
+RPATH   ?= '$$ORIGIN:$$ORIGIN/..'
+LDLIBS  ?= -L$(LIBDIR) -lanubis_solver -Wl,-rpath,$(RPATH) -lssl -lcrypto
 
 # the first rule in a makefile is its default goal, and the wasm copies below
 # must not become it

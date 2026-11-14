@@ -128,6 +128,9 @@ typedef struct {
     const char *impressum_body;  /* the imprint page's body */
     const char *public_url;      /* where this gate is reachable, for forwardAuth */
     int dnsbl;                   /* ask DroneBL about the client */
+    const char *geoip_lookup;     /* diagnostic: print what the databases say */
+    const char *geoip_country_path;
+    const char *geoip_asn_path;
     int subrequest;              /* no target: answer auth checks only */
     int jwt_alg;                 /* 0 HS256, 1 HS512, 2 EdDSA */
     EVP_PKEY *jwt_pkey;
@@ -335,11 +338,17 @@ static const char *jwt_header_json(void) {
     }
 }
 
+static const char *policy_digest(void);   /* defined with the policy engine */
+
 static int sign_token(char *out, size_t cap, const char *challenge_id,
                       const char *restrict_to, const char *algorithm, int difficulty) {
     char payload[768];
     time_t now = time(NULL);
-    /* policyRule is Anubis's rule hash; here it stands for the algorithm+difficulty.
+    /* policyRule is Anubis's rule hash: a hash of the policy that produced the
+     * challenge, compared on every request, so tightening a rule takes effect
+     * for clients that already have a cookie. Ours is one digest over the whole
+     * loaded policy, which means any edit logs everyone out. That is the blunt
+     * direction and it is the one an incident wants.
      * Anubis binds the token to the client by default (--jwt-restriction-header,
      * X-Real-IP); so do we, because a cookie that works from any address is a
      * cookie that works from whoever steals it. */
@@ -350,10 +359,11 @@ static int sign_token(char *out, size_t cap, const char *challenge_id,
     if (restrict_to && *restrict_to && cfg.jwt_restrict_hdr && *cfg.jwt_restrict_hdr)
         snprintf(restrict_part, sizeof restrict_part, ",\"restrict\":\"%s\"", restrict_to);
     snprintf(payload, sizeof payload,
-             "{\"challenge\":\"%s\",\"method\":\"%s\",\"policyRule\":\"rule-0\","
+             "{\"challenge\":\"%s\",\"method\":\"%s\",\"policyRule\":\"%s\","
              "\"action\":\"CHALLENGE\",\"iat\":%lld,\"exp\":%lld%s%s}",
              challenge_id ? challenge_id : "issued",
              algorithm && *algorithm ? algorithm : cfg.algorithm,
+             policy_digest(),
              (long long)now,
              (long long)(now + (cfg.cookie_ttl > 0 ? cfg.cookie_ttl : COOKIE_TTL)),
              difficulty_part, restrict_part);
@@ -459,6 +469,24 @@ static int verify_token(const char *token, const char *client_ip) {
     /* A token minted with a restriction only works for that address. Tokens from
      * before this check existed carry no claim and stay valid, which is what
      * makes the change deployable. */
+    char *policy_claim = strstr((char *)raw, "\"policyRule\":\"");
+    if (policy_claim) {
+        const char *want = policy_claim + strlen("\"policyRule\":\"");
+        const char *end = strchr(want, '"');
+        if (!end) return 0;
+        char had[32];
+        size_t hn = (size_t)(end - want);
+        if (hn >= sizeof had) return 0;
+        memcpy(had, want, hn);
+        had[hn] = 0;
+        if (!ct_equal(had, policy_digest())) {
+            if (cfg.verbose)
+                logmsg("rejecting a token minted under policy %s (now %s)", had,
+                       policy_digest());
+            return 0;
+        }
+    }
+
     char *restrict_claim = strstr((char *)raw, "\"restrict\":\"");
     if (restrict_claim && cfg.jwt_restrict_hdr && *cfg.jwt_restrict_hdr) {
         const char *want = restrict_claim + strlen("\"restrict\":\"");
@@ -1009,6 +1037,31 @@ static int parse_request(const char *raw, request *req) {
     return req->headers ? 0 : -1;
 }
 
+/* Header lookups into a caller buffer. The pointer version below hands back one
+ * shared buffer per thread, which is a trap: keeping two values from it leaves
+ * both pointing at the second. Keep using it only where the value is consumed
+ * immediately; anything else calls this. */
+static int header_value_into(const request *req, const char *name, char *out, size_t cap) {
+    size_t namelen = strlen(name);
+    const char *p = req->headers;
+    while (p && *p) {
+        const char *eol = strstr(p, "\r\n");
+        if (!eol) break;
+        if (!strncasecmp(p, name, namelen) && p[namelen] == ':') {
+            const char *v = p + namelen + 1;
+            while (*v == ' ') v++;
+            size_t n = (size_t)(eol - v);
+            if (n >= cap) n = cap - 1;
+            memcpy(out, v, n);
+            out[n] = 0;
+            return 1;
+        }
+        p = eol + 2;
+    }
+    if (cap) out[0] = 0;
+    return 0;
+}
+
 static const char *header_value(const request *req, const char *name) {
     static __thread char value[1024];
     size_t namelen = strlen(name);
@@ -1422,6 +1475,393 @@ static void respond_redirect(conn *c, const char *location, const char *extra_he
 
 /* ---------------------------------------------------------------- metrics */
 
+/* -------------------------------------------------------------- MaxMind DB
+ *
+ * Reading a .mmdb is four things: a search tree of fixed-width records, a
+ * 16-byte separator, a data section of tagged values, and a metadata map behind
+ * a marker near the end of the file. The record types Anubis asks for are
+ * country.iso_code (with registered_country as a fallback) and
+ * autonomous_system_number plus autonomous_system_organization
+ * (lib/geoip/geoip.go:65-77). That is all this reads.
+ *
+ * Nothing here is guessed: the test databases from the MaxMind-DB repository
+ * are checked into tools/geoip-testdata with the answers the C reader has to
+ * reproduce.
+ */
+#define MMDB_MARKER "\xab\xcd\xefMaxMind.com"
+#define MMDB_MARKER_LEN 14
+
+typedef struct {
+    unsigned char *buf;
+    size_t len;
+    uint32_t node_count;
+    uint16_t record_size;
+    uint16_t ip_version;
+    size_t tree_size;            /* node_count * record_size * 2 / 8 */
+    size_t ptr_base;             /* what a pointer's offset 0 refers to */
+    char db_type[48];
+    int ok;
+} mmdb;
+
+static mmdb mm_country, mm_asn;
+
+typedef struct {
+    int type;                    /* the type number from the spec, 1..15 */
+    uint64_t num;                /* uint16/uint32/uint64/int32/bool */
+    const char *str;             /* string bytes, not terminated */
+    size_t str_len;
+    size_t count;                /* map pairs or array elements */
+    size_t body;                 /* absolute offset of the first child */
+    int via_ptr;                 /* the value was reached through a pointer */
+} mval;
+
+static int mm_read_n(const mmdb *db, size_t *pos, int nbytes, uint64_t *out) {
+    if (*pos + (size_t)nbytes > db->len) return -1;
+    uint64_t v = 0;
+    for (int i = 0; i < nbytes; i++) v = (v << 8) | db->buf[(*pos)++];
+    *out = v;
+    return 0;
+}
+
+/* Decode one value. Maps and arrays are reported with a count and the caller
+ * walks them; a pointer is followed transparently. Returns the position just
+ * past the value's *header*, which for a map is the first key. */
+static int mm_decode(const mmdb *db, size_t *pos, mval *v) {
+    if (*pos >= db->len) return -1;
+    memset(v, 0, sizeof *v);
+    uint8_t ctrl = db->buf[(*pos)++];
+    int type = ctrl >> 5;
+    uint64_t size = ctrl & 0x1f;
+    if (type == 0) {
+        if (*pos >= db->len) return -1;
+        type = 7 + db->buf[(*pos)++];
+    }
+    if (size == 29) {
+        uint64_t extra;
+        if (mm_read_n(db, pos, 1, &extra) != 0) return -1;
+        size = 29 + extra;
+    } else if (size == 30) {
+        uint64_t extra;
+        if (mm_read_n(db, pos, 2, &extra) != 0) return -1;
+        size = 285 + extra;
+    } else if (size == 31) {
+        uint64_t extra;
+        if (mm_read_n(db, pos, 3, &extra) != 0) return -1;
+        size = 65821 + extra;
+    }
+    v->type = type;
+
+    switch (type) {
+    case 1: {                    /* pointer: follow it, the target's type wins */
+        /* the size field selects 1 to 4 bytes via size >> 3, and its low three
+         * bits are the pointer's high bits (maxminddb decoder.py does the same) */
+        int psize = (int)(size >> 3) + 1;
+        static const uint64_t bias[5] = {0, 0, 2048, 526336, 0};
+        uint64_t b = 0;
+        if (mm_read_n(db, pos, psize, &b) != 0) return -1;
+        uint64_t ptr = b | ((uint64_t)(size & 0x7) << (psize * 8));
+        ptr += bias[psize];
+        size_t target = db->ptr_base + (size_t)ptr;
+        if (target >= db->len) return -1;
+        int rc = mm_decode(db, &target, v);
+        if (rc == 0) v->via_ptr = 1;
+        return rc;
+    }
+    case 2:                      /* utf8 string */
+        if (*pos + (size_t)size > db->len) return -1;
+        v->str = (const char *)(db->buf + *pos);
+        v->str_len = (size_t)size;
+        *pos += (size_t)size;
+        return 0;
+    case 3:                      /* double */
+    case 4:                      /* bytes */
+    case 8:                      /* int32 */
+    case 10:                     /* uint128 */
+    case 15:                     /* float */
+        if (*pos + (size_t)size > db->len) return -1;
+        *pos += (size_t)size;
+        return 0;
+    case 5:                      /* uint16 */
+    case 6:                      /* uint32 */
+    case 9:                      /* uint64 */
+        if (mm_read_n(db, pos, (int)size, &v->num) != 0) return -1;
+        return 0;
+    case 7:                      /* map */
+    case 11:                     /* array */
+        v->count = (size_t)size;
+        v->body = *pos;
+        return 0;
+    case 14:                     /* boolean: the value is the size */
+        v->num = size ? 1 : 0;
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+/* Skip a whole value, including a map's or array's contents. */
+static int mm_skip(const mmdb *db, size_t *pos, int depth) {
+    if (depth > 24) return -1;
+    mval v;
+    if (mm_decode(db, pos, &v) != 0) return -1;
+    if (v.type != 7 && v.type != 11) return 0;
+    size_t resume = *pos;        /* right after the bytes stored here */
+    size_t p = v.body;
+    if (v.type == 7) {
+        for (size_t i = 0; i < v.count; i++) {
+            if (mm_skip(db, &p, depth + 1) != 0) return -1;   /* key */
+            if (mm_skip(db, &p, depth + 1) != 0) return -1;   /* value */
+        }
+    } else {
+        for (size_t i = 0; i < v.count; i++)
+            if (mm_skip(db, &p, depth + 1) != 0) return -1;
+    }
+    /* a container reached through a pointer consumed only the pointer here;
+     * its contents live somewhere else in the data section */
+    *pos = v.via_ptr ? resume : p;
+    return 0;
+}
+
+static int mm_key_is(const mval *k, const char *name) {
+    size_t n = strlen(name);
+    return k->type == 2 && k->str_len == n && !memcmp(k->str, name, n);
+}
+
+/* Walk a map looking for iso_code (one level down) and the ASN pair. */
+static void mm_scan_map_body(const mmdb *db, size_t *pos, size_t pairs,
+                        char *country, size_t ccap, char *reg_country, size_t rcap,
+                        uint32_t *asn, char *org, size_t ocap, int depth) {
+    if (depth > 6) return;
+    for (size_t i = 0; i < pairs; i++) {
+        mval key;
+        if (mm_decode(db, pos, &key) != 0) return;
+        size_t val_start = *pos;
+        mval val;
+        if (mm_decode(db, pos, &val) != 0) return;
+        if (mm_key_is(&key, "country") || mm_key_is(&key, "registered_country")) {
+            int is_reg = mm_key_is(&key, "registered_country");
+            if (val.type == 7) {
+                size_t walk = val.body;
+                for (size_t k = 0; k < val.count; k++) {
+                    mval ik, iv;
+                    if (mm_decode(db, &walk, &ik) != 0) return;
+                    size_t iv_start = walk;
+                    if (mm_decode(db, &walk, &iv) != 0) return;
+                    if (mm_key_is(&ik, "iso_code") && iv.type == 2 && iv.str_len >= 2) {
+                        char *dst = is_reg ? reg_country : country;
+                        size_t cap = is_reg ? rcap : ccap;
+                        size_t n = iv.str_len < cap - 1 ? iv.str_len : cap - 1;
+                        memcpy(dst, iv.str, n);
+                        dst[n] = 0;
+                        for (size_t q = 0; q < n; q++)
+                            if (dst[q] >= 'a' && dst[q] <= 'z') dst[q] = (char)(dst[q] - 32);
+                    } else if (iv.type == 7 || iv.type == 11) {
+                        walk = iv_start;
+                        if (mm_skip(db, &walk, depth + 1) != 0) return;
+                    }
+                }
+            }
+            *pos = val_start;
+            if (mm_skip(db, pos, depth + 1) != 0) return;
+            continue;
+        }
+        if (mm_key_is(&key, "autonomous_system_number")) {
+            if (val.type == 5 || val.type == 6 || val.type == 9) *asn = (uint32_t)val.num;
+        } else if (mm_key_is(&key, "autonomous_system_organization")) {
+            if (val.type == 2) {
+                size_t n = val.str_len < ocap - 1 ? val.str_len : ocap - 1;
+                memcpy(org, val.str, n);
+                org[n] = 0;
+            }
+        } else if (val.type == 7 || val.type == 11) {
+            *pos = val_start;
+            if (mm_skip(db, pos, depth + 1) != 0) return;
+        }
+    }
+}
+
+static int mmdb_open(mmdb *db, const char *path) {
+    memset(db, 0, sizeof *db);
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "betterAnusbis: cannot read %s: %s\n", path, strerror(errno));
+        return -1;
+    }
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0 || size > (64 << 20)) {
+        fprintf(stderr, "betterAnusbis: %s is not a plausible database size\n", path);
+        fclose(f);
+        return -1;
+    }
+    db->buf = malloc((size_t)size);
+    if (!db->buf || fread(db->buf, 1, (size_t)size, f) != (size_t)size) {
+        fprintf(stderr, "betterAnusbis: cannot read %s\n", path);
+        free(db->buf);
+        db->buf = NULL;
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+    db->len = (size_t)size;
+
+    /* the marker sits in the last 128 KB */
+    size_t search_from = db->len > (128u << 10) ? db->len - (128u << 10) : 0;
+    size_t marker = SIZE_MAX;
+    for (size_t i = db->len - MMDB_MARKER_LEN; i-- > search_from;)
+        if (!memcmp(db->buf + i, MMDB_MARKER, MMDB_MARKER_LEN)) {
+            marker = i;
+            break;
+        }
+    if (marker == SIZE_MAX) {
+        fprintf(stderr, "betterAnusbis: %s has no MaxMind metadata marker\n", path);
+        free(db->buf);
+        db->buf = NULL;
+        return -1;
+    }
+
+    size_t pos = marker + MMDB_MARKER_LEN;
+    db->ptr_base = marker;       /* metadata pointers are relative to the marker */
+    mval meta;
+    if (mm_decode(db, &pos, &meta) != 0 || meta.type != 7) {
+        fprintf(stderr, "betterAnusbis: %s has unreadable metadata\n", path);
+        free(db->buf);
+        db->buf = NULL;
+        return -1;
+    }
+    for (size_t i = 0; i < meta.count; i++) {
+        mval key, val;
+        size_t save = pos;
+        if (mm_decode(db, &pos, &key) != 0) break;
+        if (mm_decode(db, &pos, &val) != 0) break;
+        if (mm_key_is(&key, "node_count")) db->node_count = (uint32_t)val.num;
+        else if (mm_key_is(&key, "record_size")) db->record_size = (uint16_t)val.num;
+        else if (mm_key_is(&key, "ip_version")) db->ip_version = (uint16_t)val.num;
+        else if (mm_key_is(&key, "database_type") && val.type == 2) {
+            size_t n = val.str_len < sizeof db->db_type - 1 ? val.str_len : sizeof db->db_type - 1;
+            memcpy(db->db_type, val.str, n);
+            db->db_type[n] = 0;
+        } else if (val.type == 7 || val.type == 11) {
+            pos = save;
+            if (mm_skip(db, &pos, 0) != 0) break;
+            if (mm_skip(db, &pos, 0) != 0) break;
+        }
+    }
+    if (!db->node_count || !db->record_size || !db->ip_version) {
+        fprintf(stderr, "betterAnusbis: %s metadata is missing node_count/record_size/ip_version\n",
+                path);
+        free(db->buf);
+        db->buf = NULL;
+        return -1;
+    }
+    db->tree_size = (size_t)db->node_count * (db->record_size * 2 / 8);
+    db->ptr_base = db->tree_size + 16;   /* the data section starts after the separator */
+    db->ok = 1;
+    logmsg("geoip: %s is %s, %u nodes, %u-bit records, IPv%d", path, db->db_type,
+           db->node_count, db->record_size, db->ip_version);
+    return 0;
+}
+
+/* One tree walk. Returns the data-section offset, or 0 when the address is not
+ * in the database. */
+static size_t mmdb_find(const mmdb *db, const char *ipstr) {
+    unsigned char addr[16];
+    int v4 = 1;
+    struct in_addr a4;
+    struct in6_addr a6;
+    if (!strchr(ipstr, ':')) {
+        if (inet_pton(AF_INET, ipstr, &a4) != 1) return 0;
+        memcpy(addr + 12, &a4, 4);
+    } else {
+        if (inet_pton(AF_INET6, ipstr, &a6) != 1) return 0;
+        memcpy(addr, &a6, 16);
+        v4 = 0;
+    }
+    int bits = db->ip_version == 6 ? 128 : 32;
+    if (db->ip_version == 6 && v4) {
+        /* the mapped form, ::ffff:a.b.c.d, is where an IPv4 address lives in an
+         * IPv6 database (maxminddb's ip.To16 does the same before walking) */
+        memset(addr, 0, 12);
+        addr[10] = addr[11] = 0xff;
+        memcpy(addr + 12, &a4, 4);
+    }
+    int start = 0;
+
+    uint32_t node = 0;
+    int bytes = db->record_size * 2 / 8;
+    for (int i = start; i < bits; i++) {
+        if (node >= db->node_count) break;
+        int bit = (addr[i / 8] >> (7 - (i % 8))) & 1;
+        size_t off = (size_t)node * (size_t)bytes;
+        if (off + (size_t)bytes > db->len) return 0;
+        uint32_t record;
+        if (db->record_size == 24) {
+            const unsigned char *p = db->buf + off + (bit ? 3 : 0);
+            record = ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | p[2];
+        } else if (db->record_size == 28) {
+            const unsigned char *p = db->buf + off;
+            if (bit) {
+                record = ((uint32_t)(p[3] & 0x0f) << 24) | ((uint32_t)p[4] << 16) |
+                         ((uint32_t)p[5] << 8) | p[6];
+            } else {
+                record = ((uint32_t)(p[3] & 0xf0) << 20) | ((uint32_t)p[0] << 16) |
+                         ((uint32_t)p[1] << 8) | p[2];
+            }
+        } else {                        /* 32 */
+            const unsigned char *p = db->buf + off + (bit ? 4 : 0);
+            record = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+                     ((uint32_t)p[2] << 8) | p[3];
+        }
+        node = record;
+    }
+    if (node <= db->node_count) return 0;      /* == is "not found" */
+    size_t offset = (size_t)(node - db->node_count) + db->tree_size;
+    if (offset >= db->len) return 0;
+    return offset;
+}
+
+/* Country code, uppercased. country.iso_code first, registered_country second,
+ * which is what lib/geoip/geoip.go:203-236 prefers by default. */
+static int geoip_country(const char *ip, char *out, size_t cap) {
+    if (!mm_country.ok) return 0;
+    mm_country.ptr_base = mm_country.tree_size + 16;
+    size_t off = mmdb_find(&mm_country, ip);
+    if (!off) return 0;
+    char country[8] = "", registered[8] = "", org[8];
+    size_t pos = off;
+    mval root;
+    if (mm_decode(&mm_country, &pos, &root) != 0 || root.type != 7) return 0;
+    pos = root.body;
+    mm_scan_map_body(&mm_country, &pos, root.count, country, sizeof country, registered,
+                     sizeof registered, NULL, org, sizeof org, 0);
+    const char *best = country[0] ? country : registered;
+    if (!best[0]) return 0;
+    snprintf(out, cap, "%s", best);
+    return 1;
+}
+
+static int geoip_asn(const char *ip, uint32_t *out) {
+    if (!mm_asn.ok) return 0;
+    mm_asn.ptr_base = mm_asn.tree_size + 16;
+    size_t off = mmdb_find(&mm_asn, ip);
+    if (!off) return 0;
+    char country[8], registered[8], org[128];
+    uint32_t asn = 0;
+    size_t pos = off;
+    mval root;
+    if (mm_decode(&mm_asn, &pos, &root) != 0 || root.type != 7) return 0;
+    pos = root.body;
+    memset(country, 0, sizeof country);
+    memset(registered, 0, sizeof registered);
+    memset(org, 0, sizeof org);
+    mm_scan_map_body(&mm_asn, &pos, root.count, country, sizeof country, registered,
+                     sizeof registered, &asn, org, sizeof org, 0);
+    if (!asn) return 0;
+    *out = asn;
+    return 1;
+}
+
 /* ------------------------------------------------------------ DNS lookups
  *
  * Two features need DNS and neither needs a hand-written resolver: the system
@@ -1759,12 +2199,9 @@ static int target_connect(conn *up) {
  * and a gate that answers 101 with a challenge page is worse than no gate. */
 
 static int upgrade_requested(const request *req) {
-    const char *up = header_value(req, "Upgrade");
-    if (!up || !*up) return 0;
-    char upgrade[64];
-    snprintf(upgrade, sizeof upgrade, "%s", up);   /* header_value is a shared buffer */
-    const char *conn = header_value(req, "Connection");
-    if (!conn || !*conn) return 0;
+    char upgrade[64], conn[128];
+    if (!header_value_into(req, "Upgrade", upgrade, sizeof upgrade) || !upgrade[0]) return 0;
+    if (!header_value_into(req, "Connection", conn, sizeof conn) || !conn[0]) return 0;
     return strcasestr(conn, "upgrade") != NULL && (!strcasecmp(upgrade, "websocket") ||
                                                    !strcasecmp(upgrade, "h2c") ||
                                                    !strcasecmp(upgrade, "HTTP/2.0"));
@@ -3287,10 +3724,10 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
     snprintf(payload, sizeof payload,
              "{\"rules\":{\"algorithm\":\"%s\",\"difficulty\":%d},"
              "\"challenge\":{\"issuedAt\":\"%lld\",\"metadata\":%s,\"id\":\"%s\","
-             "\"method\":\"%s\",\"randomData\":\"%s\",\"policyRuleHash\":\"rule-0\","
+             "\"method\":\"%s\",\"randomData\":\"%s\",\"policyRuleHash\":\"%s\","
              "\"difficulty\":%d,\"spent\":false,\"extensions\":null}}",
              algorithm, difficulty, (long long)time(NULL), metadata_json, id,
-             algorithm, random_data, difficulty);
+             algorithm, random_data, policy_digest(), difficulty);
 
     char status_line[512];
     snprintf(status_line, sizeof status_line, loc->solving, algorithm, difficulty);
@@ -3359,6 +3796,43 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
             "text/html; charset=utf-8", extra, body, strlen(body));
     free(body);
 }
+
+/* ---------------------------------------------------------- policy digest
+ *
+ * One SHA-256 over the loaded policy, as text, in load order: the rules, the
+ * default action, everything that changes a decision. It goes into the token as
+ * policyRule and is compared on every request, so editing a policy invalidates
+ * the cookies minted under the old one.
+ */
+static char policy_text[16384];
+static size_t policy_text_len;
+static char policy_digest_value[17];
+
+static void policy_text_add(const char *fmt, ...) {
+    if (policy_text_len + 2 >= sizeof policy_text) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(policy_text + policy_text_len, sizeof policy_text - policy_text_len,
+                      fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+        policy_text_len += (size_t)n;
+        if (policy_text_len >= sizeof policy_text) policy_text_len = sizeof policy_text - 1;
+    }
+}
+
+static void policy_digest_finish(void) {
+    uint8_t d[32];
+    char hex[65];
+    if (sha256_raw((const uint8_t *)policy_text, policy_text_len, d) != 0) {
+        snprintf(policy_digest_value, sizeof policy_digest_value, "0000000000000000");
+        return;
+    }
+    hex_encode(d, 8, hex);
+    snprintf(policy_digest_value, sizeof policy_digest_value, "%s", hex);
+}
+
+static const char *policy_digest(void) { return policy_digest_value; }
 
 /* -------------------------------------------------------------- policy */
 
@@ -4272,6 +4746,10 @@ typedef struct {
     char expr[1024];
     int has_expr;
     size_t cidr_start, cidr_len;
+    char countries[8][4];
+    int ncountries;
+    uint32_t asns[16];
+    int nasns;
     int difficulty;
     char algorithm[24];
     int weight_adjust;
@@ -4391,11 +4869,6 @@ static void yml_load_rule(const y_node *n, const char *from) {
     }
     const y_node *geo = y_get(n, "geoip");
     const y_node *asns = y_get(n, "asns");
-    if (geo || asns) {
-        logmsg("policy: rule '%s' matches on GeoIP or ASN, which this gate does not "
-               "have; the rule is ignored", name);
-        return;
-    }
 
     yrule r;
     memset(&r, 0, sizeof r);
@@ -4494,6 +4967,38 @@ static void yml_load_rule(const y_node *n, const char *from) {
         }
     }
 
+    if (geo) {
+        const y_node *list = y_get(geo, "countries");
+        if (!mm_country.ok) {
+            logmsg("policy: rule '%s' matches on countries but no --geoip-country is loaded; "
+                   "the rule is ignored", name);
+            goto fail;
+        }
+        if (list && list->type == Y_SEQ)
+            for (const y_node *it = list->child; it && r.ncountries < 8; it = it->next) {
+                const char *cc = y_str(it, NULL);
+                if (!cc || strlen(cc) != 2) continue;
+                snprintf(r.countries[r.ncountries], sizeof r.countries[0], "%s", cc);
+                for (char *q = r.countries[r.ncountries]; *q; q++)
+                    if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 32);
+                r.ncountries++;
+            }
+    }
+    if (asns) {
+        const y_node *list = y_get(asns, "match");
+        if (!mm_asn.ok) {
+            logmsg("policy: rule '%s' matches on ASN but no --geoip-asn is loaded; "
+                   "the rule is ignored", name);
+            goto fail;
+        }
+        if (list && list->type == Y_SEQ)
+            for (const y_node *it = list->child; it && r.nasns < 16; it = it->next) {
+                const char *num = y_str(it, NULL);
+                if (!num) continue;
+                r.asns[r.nasns++] = (uint32_t)strtoul(num, NULL, 10);
+            }
+    }
+
     const y_node *w = y_get(n, "weight");
     if (w) r.weight_adjust = atoi(y_str(y_get(w, "adjust"), "0"));
 
@@ -4516,6 +5021,8 @@ static void yml_load_rule(const y_node *n, const char *from) {
         yml_rules = p;
         yml_rule_cap = bigger;
     }
+    policy_text_add("%s|%d|%d|%s|%d|%zu|%s|%s|", r.name, r.action, r.difficulty,
+                    r.algorithm, r.weight_adjust, r.cidr_len, r.expr, r.from);
     yml_rules[yml_rule_count++] = r;
     return;
 
@@ -4696,7 +5203,8 @@ static void yml_load_document(const y_node *root, const char *from, int depth,
 
 static int yml_rule_matches(const yrule *r, const request *rq, const char *ip,
                             double weight) {
-    if (!r->has_ua && !r->has_path && r->nhdr == 0 && !r->has_expr && r->cidr_len == 0)
+    if (!r->has_ua && !r->has_path && r->nhdr == 0 && !r->has_expr && r->cidr_len == 0 &&
+        r->ncountries == 0 && r->nasns == 0)
         return 0;               /* a rule with no condition would match everything */
     if (r->has_ua) {
         const char *ua = header_value(rq, "User-Agent");
@@ -4717,6 +5225,22 @@ static int yml_rule_matches(const yrule *r, const request *rq, const char *ip,
         int hit = 0;
         for (size_t i = 0; i < r->cidr_len; i++)
             if (cidr_contains(&cidr_pool[r->cidr_start + i], ip)) { hit = 1; break; }
+        if (!hit) return 0;
+    }
+    if (r->ncountries) {
+        char cc[8];
+        if (!geoip_country(ip, cc, sizeof cc)) return 0;
+        int hit = 0;
+        for (int i = 0; i < r->ncountries; i++)
+            if (!strcasecmp(cc, r->countries[i])) hit = 1;
+        if (!hit) return 0;
+    }
+    if (r->nasns) {
+        uint32_t a = 0;
+        if (!geoip_asn(ip, &a)) return 0;
+        int hit = 0;
+        for (int i = 0; i < r->nasns; i++)
+            if (r->asns[i] == a) hit = 1;
         if (!hit) return 0;
     }
     if (r->has_expr) {
@@ -4779,6 +5303,11 @@ static void policy_load_yaml(const char *path) {
     yml_load_document(root, path, 0, dir);
     y_free(root);
     yml_loaded = 1;
+    for (int i = 0; i < yml_threshold_count; i++)
+        policy_text_add("threshold|%s|%d|%d|%s|%s|", yml_thresholds[i].name,
+                        yml_thresholds[i].action, yml_thresholds[i].difficulty,
+                        yml_thresholds[i].algorithm, yml_thresholds[i].expr);
+    policy_digest_finish();
 
     int weighed = 0, with_cidr = 0;
     for (int i = 0; i < yml_rule_count; i++) {
@@ -4902,6 +5431,7 @@ static void policy_load(const char *path) {
         int difficulty = 0;
         int n = sscanf(line, "%31s %63s %31s %255s", action, sel, how, value);
         if (n < 2) continue;
+        policy_text_add("%s %s %s %s|", action, sel, how, value);
         if (!strcmp(action, "default")) {
             default_action = (!strcmp(sel, "allow")) ? RULE_ALLOW
                              : (!strcmp(sel, "deny")) ? RULE_DENY : RULE_CHALLENGE;
@@ -4997,7 +5527,10 @@ static void policy_load(const char *path) {
         rules[rule_count++] = r;
     }
     fclose(f);
-    logmsg("policy: %d rule(s) from %s, default %s", rule_count, path,
+    policy_text_add("default|%d|%d|%s", default_action, default_difficulty, default_algorithm);
+    policy_digest_finish();
+    logmsg("policy: %d rule(s) from %s, policy %s, default %s", rule_count, path,
+           policy_digest(),
            default_action == RULE_ALLOW ? "allow" : default_action == RULE_DENY ? "deny" : "challenge");
 }
 
@@ -5371,13 +5904,13 @@ static void handle_connection(conn *c, const char *peer_ip) {
         /* forwardAuth: nginx asks "may this request through". The policy sees
          * the original URI when the proxy passes one along
          * (lib/policy/checker.go:117-131). */
-        /* header_value hands back one shared buffer, so every value used below
-         * has to be copied before the next lookup */
+        /* each value goes into its own buffer: the pointer version of this
+         * lookup returns one shared string */
         char orig_buf[2048] = "";
-        const char *orig = header_value(&req, "X-Original-Uri");
-        if (!orig || !*orig) orig = header_value(&req, "X-Forwarded-Uri");
-        if (orig) snprintf(orig_buf, sizeof orig_buf, "%s", orig);
-        orig = orig_buf;
+        if (!header_value_into(&req, "X-Original-Uri", orig_buf, sizeof orig_buf) ||
+            !orig_buf[0])
+            header_value_into(&req, "X-Forwarded-Uri", orig_buf, sizeof orig_buf);
+        const char *orig = orig_buf;
         if (orig && *orig) {
             snprintf(route_buf, sizeof route_buf, "%s", orig);
             collapse_slashes(route_buf, req.ppath, sizeof req.ppath);
@@ -5422,12 +5955,10 @@ static void handle_connection(conn *c, const char *peer_ip) {
             /* send the browser to the challenge page on the public URL,
              * carrying where it wanted to go */
             char proto_buf[32] = "", host_buf[256] = "";
-            const char *proto = header_value(&req, "X-Forwarded-Proto");
-            if (proto) snprintf(proto_buf, sizeof proto_buf, "%s", proto);
-            const char *host = header_value(&req, "X-Forwarded-Host");
-            if (host) snprintf(host_buf, sizeof host_buf, "%s", host);
-            proto = proto_buf;
-            host = host_buf;
+            header_value_into(&req, "X-Forwarded-Proto", proto_buf, sizeof proto_buf);
+            header_value_into(&req, "X-Forwarded-Host", host_buf, sizeof host_buf);
+            const char *proto = proto_buf;
+            const char *host = host_buf;
             char target[1024];
             if (!proto || !*proto || !host || !*host) {
                 const char *bad = "Missing required X-Forwarded-Proto and X-Forwarded-Host\n";
@@ -5523,15 +6054,17 @@ static void handle_connection(conn *c, const char *peer_ip) {
             hex_encode(rd, sizeof rd, rd_hex);
             char id[128];
             snprintf(id, sizeof id, "%s.%lld", rd_hex, (long long)time(NULL));
-            char referer[256] = "";
+            char referer[256] = "", ua_buf[256] = "";
             {
-                const char *r = header_value(&req, "Referer");
+                char raw_ref[512];
+                header_value_into(&req, "Referer", raw_ref, sizeof raw_ref);
                 size_t rn = 0;
-                for (const char *q = r ? r : ""; *q && rn + 1 < sizeof referer; q++)
+                for (const char *q = raw_ref; *q && rn + 1 < sizeof referer; q++)
                     if (*q != '"' && *q != '\\') referer[rn++] = *q;
                 referer[rn] = 0;
             }
-            const char *ua = header_value(&req, "User-Agent");
+            header_value_into(&req, "User-Agent", ua_buf, sizeof ua_buf);
+            const char *ua = ua_buf;
             char metadata[1024];
             snprintf(metadata, sizeof metadata,
                      "{\"Referer\":\"%s\",\"User-Agent\":\"%.200s\",\"X-Real-IP\":\"%s\"}",
@@ -5738,6 +6271,8 @@ static void usage(FILE *out) {
         "                         /api/check and the challenge\n"
         "  --public-url URL       where this gate is reachable, used to build the\n"
         "                         forwardAuth redirect\n"
+        "  --geoip-country PATH   MaxMind country database, for geoip: rule matching\n"
+        "  --geoip-asn PATH       MaxMind ASN database, for asns: rule matching\n"
         "  --dnsbl                check every client address against DroneBL, cached\n"
         "                         for a day; a lookup failure answers 503\n"
         "  --target-sni NAME      TLS name to send to the target; \"auto\" reuses the\n"
@@ -5891,6 +6426,9 @@ static const arg_spec args[] = {
     {"metrics-bind-network", ARG_STR, &cfg.metrics_network},
     {"public-url", ARG_STR, &cfg.public_url},
     {"dnsbl", ARG_BOOL, &cfg.dnsbl},
+    {"geoip-lookup", ARG_STR, &cfg.geoip_lookup},
+    {"geoip-country", ARG_STR, &cfg.geoip_country_path},
+    {"geoip-asn", ARG_STR, &cfg.geoip_asn_path},
     {"forced-language", ARG_STR, &cfg.forced_language},
     {"impressum-footer", ARG_STR, &cfg.impressum_footer},
     {"impressum-page-title", ARG_STR, &cfg.impressum_title},
@@ -6292,7 +6830,26 @@ int main(int argc, char **argv) {
                    patterns, MAX_REDIRECT_PATTERNS);
     }
 
+    if (cfg.geoip_lookup && *cfg.geoip_lookup) {
+        char cc[8] = "";
+        uint32_t asn = 0;
+        int have_c = geoip_country(cfg.geoip_lookup, cc, sizeof cc);
+        int have_a = geoip_asn(cfg.geoip_lookup, &asn);
+        printf("%s: country %s%s%s\n", cfg.geoip_lookup, have_c ? cc : "(not found)",
+               have_a ? ", ASN " : "", have_a ? "" : "");
+        if (have_a) printf("%s: ASN %u\n", cfg.geoip_lookup, asn);
+        return 0;
+    }
+
+    if (cfg.geoip_country_path && *cfg.geoip_country_path &&
+        mmdb_open(&mm_country, cfg.geoip_country_path) != 0)
+        return 1;
+    if (cfg.geoip_asn_path && *cfg.geoip_asn_path &&
+        mmdb_open(&mm_asn, cfg.geoip_asn_path) != 0)
+        return 1;
+
     if (cfg.policy_file) policy_load(cfg.policy_file);
+    else policy_digest_finish();
     if (cfg.subrequest) {
         snprintf(cfg.target_host, sizeof cfg.target_host, "%s", "unix");
         cfg.target_port = 0;

@@ -312,8 +312,8 @@ md5 `925898fa36ea34855d0d1d1e7a6b5b7b`, 3755 lines.
 | `--metrics-bind`, SIGHUP | recorded in 1.1 | unchanged, now covered: seven checks for the metrics listener, and `print_settings` reads the counters |
 | the option parser | hand-written if chain, `--flag value` only | table driven, `--flag=value` too, `--no-flag` / `--flag=false` for every boolean, and the table is the only place a flag is declared |
 
-Still open from the audit: backend HTTP keep-alive (the second half of item 8), an arbitrary CEL engine, GeoIP and ASN
-matching, the stores, OpenGraph, and the css-load challenge extension.
+Still open from the audit: backend HTTP keep-alive (the second half of item 8), an arbitrary CEL engine, the stores,
+OpenGraph, and the css-load challenge extension.
 
 Closed since then:
 
@@ -323,6 +323,7 @@ Closed since then:
 | `DEBUG_BENCHMARK`, the fifth action | accepted in an Anubis policy and treated as "always challenge" (`lib/config/config.go:43`), with its metrics going to the CHALLENGE slot. One check |
 | the environment-variable surface | every flag in the table is also an environment variable using upstream's `flagenv` mapping, and a flag on the command line wins. Two checks |
 | `--healthcheck` | GETs `/healthz` on `--metrics-bind` and exits 0 or 1, which is what a supervisor needs. Two checks |
+| GeoIP and ASN | a MaxMind DB reader in C: 24/28/32-bit trees, section-relative pointers, and just the record types Anubis reads (`country.iso_code` with `registered_country` as fallback, `autonomous_system_number` and `..._organization`). Validated against MaxMind's own test databases, checked in under `tools/geoip-testdata`; `--geoip-lookup IP` reports what it sees. Three checks |
 | 9, DNSBL | `--dnsbl` (or `dnsbl: true` in a policy) reverses the client address, asks `<reversed>.dnsbl.dronebl.org`, reads the class out of the last octet of the first A record and caches the verdict for a day. A hit denies with the class; a resolver failure answers 503 rather than guessing. One check |
 | `verifyFCrDNS` | implemented as an expression leaf: PTR via `getnameinfo`, then a forward lookup whose addresses must include the address asked about, then the pattern is applied to the name. The shipped Yandex rule loads without a warning now, and the whole shipped policy has zero unsupported rules. One check |
 | localization | six locales hand-written for this page, chosen by Accept-Language order or `--forced-language`, English as fallback. Four checks |

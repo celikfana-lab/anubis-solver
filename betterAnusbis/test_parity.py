@@ -902,7 +902,10 @@ def main():
 
     # a token minted by a normal gate is honoured here when the key is shared
     secretfile = os.path.join(fwddir, "shared.key")
-    with Gate("--difficulty", "6", "--secret-file", secretfile):
+    # the policy digest travels in the token, so both gates must run the same
+    # policy for the cookie to be honoured (that is the point of O1)
+    with Gate("--difficulty", "6", "--secret-file", secretfile,
+              policy="allow path prefix /public\ndeny path prefix /private\n"):
         status, hdrs, body, ch = solve_once()
         shared_token = token_of(hdrs)
         shared_name = AUTH_NAME
@@ -927,6 +930,56 @@ def main():
     finally:
         proc.terminate()
         proc.wait(3)
+
+    # ---- 23b. O1: the token records the policy it was minted under
+    o1key = os.path.join(tempfile.mkdtemp(), "o1.key")
+    base_policy = "allow path prefix /health\n"
+    with Gate("--difficulty", "6", "--secret-file", o1key, policy=base_policy):
+        status, hdrs, body, ch = solve_once()
+        o1_token, o1_name = token_of(hdrs), AUTH_NAME
+    with Gate("--difficulty", "6", "--secret-file", o1key, policy=base_policy):
+        st, _, body = request("GET", "/", headers={"Cookie": f"{o1_name}={o1_token}"})
+        check("a cookie survives a restart under the same policy",
+              st == 200 and b"PAST THE WALL" in body, st)
+    with Gate("--difficulty", "6", "--secret-file", o1key,
+              policy=base_policy + "deny ua contains Bot\n"):
+        st, _, body = request("GET", "/", headers={"Cookie": f"{o1_name}={o1_token}"})
+        check("editing the policy invalidates the cookies minted before it",
+              b"anubis_challenge" in body, st)
+
+    # ---- 23c. GeoIP country and ASN rules, against MaxMind's own test databases
+    cdb = os.path.join(HERE, "tools", "geoip-testdata", "GeoIP2-Country-Test.mmdb")
+    adb = os.path.join(HERE, "tools", "geoip-testdata", "GeoLite2-ASN-Test.mmdb")
+    if os.path.exists(cdb) and os.path.exists(adb):
+        geo_policy = (
+            "bots:\n"
+            "  - name: deny-gb\n"
+            "    geoip:\n"
+            "      countries:\n"
+            "        - GB\n"
+            "    action: DENY\n"
+            "  - name: asn-29518\n"
+            "    asns:\n"
+            "      match:\n"
+            "        - 29518\n"
+            "    action: CHALLENGE\n"
+            "    challenge:\n"
+            "      algorithm: fast\n"
+            "      difficulty: 3\n")
+        with Gate("--difficulty", "6", "--deny-status", "403", policy=geo_policy,
+                  *("--geoip-country", cdb, "--geoip-asn", adb)):
+            st, _, body = request("GET", "/", headers={"X-Forwarded-For": "2.125.160.216"})
+            check("a country rule denies a GB address", st == 403 and b"denied" in body, st)
+            st, _, body = request("GET", "/", headers={"X-Forwarded-For": "175.16.199.1"})
+            check("a CN address is not caught by the GB rule and is allowed",
+                  b"PAST THE WALL" in body, body[:60])
+            st, _, body = request("GET", "/", headers={"X-Forwarded-For": "89.160.20.112"})
+            ch = anubis_solver.parse_challenge(body.decode(errors="replace"))
+            check("an ASN rule challenges the address in that ASN",
+                  ch is not None and ch.algorithm == "fast" and ch.difficulty == 3,
+                  ch and (ch.algorithm, ch.difficulty))
+    else:
+        print("  (skipped the GeoIP checks: tools/geoip-testdata is missing)")
 
     # ---- 24. DNS: the shipped policy is fully understood, and DNSBL answers
     if os.path.exists(policy):

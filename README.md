@@ -131,6 +131,7 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 | [docs/troubleshooting.md](docs/troubleshooting.md) | common build and runtime errors |
 | [docs/development.md](docs/development.md) | layout, build, kernel regeneration, tests |
 | [SPEED.md](SPEED.md) | measured throughput, per tier and per version |
+| [MIGRATE.md](MIGRATE.md) | moving a live deployment from Anubis to `betterAnusbis`, and making clients fast while doing it |
 
 ## [HALL_OF_SHAME.md](HALL_OF_SHAME.md)
 
@@ -188,7 +189,9 @@ verification, and each ships with tests that run against the real library:
 `betterAnusbis/` is an Anubis-compatible proof-of-work gate — same challenge JSON,
 same `pass-challenge` route, same cookie name, so every existing client works
 against it unchanged — in about a thousand lines of C with one dependency (this
-repository's engine, used for verification).
+repository's engine, used for verification). A running deployment moves over by
+changing one upstream line; [MIGRATE.md](MIGRATE.md) is the walkthrough, and the
+gate's own [README](betterAnusbis/README.md) is the reference.
 
 ```bash
 cd betterAnusbis && make

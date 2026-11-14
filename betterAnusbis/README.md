@@ -1,6 +1,7 @@
 # betterAnusbis
 
-**1.50.1 "headslam"**
+**1.50.1 "headslam"** — coming from a running Anubis? [../MIGRATE.md](../MIGRATE.md)
+is the step-by-step.
 
 An Anubis-compatible proof-of-work gate in **one C file**. It issues the same
 challenges, on the same routes, with the same JSON and the same cookie name — so

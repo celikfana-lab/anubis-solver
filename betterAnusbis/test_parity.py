@@ -828,7 +828,27 @@ def main():
         st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={ed_token}"})
         check("an EdDSA token opens the door", st == 200 and b"PAST THE WALL" in body, st)
 
-    # ---- 21. the old flags still behave
+    # ---- 21. localization and the impressum
+    with Gate("--difficulty", "6"):
+        st, _, body = request("GET", "/", headers={"Accept-Language": "de-DE,de;q=0.9,en;q=0.5"})
+        check("Accept-Language picks the German page", b"Nachweis" in body,
+              body[:120])
+        st, _, body = request("GET", "/", headers={"Accept-Language": "xx-YY"})
+        check("an unknown language falls back to English",
+              b"Proving you are not a robot" in body, body[:120])
+    with Gate("--difficulty", "6", "--forced-language", "fr"):
+        st, _, body = request("GET", "/", headers={"Accept-Language": "de-DE,de;q=0.9"})
+        check("--forced-language wins over the header", b"Prouver" in body, body[:120])
+    with Gate("--difficulty", "6", "--impressum-footer", "<p>hosted by the cat</p>",
+              "--impressum-page-title", "Imprint", "--impressum-page-body", "<p>no cookies</p>"):
+        st, _, body = request("GET", "/")
+        check("--impressum-footer is on the challenge page", b"hosted by the cat" in body,
+              body[-200:])
+        st, _, body = request("GET", API + "imprint")
+        check("the imprint page is served", st == 200 and b"no cookies" in body and
+              b"hosted by the cat" in body, body[:200])
+
+    # ---- 22. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

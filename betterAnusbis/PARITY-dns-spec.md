@@ -16,22 +16,22 @@ not be checked against source says **unverified**. Upstream git revision not rea
 
 Upstream builds the query name as `Reverse(ip) + ".dnsbl.dronebl.org"` (`internal/dnsbl/dnsbl.go:74`).
 
-- IPv4 `a.b.c.d` becomes `d.c.b.a.dnsbl.dronebl.org` (`dnsbl.go:41-50`; the swap of first/last and middle octets is a
+- IPv4 `a.b.c.d` becomes `d.c.b.a.dnsbl.dronebl.org` (`internal/dnsbl/dnsbl.go:41-50`; the swap of first/last and middle octets is a
   full octet reversal).
 - IPv6 is 32 nibbles, each byte emitted low nibble first then high, bytes walked from last to first, joined with dots,
-  and the same zone appended (`dnsbl.go:52-66`, `:74`). For `2001:db8::1` that is
+  and the same zone appended (`internal/dnsbl/dnsbl.go:52-66`, `:74`). For `2001:db8::1` that is
   `1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.dnsbl.dronebl.org`, which is standard
   nibble-reverse notation. Whether DroneBL actually publishes results there is **unverified**; the code emits that name
   regardless.
-- No EDNS, no TSIG, no DNSSEC validation is configured anywhere; the lookup is `net.LookupIP` (`dnsbl.go:76`), i.e. the
+- No EDNS, no TSIG, no DNSSEC validation is configured anywhere; the lookup is `net.LookupIP` (`internal/dnsbl/dnsbl.go:76`), i.e. the
   system resolver.
 
 ### 1.2 Record type and answer interpretation
 
-`net.LookupIP` resolves A and AAAA for the name (`dnsbl.go:76`) but only IPv4 answers are consumed: the response class
-is the **last octet of the first A record** in the answer set (`dnsbl.go:91-97`). The full mapping is
-`DroneBLResponse(v4[3])`, and the class constants are (`dnsbl.go:14-31`, names from
-`internal/dnsbl/droneblresponse_string.go:12-28`):
+`net.LookupIP` resolves A and AAAA for the name (`internal/dnsbl/dnsbl.go:76`) but only IPv4 answers are consumed: the response class
+is the **last octet of the first A record** in the answer set (`internal/dnsbl/dnsbl.go:91-97`). The full mapping is
+`DroneBLResponse(v4[3])`, and the class constants are (`internal/dnsbl/dnsbl.go:14-31`, names from
+`internal/dnsbl/droneblresponse_string.go:30-52`):
 
 | class | constant | meaning |
 |---:|---|---|
@@ -52,12 +52,12 @@ is the **last octet of the first A record** in the answer set (`dnsbl.go:91-97`)
 | 17 | `AutoDetectedBotIP` | auto-detected bot |
 | 255 | `Unknown` | lookup error, see below |
 
-Control flow, exactly (`dnsbl.go:76-88`):
+Control flow, exactly (`internal/dnsbl/dnsbl.go:76-88`):
 - `net.LookupIP` error whose `*net.DNSError.IsNotFound` is true -> `AllGood`, no error. A no-such-name answer is a clean
   verdict, not an error.
 - Any other lookup error (timeout, SERVFAIL, refusal) -> `Unknown` **and** an error is returned.
 - Lookup succeeds -> `responseFromIPs`.
-- `responseFromIPs` (`dnsbl.go:91-101`): if the answer list is non-empty but contains no IPv4 answer, the verdict is
+- `responseFromIPs` (`internal/dnsbl/dnsbl.go:91-101`): if the answer list is non-empty but contains no IPv4 answer, the verdict is
   `UnknownSpambotOrDrone` (6), i.e. a hit. Only an empty answer list returns 6 as a fallback too; both branches produce
   6, so "name exists, no A record" is a hit upstream, not a clean result.
 
@@ -69,10 +69,10 @@ from this repo, Go stdlib behaviour).
 
 The verdict, not the DNS record, is cached:
 
-- Key: the client address string exactly as it appears in `X-Real-IP` (`lib/anubis.go:495`, `:497`).
-- Store: `store.JSON[DroneBLResponse]` with prefix `dronebl:` (`lib/anubis.go:496`).
-- TTL: 24 hours, set on every successful lookup (`lib/anubis.go:507`). DNS record TTL is ignored.
-- Errors are **not** cached: a failed lookup is retried on the next request (`lib/anubis.go:501-506`), so an
+- Key: the client address string exactly as it appears in `X-Real-IP` (`lib/anubis.go:495` for the store, `:497` for the key).
+- Store: `store.JSON[DroneBLResponse]` with prefix `dronebl:` (`lib/anubis.go:495`).
+- TTL: 24 hours, set on every successful lookup (`lib/anubis.go:506`). DNS record TTL is ignored.
+- Errors are **not** cached: a failed lookup is retried on the next request (`lib/anubis.go:501-504`), so an
   outage of the resolver translates to one query per request.
 - A cache hit skips the lookup and the metric.
 
@@ -81,16 +81,16 @@ The verdict, not the DNS record, is cached:
 Order in the request path (`lib/anubis.go:337-359`): the policy check runs first, then the policy-result metric, then
 `handleDNSBL`, then `checkRules`. So a DNSBL hit denies even when an `ALLOW` rule matched.
 
-On a non-zero verdict (`lib/anubis.go:512-520`):
+On a non-zero verdict (`lib/anubis.go:511-520`):
 
 - `respondWithStatus` with the HTML error page and status `status_codes.DENY` (`lib/anubis.go:519`), which defaults to
   200 (`lib/config/config.go:388-392`) and is configurable (`lib/config/config.go:285-306`).
 - Message: `"<dronebl_entry>: <class name>, <see_dronebl_lookup> https://dronebl.org/lookup?ip=<ip>"`, using locale keys
   `dronebl_entry` and `see_dronebl_lookup` (`lib/localization/locales/en.json:30-31`).
-- Log line `"DNSBL hit"` with the class name (`lib/anubis.go:514`).
+- Log line `"DNSBL hit"` with the class name (`lib/anubis.go:512`).
 - Metric `anubis_dronebl_hits{status,asn,asn_description}` incremented on the lookup path only (`lib/anubis.go:82-85`,
-  `:509-510`).
-- On a lookup error: status 503 with the internal-error page and the request is stopped (`lib/anubis.go:501-505`). That
+  `:508`).
+- On a lookup error: status 503 with the internal-error page and the request is stopped (`lib/anubis.go:501-504`). That
   is fail-closed, not fail-open.
 
 The feature is enabled by the top-level `dnsbl: true` in the policy file (`lib/config/config.go:315`, plumbed at
@@ -122,7 +122,7 @@ Practical notes:
 - The name is at most 4+21=25 bytes for IPv4 plus label overhead, so no EDNS and no TCP retry are needed unless the TC
   bit is set (a truncated reply should be treated as an error or retried over TCP; Go's exact behaviour here is
   **unverified**).
-- Read the resolver from `/etc/resolv.conf`; upstream uses the system resolver (`dnsbl.go:76`), so no custom resolver
+- Read the resolver from `/etc/resolv.conf`; upstream uses the system resolver (`internal/dnsbl/dnsbl.go:76`), so no custom resolver
   config exists to match.
 - The whole feature is IPv4-only in practice: AAAA answers are ignored by the class extraction.
 
@@ -148,27 +148,27 @@ Yandex-suffix PTR. The same function is used by `data/clients/vk-preview.yaml:6`
 `data/clients/telegram-preview.yaml:6` with different patterns.
 
 Two CEL overloads are registered (`lib/policy/expressions/environment.go:99-130`): one argument, and two (addr,
-pattern). Both call `Dns.VerifyFCrDNS` (`internal/dns/dns.go:108-148`).
+pattern). Both call `Dns.VerifyFCrDNS` (`internal/dns/dns.go:106-148`).
 
 ### 2.2 What it actually checks
 
 Step by step (`internal/dns/dns.go:90-148`):
 
-1. **Reverse lookup.** `net.LookupAddr(addr)` for PTR records (`dns.go:47`, `:112`), results cached under prefix
+1. **Reverse lookup.** `net.LookupAddr(addr)` for PTR records (`internal/dns/dns.go:43`, `:112`), results cached under prefix
    `reverseDNS` with TTL `dns_ttl.reverse` (default 300 s, `lib/config/config.go:393-396`, `internal/dns/cache.go:19-27`,
-   `:64-68`). Trailing dots are stripped (`dns.go:57-63`).
+   `:64-68`). Trailing dots are stripped (`internal/dns/dns.go:56-59`).
 2. **No names.** If the reverse lookup returned zero names, the function returns `pattern == nil`
-   (`dns.go:118-120`). The one-argument form therefore returns **true** when a host has no PTR at all. The two-argument
+   (`internal/dns/dns.go:120-122`). The one-argument form therefore returns **true** when a host has no PTR at all. The two-argument
    form (the one this policy uses) returns false. This is a deliberate fail-open in the one-argument form and a port
    must not "fix" it silently if bit-for-bit parity is the goal.
 3. **Pattern filter.** If a pattern is given, it is compiled as a Go regexp (RE2 syntax), matched against each PTR name,
-   and the names that match are kept (`dns.go:122-140`). If none match, return false **without doing any forward
+   and the names that match are kept (`internal/dns/dns.go:124-140`). If none match, return false **without doing any forward
    lookup**. Note the pattern is matched with `MatchString`, i.e. unanchored unless the pattern anchors itself; the
    Yandex pattern anchors both ends.
 4. **Forward confirmation.** For each surviving name, `LookupHost(name)` (A and AAAA) is resolved, cached under prefix
-   `forwardDNS` with TTL `dns_ttl.forward` (default 300 s, `cache.go:19-27`, `:57-61`), and compared to the original
-   address with `slices.Contains` on the **string** form (`dns.go:90-106`, `:140-146`). Any match returns true; all
-   names exhausted returns false. Errors on a name are skipped (`dns.go:95-99`).
+   `forwardDNS` with TTL `dns_ttl.forward` (default 300 s, `internal/dns/cache.go:19-27`, `:57-61`), and compared to the original
+   address with `slices.Contains` on the **string** form (`internal/dns/dns.go:90-104`, `:140-146`). Any match returns true; all
+   names exhausted returns false. Errors on a name are skipped (`internal/dns/dns.go:93-99`).
 5. **Cost.** One PTR query and one or more A/AAAA queries per uncached pair, 5 min cached by default. The doc for the
    function warns it can be manipulated by stale records but is the recommended check
    (`docs/docs/admin/configuration/expressions.mdx:343-359`).
@@ -195,41 +195,41 @@ patterns (`.yandex.(ru|com|net)`, `ptr\.telegram\.org$`, `^snipster\d+\.go\.mail
 
 ### 3.1 Configuration
 
-`openGraph` block: `enabled`, `considerHost`, `ttl`, `override` (`lib/config/opengraph.go:13-24`). Validation requires
+`openGraph` block: `enabled`, `considerHost`, `ttl`, `override` (`lib/config/opengraph.go:15-20`). Validation requires
 `ttl` to parse as a Go duration and, when `override` is non-empty, requires `og:title` to be present
-(`lib/config/opengraph.go:26-56`). Flags `--og-passthrough`, `--og-expiry-time`, `--og-cache-consider-host` are
+(`lib/config/opengraph.go:29-50`). Flags `--og-passthrough`, `--og-expiry-time`, `--og-cache-consider-host` are
 fallbacks only used when the policy block is disabled (`cmd/anubis/main.go:431-436`).
 
 Docs confirm the override semantics: "return these opengraph values instead of looking them up with the target
-service" (`docs/docs/admin/configuration/open-graph.mdx:30-44`).
+service" (`docs/docs/admin/configuration/open-graph.mdx:23-24`).
 
 ### 3.2 Fetch
 
 `GetOGTags` (`internal/ogtags/cache.go:12-50`):
 
-1. If `override` is non-empty, return it immediately: no fetch, no cache (`cache.go:16-18`). So `override` is a complete
+1. If `override` is non-empty, return it immediately: no fetch, no cache (`internal/ogtags/cache.go:17-19`). So `override` is a complete
    replacement, not a per-tag overlay.
 2. Build the target: configured target scheme and host plus the **request path and query** (`internal/ogtags/ogtags.go:141-170`).
-3. Cache key: that target string, or `target + "|" + originalHost` when `considerHost` is set (`cache.go:57-66`).
-4. Cache lookup in `store.JSON[map[string]string]` prefix `ogtags:` (`ogtags.go:117-120`), TTL `openGraph.ttl`.
-5. Fetch (`internal/ogtags/fetch.go:20-130`): `GET`, 5 s client timeout (`ogtags.go:27`), `Host` header from
-   `--target-host` or the visitor's host (`fetch.go:35-46`), `X-Forwarded-Proto: https`, `X-Forwarded-Host: <host>`,
-   `User-Agent: Anubis-OGTag-Fetcher/1.0` (`fetch.go:50-58`), same-origin redirects only and at most 10
-   (`fetch.go:120-130`), body capped at 8 MiB (`ogtags.go:24`, `fetch.go:117`), response must be 200 with
-   `Content-Type: text/html` or `application/xhtml+xml` (`fetch.go:88-105`).
-6. Parse with `golang.org/x/net/html` (`fetch.go:113`), then extract (`internal/ogtags/parse.go:14-33`).
+3. Cache key: that target string, or `target + "|" + originalHost` when `considerHost` is set (`internal/ogtags/cache.go:54-65`).
+4. Cache lookup in `store.JSON[map[string]string]` prefix `ogtags:` (`internal/ogtags/ogtags.go:115`), TTL `openGraph.ttl`.
+5. Fetch (`internal/ogtags/fetch.go:20-130`): `GET`, 5 s client timeout (`internal/ogtags/ogtags.go:20`), `Host` header from
+   `--target-host` or the visitor's host (`internal/ogtags/fetch.go:35-47`), `X-Forwarded-Proto: https`, `X-Forwarded-Host: <host>`,
+   `User-Agent: Anubis-OGTag-Fetcher/1.0` (`internal/ogtags/fetch.go:42-47`), same-origin redirects only and at most 10
+   (`internal/ogtags/fetch.go:115-125`), body capped at 8 MiB (`internal/ogtags/ogtags.go:19`, `internal/ogtags/fetch.go:99`), response must be 200 with
+   `Content-Type: text/html` or `application/xhtml+xml` (`internal/ogtags/fetch.go:82-96`).
+6. Parse with `golang.org/x/net/html` (`internal/ogtags/fetch.go:101`), then extract (`internal/ogtags/parse.go:14-33`).
 7. Store the tag map under the cache key; failures cache an empty map for the TTL
-   (non-200: `fetch.go:82-87`; timeout: half TTL, `fetch.go:60-68`). A cache entry is therefore a positive "this URL has
+   (non-200: `internal/ogtags/fetch.go:75-80`; timeout: half TTL, `internal/ogtags/fetch.go:59-64`). A cache entry is therefore a positive "this URL has
    no tags" signal.
-8. `syscall.ECONNREFUSED` and `ErrOgHandled` return nil tags without failing the request (`cache.go:35-42`); any other
+8. `syscall.ECONNREFUSED` and `ErrOgHandled` return nil tags without failing the request (`internal/ogtags/cache.go:31-37`); any other
    error is logged by the caller and the page renders without tags (`lib/http.go:329-336`).
 
 ### 3.3 What HTML is parsed
 
-Every `<meta>` element anywhere in the document (`parse.go:14-33`), keyed by its `property` **or** `name` attribute,
-value from `content` (`parse.go:40-60`). A key is accepted when it starts with one of `og:`, `twitter:`, `fediverse:` or
-equals exactly `description`, `keywords`, `author` (`ogtags.go:66-68`, `:124-127`). The map is built with plain
-assignment, so the last duplicate of a key wins (`parse.go:20-23`). No `<title>` fallback, no JSON-LD, no HTML entity
+Every `<meta>` element anywhere in the document (`internal/ogtags/parse.go:14-33`), keyed by its `property` **or** `name` attribute,
+value from `content` (`internal/ogtags/parse.go:40-60`). A key is accepted when it starts with one of `og:`, `twitter:`, `fediverse:` or
+equals exactly `description`, `keywords`, `author` (`internal/ogtags/ogtags.go:56-57`, `internal/ogtags/parse.go:62-70`). The map is built with plain
+assignment, so the last duplicate of a key wins (`internal/ogtags/parse.go:17-20`). No `<title>` fallback, no JSON-LD, no HTML entity
 work beyond what the HTML parser does.
 
 ### 3.4 How the tags reach the challenge page
@@ -256,13 +256,13 @@ where the edge cases live (attributes in any order, single quotes, unquoted valu
 `go-i18n v2` with English as the fallback language, every `locales/*.json` embedded and loaded at init
 (`lib/localization/localization.go:17-76`). Selection order:
 
-1. `--forced-language` / `FORCED_LANGUAGE`, if set (`cmd/anubis/main.go:56`, `anubis.go:69`, `localization.go:133-140`).
+1. `--forced-language` / `FORCED_LANGUAGE`, if set (`cmd/anubis/main.go:56`, `anubis.go:64`, `lib/localization/localization.go:133-140`).
 2. Otherwise `Accept-Language`, parsed with quality factors; for each tag the full tag and its base language are tried,
-   and `en` is appended as the final fallback (`localization.go:82-116`).
-3. `<html lang>` is set by localizing the `loading` key with a tag (`localization.go:125-131`, `web/index.templ:14`), so
+   and `en` is appended as the final fallback (`lib/localization/localization.go:82-116`).
+3. `<html lang>` is set by localizing the `loading` key with a tag (`lib/localization/localization.go:125-131`, `web/index.templ:14`), so
    `loading` must exist in every catalog.
 
-`T()` uses `MustLocalize` (`localization.go:120-123`): a key missing from the chosen locale falls back to English; a key
+`T()` uses `MustLocalize` (`lib/localization/localization.go:120-123`): a key missing from the chosen locale falls back to English; a key
 missing from English too is a panic at render time. English is therefore the contract.
 
 ### 4.2 How many locales ship
@@ -282,7 +282,7 @@ their `en.json` lines:
 | key | en.json | used by |
 |---|---|---|
 | `making_sure_not_bot` | `en.json:43` | page title (`lib/http.go:381`) |
-| `loading` | `en.json:2` | `<html lang>` probe (`localization.go:125`) and status line (`web/index.templ:151`) |
+| `loading` | `en.json:2` | `<html lang>` probe (`lib/localization/localization.go:125`) and status line (`web/index.templ:151`) |
 | `protected_by` | `en.json:4` | footer (`web/index.templ:76`) |
 | `protected_from` | `en.json:5` | footer (`web/index.templ:76`) |
 | `made_with` | `en.json:6` | footer (`web/index.templ:78`) |
@@ -291,8 +291,8 @@ their `en.json` lines:
 | `version_info` | `en.json:10` | footer (`web/index.templ:87`) |
 | `go_home` | `en.json:12` | error body (`web/index.templ:104`, `:110`) |
 | `contact_webmaster` | `en.json:13` | error body (`web/index.templ:104`) |
-| `javascript_required` | `en.json:15` | PoW/wasm body (`proofofwork_templ.go:91`, `wasm_templ.go`) |
-| `script_load_error` | `en.json:63` | PoW/wasm body (`proofofwork_templ.go:82`) |
+| `javascript_required` | `en.json:15` | PoW/wasm body (`lib/challenge/proofofwork/proofofwork_templ.go:124`, `wasm_templ.go`) |
+| `script_load_error` | `en.json:63` | PoW/wasm body (`lib/challenge/proofofwork/proofofwork_templ.go:82`) |
 | `connection_security` | `en.json:14` | metarefresh/preact body (`metarefresh_templ.go`) |
 
 That is 13 keys for the cheapest complete page (base + PoW body). `errorPage` adds `oh_noes`
@@ -310,11 +310,11 @@ job (translation data, quality-factor parsing, fallback).
 
 Two MaxMind DB files, both optional:
 
-- ASN: default edition `GeoLite2-ASN` (`lib/config/geoip_databases.go:36`), path `geoip.asn.path`
-  (`lib/config/geoip_databases.go:95-99`). Accepted database types: any `DatabaseType` containing `ASN`, or exactly
-  `GeoIP2-ISP` (`lib/geoip/geoip.go:277-279`).
-- Country: default edition `GeoLite2-Country` (`lib/config/geoip_databases.go:37`), path `geoip.country.path`.
-  Accepted: `DatabaseType` containing `Country`, or exactly `GeoLite2-City` (`lib/geoip/geoip.go:278-280`).
+- ASN: default edition `GeoLite2-ASN` (`lib/config/geoip_databases.go:26`), path `geoip.asn.path`
+  (`lib/config/geoip_databases.go:109`). Accepted database types: any `DatabaseType` containing `ASN`, or exactly
+  `GeoIP2-ISP` (`lib/geoip/geoip.go:277-280`).
+- Country: default edition `GeoLite2-Country` (`lib/config/geoip_databases.go:27`), path `geoip.country.path`.
+  Accepted: `DatabaseType` containing `Country`, or exactly `GeoLite2-City` (`lib/geoip/geoip.go:277-280`).
 
 Records read (`lib/geoip/geoip.go:65-77`):
 
@@ -330,37 +330,37 @@ type countryRecord struct {
 ```
 
 `LookupASN` returns `(number, organization, ok)`, with `ok=false` when the address is not found or the ASN is 0
-(`geoip.go:177-201`). `LookupCountry` returns the lowercase ISO code; it prefers `country.iso_code`, falls back to
+(`lib/geoip/geoip.go:177-201`). `LookupCountry` returns the lowercase ISO code; it prefers `country.iso_code`, falls back to
 `registered_country.iso_code`, and swaps the preference when `country_field: registered_country` is configured
-(`geoip.go:203-236`, field config at `lib/config/geoip.go:26-36`, `lib/config/geoip_databases.go:145-155`). Both look
-ups call `addr.Unmap()` first, so IPv4-in-IPv6 forms work (`geoip.go:190`, `:216`).
+(`lib/geoip/geoip.go:203-236`, field config at `lib/config/geoip.go:16-18`, `lib/config/geoip_databases.go:139-145`). Both look
+ups call `addr.Unmap()` first, so IPv4-in-IPv6 forms work (`lib/geoip/geoip.go:188`, `:214`).
 
 ### 5.2 Rule matching
 
 Config: `geoip: {countries: [...]}` on a bot rule (`lib/config/config.go:66`), `asns: {match: [15169, ...]}` on a bot
-rule (`lib/config/config.go:67`, `lib/config/asn.go:14-16`). A rule's conditions are ANDed; the geoip and ASN checks are
+rule (`lib/config/config.go:67`, `lib/config/asn.go:12-14`). A rule's conditions are ANDed; the geoip and ASN checks are
 appended to the rule's checker list like any other condition (`lib/policy/policy.go:219-232`).
 
 - ASN check (`lib/geoip/checker.go:13-49`): parse `X-Real-IP`, `LookupASN`, membership in the configured set. Parse
   failure -> false.
 - Country check (`lib/geoip/checker.go:59-95`): parse `X-Real-IP`, `LookupCountry`, membership in the lowercased set
-  (`lib/config/geoip.go:30-34` lowercases and validates two letters). Parse failure -> false.
-- ASN values in the private-use ranges are rejected at config load (`lib/config/asn.go:18-49`).
+  (`lib/config/geoip.go:28` lowercases and validates two letters). Parse failure -> false.
+- ASN values in the private-use ranges are rejected at config load (`lib/config/asn.go:16-46`).
 - If a rule declares `asns` or `geoip` but no database is configured, the condition is **dropped with a warning** and the
   rule keeps its other conditions (`lib/policy/policy.go:219-232`). That is a fail-open: the rule can then match more
   traffic than intended, including a `DENY` rule. Worth deciding deliberately in a port.
 - ASN also feeds the `asn`/`asn_description` metric labels (`lib/anubis.go:70-99`) and optional ASN logging
-  (`lib/config/logging.go:22`, `lib/policy/policy.go:108-113`).
+  (`lib/config/logging.go:20`, `lib/policy/policy.go:67`, `:130-131`).
 
 ### 5.3 Database acquisition and refresh
 
-`geoip.auto_update` (`lib/config/geoip_databases.go:158-196`) takes `account_id`, `license_key_env` (the env var is read
+`geoip.auto_update` (`lib/config/geoip_databases.go:156-196`) takes `account_id`, `license_key_env` (the env var is read
 at validation time, `:173`), an optional `interval` (default 24 h, minimum 1 h, `:34-35`, `:196-204`) and an optional
 `endpoint` (http/https only, `:186-196`). Downloads go through the MaxMind `geoipupdate` client
-(`lib/geoip/update.go:18`, `:55-63`), each download is MD5-verified (`update.go:84-90`), capped at 512 MiB
-(`update.go:31-32`), written as a timestamped sibling file, validated by opening it, then swapped in atomically
-(`update.go:66-98`, `lib/geoip/versions.go:15-30`). Without auto update, files are checked for changes every 5 minutes
-(`update.go:34-40`).
+(`lib/geoip/update.go:18`, `:55-63`), each download is MD5-verified (`lib/geoip/update.go:86-93`), capped at 512 MiB
+(`lib/geoip/update.go:29`), written as a timestamped sibling file, validated by opening it, then swapped in atomically
+(`lib/geoip/update.go:68-98`, `lib/geoip/versions.go:15-30`). Without auto update, files are checked for changes every 5 minutes
+(`lib/geoip/update.go:33`).
 
 ### 5.4 Is reading the mmdb the only real work?
 
@@ -368,13 +368,13 @@ For matching, yes. The MaxMind DB format is a search tree plus a data section pl
 
 - Metadata marker `\xAB\xCD\xEFMaxMind.com` at the end of the file (`maxminddb-golang@v2.7.0/reader.go:132`); metadata
   keys used are `database_type`, `binary_format_major_version`, `build_epoch`, `ip_version`, `node_count`,
-  `record_size` (24, 28 or 32 bits) (`reader.go:165-197`).
+  `record_size` (24, 28 or 32 bits) (`maxminddb-golang@v2.7.0/reader.go:165-197`).
 - Layout: search tree of `node_count * record_size / 4` bytes, then a 16-byte separator, then the data section, then the
-  metadata (`reader.go:130-132`, `:374-391`). A node's children are at `node * (record_size/4)` and
-  `+ record_size/8` bytes (`reader.go:391`); a record value below `node_count` is the next node, exactly `node_count`
-  is empty, and above is a data pointer resolved as `pointer - node_count - 16` (`reader.go:474-505`, `:806-818`).
+  metadata (`maxminddb-golang@v2.7.0/reader.go:130-132`, `:374-391`). A node's children are at `node * (record_size/4)` and
+  `+ record_size/8` bytes (`maxminddb-golang@v2.7.0/reader.go:391`); a record value below `node_count` is the next node, exactly `node_count`
+  is empty, and above is a data pointer resolved as `pointer - node_count - 16` (`maxminddb-golang@v2.7.0/reader.go:474-505`, `:806-818`).
 - IPv4 lookup in a v6 database starts at the node reached by walking 96 zero bits (the IPv4 start node), then consumes
-  the 32 address bits (`reader.go:452-466`, `:579-612`).
+  the 32 address bits (`maxminddb-golang@v2.7.0/reader.go:452-466`, `:579-612`).
 - Data section is a tagged encoding: type numbers 0..15 in the order extended, pointer, string, float64, bytes, uint16,
   uint32, map, int32, uint64, uint128, array, container, end marker, bool, float32
   (`maxminddb-golang@v2.7.0/internal/decoder/data_decoder.go:15-49`). The records above need only map (7), string (2),

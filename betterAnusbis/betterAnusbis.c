@@ -122,6 +122,10 @@ typedef struct {
     const char *hs512_secret;    /* sign with HS512 and this key */
     const char *ed25519_hex;     /* sign with EdDSA and this seed */
     const char *ed25519_file;    /* ...read from this file */
+    const char *forced_language; /* override Accept-Language */
+    const char *impressum_footer;/* HTML shown on every page */
+    const char *impressum_title; /* the imprint page's title */
+    const char *impressum_body;  /* the imprint page's body */
     int jwt_alg;                 /* 0 HS256, 1 HS512, 2 EdDSA */
     EVP_PKEY *jwt_pkey;
     char verify_name[256];       /* the -cookie-verification name, suffix and all */
@@ -1738,6 +1742,76 @@ static void proxy_request(conn *c, const request *req, const char *client_ip, co
     free(reply);
 }
 
+/* ---------------------------------------------------------------- strings
+ *
+ * Our page has its own five strings, so they are translated here rather than
+ * read out of Anubis's locale files, whose keys describe a different page. Six
+ * locales by hand; upstream ships 31 through its JSON files.
+ */
+typedef struct {
+    const char *code;
+    const char *title;      /* Proving you are not a robot */
+    const char *solving;    /* solving a %s challenge at difficulty %d... */
+    const char *slowing;    /* slowing you down! */
+    const char *manual;     /* or pass the challenge manually */
+    const char *explain;    /* If nothing happens, solve it yourself... */
+    const char *denied;     /* denied by policy */
+} locale;
+
+static const locale locales[] = {
+    {"en", "Proving you are not a robot", "solving a %s challenge at difficulty %d&hellip;",
+     "slowing you down!", "or pass the challenge manually",
+     "If nothing happens, solve it yourself: the challenge is the JSON below, and the answer goes to",
+     "denied by policy"},
+    {"nl", "Bewijzen dat je geen robot bent", "een %s-uitdaging oplossen op moeilijkheid %d&hellip;",
+     "we vertragen je!", "of los de uitdaging zelf op",
+     "Als er niets gebeurt, los het dan zelf op: de uitdaging is de JSON hieronder, en het antwoord gaat naar",
+     "geweigerd door het beleid"},
+    {"de", "Nachweis, dass du kein Roboter bist", "eine %s-Aufgabe der Schwierigkeit %d wird gel&ouml;st&hellip;",
+     "wir bremsen dich aus!", "oder l&ouml;se die Aufgabe selbst",
+     "Wenn nichts passiert, l&ouml;se sie selbst: die Aufgabe ist das JSON unten, die Antwort geht an",
+     "durch die Richtlinie abgelehnt"},
+    {"fr", "Prouver que vous n'&ecirc;tes pas un robot", "r&eacute;solution d'un d&eacute;fi %s de difficult&eacute; %d&hellip;",
+     "on vous ralentit !", "ou r&eacute;solvez le d&eacute;fi vous-m&ecirc;me",
+     "Si rien ne se passe, r&eacute;solvez-le vous-m&ecirc;me : le d&eacute;fi est le JSON ci-dessous, la r&eacute;ponse va &agrave;",
+     "refus&eacute; par la politique"},
+    {"es", "Demostrando que no eres un robot", "resolviendo un desaf&iacute;o %s de dificultad %d&hellip;",
+     "te estamos frenando!", "o resuelve el desaf&iacute;o t&uacute; mismo",
+     "Si no pasa nada, resu&eacute;lvelo t&uacute; mismo: el desaf&iacute;o es el JSON de abajo, y la respuesta va a",
+     "denegado por la pol&iacute;tica"},
+    {"it", "Dimostra di non essere un robot", "risoluzione di una sfida %s a difficolt&agrave; %d&hellip;",
+     "ti stiamo rallentando!", "oppure risolvi la sfida da solo",
+     "Se non succede nulla, risolvila da solo: la sfida &egrave; il JSON qui sotto, la risposta va a",
+     "negato dalla policy"},
+};
+#define LOCALE_COUNT ((int)(sizeof locales / sizeof locales[0]))
+
+/* Accept-Language, or --forced-language when the operator insists. */
+static const locale *pick_locale(const request *req) {
+    if (cfg.forced_language && *cfg.forced_language) {
+        for (int i = 0; i < LOCALE_COUNT; i++)
+            if (!strncasecmp(locales[i].code, cfg.forced_language, 2)) return &locales[i];
+        return &locales[0];
+    }
+    const char *al = req ? header_value(req, "Accept-Language") : NULL;
+    /* walk the header in the order it was sent, not the order of our table:
+     * "de-DE,en;q=0.5" means German, even though en is first in the table */
+    for (const char *p = al; p && *p; ) {
+        while (*p == ' ' || *p == ',' || *p == '\t') p++;
+        char tag[3] = {0, 0, 0};
+        size_t n = strcspn(p, ",;");
+        if (n >= 2) {
+            tag[0] = p[0];
+            tag[1] = p[1];
+        }
+        for (int i = 0; i < LOCALE_COUNT; i++)
+            if (tag[0] && !strncasecmp(locales[i].code, tag, 2)) return &locales[i];
+        const char *comma = strchr(p, ',');
+        p = comma ? comma + 1 : NULL;
+    }
+    return &locales[0];
+}
+
 /* --------------------------------------------------- the challenge page */
 
 static const char *CHALLENGE_JS = R"JS(
@@ -2967,7 +3041,7 @@ static char *prefix_api_paths(char *body) {
 
 static void challenge_page(conn *c, const char *id, const char *random_data,
                            const char *metadata_json, const char *test_cookie,
-                           const char *algorithm, int difficulty) {
+                           const char *algorithm, int difficulty, const locale *loc) {
     char payload[2048];
     snprintf(payload, sizeof payload,
              "{\"rules\":{\"algorithm\":\"%s\",\"difficulty\":%d},"
@@ -2977,14 +3051,18 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
              algorithm, difficulty, (long long)time(NULL), metadata_json, id,
              algorithm, random_data, difficulty);
 
-    size_t cap = strlen(payload) + strlen(CHALLENGE_JS) + 4096;
+    char status_line[512];
+    snprintf(status_line, sizeof status_line, loc->solving, algorithm, difficulty);
+
+    size_t cap = strlen(payload) + strlen(CHALLENGE_JS) + strlen(status_line) +
+                 (cfg.impressum_footer ? strlen(cfg.impressum_footer) : 0) + 8192;
     char *body = malloc(cap);
     if (!body) { respond(c, 500, "Internal Server Error", NULL, NULL, "oom", 3); return; }
 
     snprintf(body, cap,
              "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
              "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-             "<title>Proving you are not a robot</title><style>"
+             "<title>%s</title><style>"
              "body{font:16px/1.6 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;"
              "background:#12141a;color:#e6e9f0}a{color:#4d6bfe}"
              "code{font-family:ui-monospace,monospace;font-size:.85em;color:#98a0b3;word-break:break-all}"
@@ -2997,23 +3075,24 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
              ".bar.busy #fill{background-image:repeating-linear-gradient(115deg,"
              "rgba(255,255,255,.16) 0 10px,transparent 10px 22px);background-size:22px 22px}"
              "</style></head><body>"
-             "<h1>Proving you are not a robot</h1>"
-             "<p id=\"status\">solving a %s challenge at difficulty %d&hellip;</p>"
-             "<div id=\"work\" hidden><h2>slowing you down!</h2>"
+             "<h1>%s</h1>"
+             "<p id=\"status\">%s</p>"
+             "<div id=\"work\" hidden><h2>%s</h2>"
              "<p id=\"worksub\"></p>"
              "<div class=\"bar\" id=\"workbar\"><div id=\"fill\"></div></div>"
              "<p><span id=\"pct\">0.0%%</span> &middot; <span id=\"rate\">&mdash;</span>"
              " &middot; <span id=\"eta\"></span></p></div>"
-             "<p><a id=\"manual\" href=\"#\">or pass the challenge manually</a></p>"
-             "<p><small>If nothing happens, solve it yourself: the challenge is the JSON below, "
-             "and the answer goes to <code>%spass-challenge?id=%s&amp;response=&lt;digest&gt;&amp;nonce=&lt;n&gt;</code>.</small></p>"
+             "<p><a id=\"manual\" href=\"#\">%s</a></p>"
+             "<p><small>%s <code>%spass-challenge?id=%s&amp;response=&lt;digest&gt;&amp;nonce=&lt;n&gt;</code>.</small></p>"
              "<script id=\"anubis_challenge\" type=\"application/json\">%s</script>"
              "<script>%s</script>"
              "<script>(function(){var u=new URL(\"%spass-challenge\",location.origin);"
              "u.searchParams.set(\"id\",\"%s\");u.searchParams.set(\"response\",\"\");u.searchParams.set(\"nonce\",\"0\");"
              "u.searchParams.set(\"redir\",location.pathname);document.getElementById(\"manual\").href=u.toString();})();</script>"
-             "</body></html>",
-             algorithm, difficulty, API_PREFIX, id, payload, CHALLENGE_JS, API_PREFIX, id);
+             "%s</body></html>",
+             loc->title, loc->title, status_line, loc->slowing, loc->manual, loc->explain,
+             API_PREFIX, id, payload, CHALLENGE_JS, API_PREFIX, id,
+             cfg.impressum_footer && *cfg.impressum_footer ? cfg.impressum_footer : "");
 
     /* the honeypot link: inside <script type="ignore">, so no browser renders it
      * but a crawler that parses HTML for hrefs finds it. Same markup Anubis uses,
@@ -4739,6 +4818,27 @@ static void handle_connection(conn *c, const char *peer_ip) {
     if (cfg.serve_robots_txt && !strcmp(route, "/robots.txt")) {
         const char *robots = "User-agent: *\nDisallow: /\n";
         respond(c, 200, "OK", "text/plain; charset=utf-8", NULL, robots, strlen(robots));
+    } else if (!strcmp(route, API_PREFIX "imprint") && cfg.impressum_title &&
+               *cfg.impressum_title) {
+        size_t cap = strlen(cfg.impressum_title) + strlen(cfg.impressum_body ? cfg.impressum_body : "")
+                   + (cfg.impressum_footer ? strlen(cfg.impressum_footer) : 0) + 2048;
+        char *page = malloc(cap);
+        if (!page) {
+            respond(c, 500, "Internal Server Error", NULL, NULL, "oom\n", 4);
+        } else {
+            snprintf(page, cap,
+                     "<!doctype html><html lang=\"%s\"><head><meta charset=\"utf-8\">"
+                     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                     "<title>%s</title><style>body{font:16px/1.6 system-ui,sans-serif;"
+                     "max-width:40rem;margin:4rem auto;padding:0 1rem;background:#12141a;"
+                     "color:#e6e9f0}a{color:#4d6bfe}</style></head><body><h1>%s</h1>%s"
+                     "<p><a href=\"/\">%s</a></p><footer>%s</footer></body></html>",
+                     pick_locale(&req)->code, cfg.impressum_title, cfg.impressum_title,
+                     cfg.impressum_body ? cfg.impressum_body : "", pick_locale(&req)->manual,
+                     cfg.impressum_footer && *cfg.impressum_footer ? cfg.impressum_footer : "");
+            respond(c, 200, "OK", "text/html; charset=utf-8", NULL, page, strlen(page));
+            free(page);
+        }
     } else if (!strcmp(route, API_PREFIX "ping")) {
         __atomic_fetch_add(&m_requests[M_API], 1, __ATOMIC_RELAXED);
         respond(c, 200, "OK", NULL, NULL, "pong\n", 5);
@@ -4968,6 +5068,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
          * order: ALLOW forwards, DENY denies even a client that solved a
          * challenge earlier, and a CHALLENGE result is the only one a valid
          * cookie satisfies. */
+        const locale *loc = pick_locale(&req);
         int difficulty = cfg.difficulty;
         int policy_difficulty = 0;
         const char *algorithm = cfg.algorithm;
@@ -4982,7 +5083,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
             /* Anubis DENYs with a 200 on purpose, so the scraper thinks it got
              * the page; --deny-status 403 is the honest answer. */
             char msg[512];
-            snprintf(msg, sizeof msg, "betterAnusbis: denied by policy\n%s%s\n",
+            snprintf(msg, sizeof msg, "betterAnusbis: %s\n%s%s\n", loc->denied,
                      cfg.webmaster_email && *cfg.webmaster_email ? "contact: " : "",
                      cfg.webmaster_email && *cfg.webmaster_email ? cfg.webmaster_email : "");
             __atomic_fetch_add(&m_requests[M_DENIED], 1, __ATOMIC_RELAXED);
@@ -5039,7 +5140,8 @@ static void handle_connection(conn *c, const char *peer_ip) {
             ch_issue(id, rd_hex, difficulty, algorithm, referer);
             __atomic_fetch_add(&m_requests[M_CHALLENGED], 1, __ATOMIC_RELAXED);
             __atomic_fetch_add(&m_issued, 1, __ATOMIC_RELAXED);
-            challenge_page(c, id, rd_hex, metadata, id, algorithm, difficulty);
+            challenge_page(c, id, rd_hex, metadata, id, algorithm, difficulty,
+                           pick_locale(&req));
         }
     }
 
@@ -5381,6 +5483,10 @@ static const arg_spec args[] = {
     {"bind-network", ARG_STR, &cfg.bind_network},
     {"socket-mode", ARG_STR, &cfg.socket_mode},
     {"metrics-bind-network", ARG_STR, &cfg.metrics_network},
+    {"forced-language", ARG_STR, &cfg.forced_language},
+    {"impressum-footer", ARG_STR, &cfg.impressum_footer},
+    {"impressum-page-title", ARG_STR, &cfg.impressum_title},
+    {"impressum-page-body", ARG_STR, &cfg.impressum_body},
     {"hs512-secret", ARG_STR, &cfg.hs512_secret},
     {"ed25519-private-key-hex", ARG_STR, &cfg.ed25519_hex},
     {"ed25519-private-key-hex-file", ARG_STR, &cfg.ed25519_file},

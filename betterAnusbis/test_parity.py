@@ -1096,6 +1096,21 @@ def main():
         st3, hdrs, body = request("GET", API + "pass-challenge?" + q)
         check("and the same answer is accepted afterwards", st3 == 302, st3)
 
+    # ---- 23g. the file store survives a restart
+    storepath = os.path.join(tempfile.mkdtemp(), "state.txt")
+    with Gate("--difficulty", "6", "--store", f"file:{storepath}"):
+        st, hdrs, body = request("GET", "/")
+        ch = anubis_solver.parse_challenge(body.decode(errors="replace"))
+        sol = SOLVER.solve(ch)
+    check("the store file is written on shutdown",
+          os.path.exists(storepath) and os.path.getsize(storepath) > 0,
+          os.path.getsize(storepath) if os.path.exists(storepath) else "absent")
+    with Gate("--difficulty", "6", "--store", f"file:{storepath}"):
+        q = urlencode({"id": ch.id, "response": sol.response_hex,
+                       "nonce": str(sol.nonce), "redir": "/"})
+        st, hdrs, body = request("GET", API + "pass-challenge?" + q)
+        check("a challenge issued before the restart still verifies", st == 302, st)
+
     # ---- 24. DNS: the shipped policy is fully understood, and DNSBL answers
     if os.path.exists(policy):
         try:

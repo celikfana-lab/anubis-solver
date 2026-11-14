@@ -154,6 +154,7 @@ policy, honeypot, assets, TLS, metrics
   --geoip-country PATH  --geoip-asn PATH  --geoip-lookup IP  --dnsbl
   --og-passthrough  --og-expiry-time SECS  --og-override "og:title=..." 
   --challenge-extension css-load
+  --store file:PATH      keep the challenge ledger and honeypot counters
 ```
 
 Every flag is also an environment variable, upper case with dashes as
@@ -438,7 +439,14 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
   page and refuses a pass-challenge until the browser has fetched it, which is
   what the upstream extension does. `headless` exists only in the enterprise
   build, so asking for it logs that and checks nothing.
-- **No store backends yet.** `pass-challenge`,
+- **One store backend: a file.** `--store file:PATH` snapshots the challenge
+  ledger and the honeypot counters every five seconds, on `SIGTERM`, and loads
+  them at startup, so a restart no longer forgets which challenges were issued
+  or which networks were annoying. It is a snapshot, not a journal: a crash
+  loses up to five seconds, and nothing coordinates two processes writing the
+  same file. Upstream's bbolt, valkey and S3 backends exist to share state
+  between replicas, which this does not do.
+- **No bbolt, valkey or S3 backends.** `pass-challenge`,
   `check`, `ping`, the state endpoint, the honeypot, `robots.txt`, the
   Prometheus `/metrics`, impressum, localization and the challenge extensions
   are implemented or documented above. The store backends (bbolt, valkey, S3)

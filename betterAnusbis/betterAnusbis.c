@@ -134,6 +134,7 @@ typedef struct {
     long og_ttl;                  /* how long a page's tags are cached */
     const char *og_override;      /* key=value;... replaces the tags entirely */
     const char *challenge_extension; /* "css-load", and only for now */
+    const char *store;            /* file:PATH keeps the ledger across restarts */
     const char *geoip_country_path;
     const char *geoip_asn_path;
     int subrequest;              /* no target: answer auth checks only */
@@ -196,6 +197,7 @@ static config cfg = {
 };
 
 static int log_quiet;            /* WARN and ERROR: keep the startup lines, drop info */
+static void store_mark_dirty(void);   /* defined with the store, used by the ledger */
 
 static void logmsg(const char *fmt, ...) {
     if (log_quiet) return;
@@ -626,6 +628,7 @@ static void ch_issue(const char *id, const char *rd, int difficulty, const char 
             }
             e->spent = 0;
             e->used = 1;
+            store_mark_dirty();
             ch_issued++;
             pthread_mutex_unlock(&ch_lock);
             return;
@@ -664,6 +667,7 @@ static int ch_take(const char *id, char *rd_out, size_t rd_cap, int *difficulty_
         if (now - e->issued > COOKIE_TTL) { rc = -1; ch_expired++; break; }
         if (e->spent) { rc = -2; ch_replayed++; break; }
         e->spent = 1;
+        store_mark_dirty();
         snprintf(rd_out, rd_cap, "%s", e->rd);
         if (difficulty_out) *difficulty_out = e->difficulty;
         if (algo_out) snprintf(algo_out, algo_cap, "%s", e->algorithm);
@@ -709,6 +713,7 @@ static int ch_mark_css(const char *id) {
         if (!e->used) break;
         if (strcmp(e->id, id) != 0) continue;
         e->css_seen = 1;
+        store_mark_dirty();
         found = 1;
         break;
     }
@@ -1909,6 +1914,156 @@ static int geoip_asn(const char *ip, uint32_t *out) {
     if (!asn) return 0;
     *out = asn;
     return 1;
+}
+
+/* ---------------------------------------------------------------- the store
+ *
+ * The challenge ledger and the honeypot counters live in memory, so a restart
+ * forgets which challenges were issued and how much a network has been annoying.
+ * --store file:PATH snapshots both to a text file every few seconds and loads
+ * them back at startup.
+ *
+ * This is a snapshot, not a journal: a crash loses up to five seconds, and
+ * there is no locking against another process writing the same file. That is a
+ * deliberate size decision, and it is the gap between this and upstream's
+ * bbolt/valkey/S3 backends, which also exist to share state between replicas.
+ */
+static char store_path[512];
+static volatile int store_dirty;
+static pthread_t store_thread_id;
+static volatile sig_atomic_t shutdown_requested;
+
+static void on_shutdown(int sig) {
+    (void)sig;
+    shutdown_requested = 1;
+}
+
+static void store_mark_dirty(void) { store_dirty = 1; }
+
+static void store_write(void) {
+    if (!store_path[0]) return;
+    char tmp[560];
+    snprintf(tmp, sizeof tmp, "%s.tmp", store_path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) {
+        logmsg("store: cannot write %s: %s", tmp, strerror(errno));
+        return;
+    }
+    time_t now = time(NULL);
+    long long ch_written = 0, hp_written = 0;
+    pthread_mutex_lock(&ch_lock);
+    for (int i = 0; i < CH_BUCKETS; i++) {
+        ch_entry *e = &ch_table[i];
+        if (!e->used) continue;
+        /* expired entries are not worth carrying across a restart either */
+        if (now - e->issued > COOKIE_TTL) continue;
+        fprintf(f, "c %s %s %s %d %d %lld %d\n", e->id, e->rd, e->algorithm,
+                e->difficulty, e->spent, e->issued_ms, e->css_seen);
+        ch_written++;
+    }
+    pthread_mutex_unlock(&ch_lock);
+    pthread_mutex_lock(&hp_lock);
+    for (int i = 0; i < HP_BUCKETS; i++) {
+        hp_entry *e = &hp_table[i];
+        if (!e->used) continue;
+        if (now - e->last > HP_WINDOW) continue;
+        fprintf(f, "h %llu %d %lld\n", (unsigned long long)e->key, e->count,
+                (long long)e->last);
+        hp_written++;
+    }
+    pthread_mutex_unlock(&hp_lock);
+    if (fclose(f) != 0) {
+        logmsg("store: cannot close %s: %s", tmp, strerror(errno));
+        return;
+    }
+    if (rename(tmp, store_path) != 0) {
+        logmsg("store: cannot move %s into place: %s", tmp, strerror(errno));
+        return;
+    }
+    store_dirty = 0;
+    if (cfg.verbose) logmsg("store: wrote %lld challenges and %lld networks", ch_written, hp_written);
+}
+
+static void store_load(void) {
+    FILE *f = fopen(store_path, "r");
+    if (!f) {
+        if (errno != ENOENT)
+            logmsg("store: cannot read %s: %s", store_path, strerror(errno));
+        return;
+    }
+    char line[1024];
+    long long nch = 0, nhp = 0;
+    time_t now = time(NULL);
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == 'c') {
+            char id[80], rd[65], algo[24];
+            int difficulty = 0, spent = 0, css = 0;
+            long long issued_ms = 0;
+            if (sscanf(line, "c %79s %64s %23s %d %d %lld %d", id, rd, algo, &difficulty,
+                       &spent, &issued_ms, &css) != 7)
+                continue;
+            uint32_t h = 2166136261u;
+            for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+            for (int probe = 0; probe < 32; probe++) {
+                ch_entry *e = &ch_table[(h + (uint32_t)probe) % CH_BUCKETS];
+                if (e->used && strcmp(e->id, id) != 0) continue;
+                snprintf(e->id, sizeof e->id, "%s", id);
+                snprintf(e->rd, sizeof e->rd, "%s", rd);
+                snprintf(e->algorithm, sizeof e->algorithm, "%s", algo);
+                e->difficulty = difficulty;
+                e->spent = spent;
+                e->css_seen = css;
+                e->issued = now;
+                e->issued_ms = issued_ms ? issued_ms : (long long)now * 1000;
+                e->used = 1;
+                nch++;
+                break;
+            }
+        } else if (line[0] == 'h') {
+            unsigned long long key = 0;
+            int count = 0;
+            long long last = 0;
+            if (sscanf(line, "h %llu %d %lld", &key, &count, &last) != 3) continue;
+            for (int i = 0; i < HP_BUCKETS; i++) {
+                hp_entry *e = &hp_table[i];
+                if (!e->used) {
+                    e->key = key;
+                    e->count = count;
+                    e->last = (time_t)last;
+                    e->used = 1;
+                    nhp++;
+                    break;
+                }
+                if (e->key == key) {
+                    e->count = count;
+                    e->last = (time_t)last;
+                    nhp++;
+                    break;
+                }
+            }
+        }
+    }
+    fclose(f);
+    logmsg("store: loaded %lld challenge(s) and %lld network(s) from %s", nch, nhp,
+           store_path);
+}
+
+static void *store_thread(void *arg) {
+    (void)arg;
+    store_write();                 /* an empty store is still a store */
+    for (;;) {
+        for (int i = 0; i < 25; i++) {
+            if (shutdown_requested) break;
+            usleep(200000);
+        }
+        if (shutdown_requested) {
+            /* a supervisor's SIGTERM should not throw away the last few seconds */
+            store_write();
+            _exit(0);
+        }
+        if (store_dirty) store_write();
+    }
+    return NULL;
 }
 
 /* ------------------------------------------------------------ DNS lookups
@@ -6739,6 +6894,9 @@ static void usage(FILE *out) {
         "                         /api/check and the challenge\n"
         "  --public-url URL       where this gate is reachable, used to build the\n"
         "                         forwardAuth redirect\n"
+        "  --store file:PATH      snapshot the challenge ledger and the honeypot\n"
+        "                         counters here, every five seconds, and load them at\n"
+        "                         startup (bbolt, valkey and S3 are not implemented)\n"
         "  --challenge-extension NAME\n"
         "                         css-load: the page's stylesheet must be fetched\n"
         "                         before pass-challenge is accepted\n"
@@ -6904,6 +7062,7 @@ static const arg_spec args[] = {
     {"dnsbl", ARG_BOOL, &cfg.dnsbl},
     {"geoip-lookup", ARG_STR, &cfg.geoip_lookup},
     {"challenge-extension", ARG_STR, &cfg.challenge_extension},
+    {"store", ARG_STR, &cfg.store},
     {"og-passthrough", ARG_BOOL, &cfg.og_passthrough},
     {"og-expiry-time", ARG_LONG, &cfg.og_ttl},
     {"og-override", ARG_STR, &cfg.og_override},
@@ -7319,6 +7478,31 @@ int main(int argc, char **argv) {
                have_a ? ", ASN " : "", have_a ? "" : "");
         if (have_a) printf("%s: ASN %u\n", cfg.geoip_lookup, asn);
         return 0;
+    }
+
+    if (cfg.store && *cfg.store) {
+        if (!strncmp(cfg.store, "file:", 5)) {
+            snprintf(store_path, sizeof store_path, "%s", cfg.store + 5);
+            if (!store_path[0]) {
+                fprintf(stderr, "betterAnusbis: --store file: wants a path\n");
+                return 2;
+            }
+            store_load();
+            struct sigaction sd = {0};
+            sd.sa_handler = on_shutdown;
+            sigemptyset(&sd.sa_mask);
+            sigaction(SIGTERM, &sd, NULL);
+            sigaction(SIGINT, &sd, NULL);
+            if (pthread_create(&store_thread_id, NULL, store_thread, NULL) == 0)
+                pthread_detach(store_thread_id);
+            logmsg("store: %s, snapshotted every five seconds", store_path);
+        } else if (!strcmp(cfg.store, "memory") || !strcmp(cfg.store, "none")) {
+            logmsg("store: memory only, as before");
+        } else {
+            fprintf(stderr, "betterAnusbis: --store wants file:PATH or memory "
+                            "(bbolt, valkey and S3 are not implemented)\n");
+            return 2;
+        }
     }
 
     if (cfg.challenge_extension && *cfg.challenge_extension) {

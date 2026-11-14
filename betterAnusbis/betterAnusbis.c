@@ -42,6 +42,7 @@
 #include <ctype.h>
 #include <regex.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/ssl.h>
 
 #include "anubis-solver.h"
@@ -118,6 +119,11 @@ typedef struct {
     const char *webmaster_email; /* shown on a deny page */
     int preserve_referer_qp;     /* utm_source/utm_medium from the Referer */
     int target_disable_keepalive;/* accepted; this gate always closes */
+    const char *hs512_secret;    /* sign with HS512 and this key */
+    const char *ed25519_hex;     /* sign with EdDSA and this seed */
+    const char *ed25519_file;    /* ...read from this file */
+    int jwt_alg;                 /* 0 HS256, 1 HS512, 2 EdDSA */
+    EVP_PKEY *jwt_pkey;
     char verify_name[256];       /* the -cookie-verification name, suffix and all */
 } config;
 
@@ -303,6 +309,25 @@ static int hmac_sha256(const uint8_t *key, size_t keylen, const uint8_t *msg, si
 /* ------------------------------------------------------------ the cookie */
 
 /* A JWT HS256 with the claims Anubis uses, so tools that expect one can read it. */
+static int hmac_sha512(const uint8_t *key, size_t keylen, const uint8_t *msg, size_t msglen,
+                       uint8_t out[64]) {
+    unsigned int len = 0;
+    if (!HMAC(EVP_sha512(), key, (int)keylen, msg, msglen, out, &len) || len != 64) return -1;
+    return 0;
+}
+
+/* The JWT is signed one of three ways, chosen the way upstream chooses it:
+ * --hs512-secret, else an Ed25519 key, else the shared secret this gate manages
+ * itself (HS256). The header says which, so a token minted under one scheme
+ * does not verify under another. */
+static const char *jwt_header_json(void) {
+    switch (cfg.jwt_alg) {
+    case 1: return "{\"alg\":\"HS512\",\"typ\":\"JWT\"}";
+    case 2: return "{\"alg\":\"EdDSA\",\"typ\":\"JWT\"}";
+    default: return "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
+    }
+}
+
 static int sign_token(char *out, size_t cap, const char *challenge_id,
                       const char *restrict_to, const char *algorithm, int difficulty) {
     char payload[768];
@@ -326,18 +351,37 @@ static int sign_token(char *out, size_t cap, const char *challenge_id,
              (long long)(now + (cfg.cookie_ttl > 0 ? cfg.cookie_ttl : COOKIE_TTL)),
              difficulty_part, restrict_part);
 
-    const char *header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
+    const char *header = jwt_header_json();
     char h64[256], p64[768];
     if (!b64url_encode((const uint8_t *)header, strlen(header), h64, sizeof h64)) return -1;
     if (!b64url_encode((const uint8_t *)payload, strlen(payload), p64, sizeof p64)) return -1;
 
     char signing[1024];
     snprintf(signing, sizeof signing, "%s.%s", h64, p64);
-    uint8_t mac[32];
-    if (hmac_sha256(cfg.secret, sizeof cfg.secret, (const uint8_t *)signing, strlen(signing), mac) != 0)
+    uint8_t mac[64];
+    size_t mac_len = 32;
+    if (cfg.jwt_alg == 2) {
+        if (!cfg.jwt_pkey) return -1;
+        EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+        if (!ctx) return -1;
+        size_t siglen = sizeof mac;
+        int ok = EVP_DigestSignInit(ctx, NULL, NULL, NULL, cfg.jwt_pkey) == 1 &&
+                 EVP_DigestSign(ctx, mac, &siglen, (const uint8_t *)signing,
+                                strlen(signing)) == 1;
+        EVP_MD_CTX_free(ctx);
+        if (!ok) return -1;
+        mac_len = siglen;
+    } else if (cfg.jwt_alg == 1) {
+        if (hmac_sha512((const uint8_t *)cfg.hs512_secret, strlen(cfg.hs512_secret),
+                        (const uint8_t *)signing, strlen(signing), mac) != 0)
+            return -1;
+        mac_len = 64;
+    } else if (hmac_sha256(cfg.secret, sizeof cfg.secret, (const uint8_t *)signing,
+                           strlen(signing), mac) != 0) {
         return -1;
-    char m64[64];
-    if (!b64url_encode(mac, 32, m64, sizeof m64)) return -1;
+    }
+    char m64[128];
+    if (!b64url_encode(mac, mac_len, m64, sizeof m64)) return -1;
     snprintf(out, cap, "%s.%s", signing, m64);
     return 0;
 }
@@ -354,11 +398,30 @@ static int verify_token(const char *token, const char *client_ip) {
     memcpy(signing, token, slen);
     signing[slen] = 0;
 
-    uint8_t mac[32];
-    if (hmac_sha256(cfg.secret, sizeof cfg.secret, (const uint8_t *)signing, slen, mac) != 0) return 0;
-    char want[64];
-    if (!b64url_encode(mac, 32, want, sizeof want)) return 0;
-    if (strcmp(want, dot2 + 1) != 0) return 0;      /* signature */
+    if (cfg.jwt_alg == 2) {
+        uint8_t sig[128];
+        int n = b64url_decode(dot2 + 1, sig, sizeof sig);
+        if (n != 64 || !cfg.jwt_pkey) return 0;
+        EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+        if (!ctx) return 0;
+        int ok = EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, cfg.jwt_pkey) == 1 &&
+                 EVP_DigestVerify(ctx, sig, 64, (const uint8_t *)signing, slen) == 1;
+        EVP_MD_CTX_free(ctx);
+        if (!ok) return 0;
+    } else {
+        uint8_t mac[64];
+        size_t mac_len = cfg.jwt_alg == 1 ? 64 : 32;
+        int rc = cfg.jwt_alg == 1
+                     ? hmac_sha512((const uint8_t *)cfg.hs512_secret,
+                                   strlen(cfg.hs512_secret), (const uint8_t *)signing,
+                                   slen, mac)
+                     : hmac_sha256(cfg.secret, sizeof cfg.secret,
+                                   (const uint8_t *)signing, slen, mac);
+        if (rc != 0) return 0;
+        char want[128];
+        if (!b64url_encode(mac, mac_len, want, sizeof want)) return 0;
+        if (strcmp(want, dot2 + 1) != 0) return 0;  /* signature */
+    }
 
     /* expiry, without a JSON parser: find "exp":<number> */
     size_t plen = (size_t)(dot2 - dot1 - 1);
@@ -5227,6 +5290,10 @@ static void usage(FILE *out) {
         "TLS, metrics, noise\n"
         "  --tls-cert FILE        serve HTTPS with this PEM certificate chain\n"
         "  --tls-key FILE         ...and this PEM private key\n"
+        "  --hs512-secret KEY     sign tokens with HS512 and this key\n"
+        "  --ed25519-private-key-hex HEX\n"
+        "                         sign tokens with EdDSA (32 or 64 bytes of hex)\n"
+        "  --ed25519-private-key-hex-file FILE  the same, read from a file\n"
         "  --slog-level LEVEL     DEBUG, INFO (default), WARN or ERROR\n"
         "  --difficulty-in-jwt    add the difficulty claim to the token\n"
         "  --dynamic-cookie-suffix[=B]\n"
@@ -5314,6 +5381,9 @@ static const arg_spec args[] = {
     {"bind-network", ARG_STR, &cfg.bind_network},
     {"socket-mode", ARG_STR, &cfg.socket_mode},
     {"metrics-bind-network", ARG_STR, &cfg.metrics_network},
+    {"hs512-secret", ARG_STR, &cfg.hs512_secret},
+    {"ed25519-private-key-hex", ARG_STR, &cfg.ed25519_hex},
+    {"ed25519-private-key-hex-file", ARG_STR, &cfg.ed25519_file},
     {"slog-level", ARG_STR, &cfg.log_level},
     {"difficulty-in-jwt", ARG_BOOL, &cfg.difficulty_in_jwt},
     {"dynamic-cookie-suffix", ARG_BOOL, &cfg.dynamic_cookie_suffix},
@@ -5529,6 +5599,49 @@ static void build_cookie_names(void) {
              cfg.cookie_prefix, suffix);
 }
 
+/* --ed25519-private-key-hex(-file): 32 or 64 bytes of hex. Go stores the seed
+ * followed by the public half, so the first 32 bytes are what OpenSSL wants. */
+static int setup_ed25519(void) {
+    char hex[512] = "";
+    if (cfg.ed25519_file && *cfg.ed25519_file) {
+        FILE *f = fopen(cfg.ed25519_file, "r");
+        if (!f) {
+            fprintf(stderr, "betterAnusbis: cannot read %s: %s\n", cfg.ed25519_file,
+                    strerror(errno));
+            return -1;
+        }
+        size_t n = fread(hex, 1, sizeof hex - 1, f);
+        fclose(f);
+        hex[n] = 0;
+        char *p = hex;
+        while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') p++;
+        size_t len = strlen(p);
+        while (len && (p[len - 1] == ' ' || p[len - 1] == '\n' || p[len - 1] == '\r' ||
+                       p[len - 1] == '\t'))
+            p[--len] = 0;
+        memmove(hex, p, len + 1);
+    } else if (cfg.ed25519_hex && *cfg.ed25519_hex) {
+        snprintf(hex, sizeof hex, "%s", cfg.ed25519_hex);
+    } else {
+        return 0;
+    }
+    uint8_t key[64];
+    int n = hex_decode(hex, key, sizeof key);
+    if (n != 32 && n != 64) {
+        fprintf(stderr, "betterAnusbis: the Ed25519 key must be 32 or 64 bytes of hex, "
+                        "32 or 128 hex characters; got %d\n", n);
+        return -1;
+    }
+    cfg.jwt_pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, key, 32);
+    if (!cfg.jwt_pkey) {
+        fprintf(stderr, "betterAnusbis: cannot load the Ed25519 key\n");
+        ERR_print_errors_fp(stderr);
+        return -1;
+    }
+    cfg.jwt_alg = 2;
+    return 0;
+}
+
 static volatile sig_atomic_t hup_pending;
 
 static void on_reload(int sig) {
@@ -5555,6 +5668,8 @@ static void print_settings(void) {
     logmsg("settings: statuses challenge=%d deny=%d robots_txt=%s benchmark_js=%s",
            cfg.challenge_status, cfg.deny_status, cfg.serve_robots_txt ? "yes" : "no",
            cfg.debug_benchmark_js ? "yes" : "no");
+    logmsg("settings: signing scheme=%s",
+           cfg.jwt_alg == 1 ? "HS512" : cfg.jwt_alg == 2 ? "EdDSA" : "HS256");
     logmsg("settings: signing key=%s", cfg.secret_hex && *cfg.secret_hex ? "--secret-hex"
            : cfg.secret_file && *cfg.secret_file ? cfg.secret_file : "(random per process)");
     logmsg("settings: honeypot=%s threshold=%d log=%s stateful=%s policy=%s web=%s tls=%s",
@@ -5662,7 +5777,14 @@ int main(int argc, char **argv) {
     if (cfg.policy_file) policy_load(cfg.policy_file);
     parse_target(cfg.target);
     build_cookie_names();
-    if (cfg.secret_hex && *cfg.secret_hex) {
+    if (cfg.hs512_secret && *cfg.hs512_secret) {
+        cfg.jwt_alg = 1;
+        logmsg("signing tokens with HS512 (--hs512-secret)");
+    } else if ((cfg.ed25519_hex && *cfg.ed25519_hex) ||
+               (cfg.ed25519_file && *cfg.ed25519_file)) {
+        if (setup_ed25519() != 0) return 1;
+        logmsg("signing tokens with EdDSA, Ed25519");
+    } else if (cfg.secret_hex && *cfg.secret_hex) {
         if (hex_decode(cfg.secret_hex, cfg.secret, sizeof cfg.secret) != (int)sizeof cfg.secret) {
             fprintf(stderr, "betterAnusbis: --secret-hex wants exactly 64 hex characters\n");
             return 2;

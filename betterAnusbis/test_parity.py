@@ -802,7 +802,33 @@ def main():
         proc.terminate()
         proc.wait(3)
 
-    # ---- 20. the old flags still behave
+    # ---- 20. token signing schemes
+    def jwt_alg(hdrs):
+        token = token_of(hdrs)
+        h = token.split(".")[0]
+        h += "=" * (-len(h) % 4)
+        return json.loads(base64.urlsafe_b64decode(h)).get("alg")
+
+    with Gate("--difficulty", "6", "--hs512-secret", "hunter2"):
+        status, hdrs, body, ch = solve_once()
+        check("--hs512-secret signs with HS512", jwt_alg(hdrs) == "HS512", jwt_alg(hdrs))
+        hs512_token = token_of(hdrs)
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={hs512_token}"})
+        check("an HS512 token opens the door", st == 200 and b"PAST THE WALL" in body, st)
+    with Gate("--difficulty", "6"):
+        status, hdrs, body, ch = solve_once()
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={hs512_token}"})
+        check("a token from a different scheme is refused",
+              b"anubis_challenge" in body, st)
+    with Gate("--difficulty", "6", "--ed25519-private-key-hex", os.urandom(32).hex()):
+        status, hdrs, body, ch = solve_once()
+        check("--ed25519-private-key-hex signs with EdDSA", jwt_alg(hdrs) == "EdDSA",
+              jwt_alg(hdrs))
+        ed_token = token_of(hdrs)
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={ed_token}"})
+        check("an EdDSA token opens the door", st == 200 and b"PAST THE WALL" in body, st)
+
+    # ---- 21. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

@@ -157,6 +157,17 @@ else
 	@false
 endif
 
+# HashX as Intel Xe assembly.  The HashX program is generated per challenge, so
+# the listing is generated too: the keys and the 512 instructions are baked in
+# as immediates and the whole kernel becomes straight-line code.
+#
+#   make xe-hashx        -> regenerate, check the digests, assemble
+#   python3 tools/gen_xe_hashx.py --selftest    -> just the 64-bit primitives
+#   python3 tools/gen_xe_hashx.py --stages      -> the register file vs the C
+.PHONY: xe-hashx
+xe-hashx:
+	python3 tools/gen_xe_hashx.py --assemble
+
 # Intel Xe assembly loader: patches a listing assembled by IGA into an IGC Zebin
 # and loads it through OpenCL, which is the only way to execute hand-written gen
 # instructions on this machine (Vulkan and OpenCL both take SPIR-V otherwise).

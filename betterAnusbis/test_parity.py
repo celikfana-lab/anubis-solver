@@ -46,6 +46,15 @@ SOLVER = anubis_solver.AnubisSolver(threads=4)
 
 
 # --------------------------------------------------------------------- backend
+class CountingServer(ThreadingHTTPServer):
+    conns = 0
+
+    def get_request(self):
+        conn, addr = super().get_request()
+        CountingServer.conns += 1
+        return conn, addr
+
+
 class Backend(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -53,7 +62,23 @@ class Backend(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path.endswith("/echo"):
+        if self.path.endswith("/count"):
+            body = json.dumps({"conns": CountingServer.conns}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.endswith("/chunked"):
+            payload = b"hello chunked world"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(b"%x\r\n" % 5 + payload[:5] + b"\r\n")
+            self.wfile.write(b"%x\r\n" % (len(payload) - 5) + payload[5:] + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+        elif self.path.endswith("/echo"):
             body = json.dumps(
                 {
                     "host": self.headers.get("Host"),
@@ -119,9 +144,19 @@ def start_ws_backend():
 
 
 def start_backend():
-    srv = ThreadingHTTPServer(("127.0.0.1", BACKEND_PORT), Backend)
+    srv = CountingServer(("127.0.0.1", BACKEND_PORT), Backend)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
+
+
+def backend_conns():
+    """How many connections the backend has accepted so far."""
+    c = http.client.HTTPConnection("127.0.0.1", BACKEND_PORT, timeout=5)
+    c.request("GET", "/count")
+    r = c.getresponse()
+    body = r.read()
+    c.close()
+    return json.loads(body)["conns"]
 
 
 # ------------------------------------------------------------------------ gate
@@ -980,6 +1015,26 @@ def main():
                   ch and (ch.algorithm, ch.difficulty))
     else:
         print("  (skipped the GeoIP checks: tools/geoip-testdata is missing)")
+
+    # ---- 23d. upstream keep-alive
+    with Gate("--difficulty", "6"):
+        cookie = token_of(solve_once()[1])
+        before = backend_conns()
+        for _ in range(3):
+            request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={cookie}"})
+        # the count call itself opens one connection, hence the +1
+        used = backend_conns() - before - 1
+        check("three proxied requests reuse one upstream connection", used == 1, used)
+        st, _, body = request("GET", "/chunked", headers={"Cookie": f"{AUTH_NAME}={cookie}"})
+        check("a chunked response is relayed intact",
+              st == 200 and body == b"hello chunked world", body[:40])
+    with Gate("--difficulty", "6", "--target-disable-keepalive"):
+        cookie = token_of(solve_once()[1])
+        before = backend_conns()
+        for _ in range(3):
+            request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={cookie}"})
+        used = backend_conns() - before - 1
+        check("--target-disable-keepalive opens one per request", used == 3, used)
 
     # ---- 24. DNS: the shipped policy is fully understood, and DNSBL answers
     if os.path.exists(policy):

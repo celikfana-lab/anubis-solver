@@ -2316,16 +2316,220 @@ done:
     if (up_c.fd >= 0) close(up_c.fd);
 }
 
+/* ------------------------------------------------------- upstream keep-alive
+ *
+ * The origin pays for a TCP handshake, and a TLS one, on every request unless
+ * something keeps the connection. This does, for a small pool, and only when
+ * the response was framed well enough to know where it ended: Content-Length,
+ * chunked, or a status with no body. A reused connection that turns out to be
+ * dead is retried once on a fresh one, because that is what every HTTP client
+ * has to do.
+ *
+ * The client side is unchanged: it is told Connection: close, so this saves the
+ * origin's handshakes without making the gate's own life complicated.
+ */
+#define UP_POOL 8
+#define UP_IDLE_MAX 60
+
+typedef struct {
+    int fd;
+    void *ssl;
+    time_t when;
+    int used;
+} upslot;
+
+static upslot up_pool[UP_POOL];
+static pthread_mutex_t up_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void up_close(conn *up) {
+    if (up->ssl) {
+        SSL_shutdown((SSL *)up->ssl);
+        SSL_free((SSL *)up->ssl);
+        up->ssl = NULL;
+    }
+    if (up->fd >= 0) close(up->fd);
+    up->fd = -1;
+}
+
+static int pool_take(conn *up) {
+    if (cfg.target_disable_keepalive) return 0;
+    time_t now = time(NULL);
+    for (int i = 0; i < UP_POOL; i++) {
+        conn stale = {.fd = -1, .ssl = NULL};
+        pthread_mutex_lock(&up_lock);
+        if (!up_pool[i].used) {
+            pthread_mutex_unlock(&up_lock);
+            continue;
+        }
+        if (now - up_pool[i].when > UP_IDLE_MAX) {
+            stale.fd = up_pool[i].fd;
+            stale.ssl = up_pool[i].ssl;
+            memset(&up_pool[i], 0, sizeof up_pool[i]);
+            pthread_mutex_unlock(&up_lock);
+            up_close(&stale);
+            continue;
+        }
+        up->fd = up_pool[i].fd;
+        up->ssl = up_pool[i].ssl;
+        memset(&up_pool[i], 0, sizeof up_pool[i]);
+        pthread_mutex_unlock(&up_lock);
+        return 1;
+    }
+    return 0;
+}
+
+static void pool_put(conn *up) {
+    if (up->fd < 0) return;
+    if (cfg.target_disable_keepalive) {
+        up_close(up);
+        return;
+    }
+    time_t now = time(NULL);
+    pthread_mutex_lock(&up_lock);
+    for (int i = 0; i < UP_POOL; i++) {
+        if (up_pool[i].used) continue;
+        up_pool[i].fd = up->fd;
+        up_pool[i].ssl = up->ssl;
+        up_pool[i].when = now;
+        up_pool[i].used = 1;
+        pthread_mutex_unlock(&up_lock);
+        up->fd = -1;
+        up->ssl = NULL;
+        return;
+    }
+    pthread_mutex_unlock(&up_lock);
+    up_close(up);                /* the pool is full; the origin loses nothing */
+}
+
+/* A reader over the upstream connection with its own leftover buffer, so the
+ * body bytes that arrived with the headers are not lost. */
+typedef struct {
+    conn *up;
+    char buf[8192];
+    size_t pos, len;
+} rd_t;
+
+static ssize_t rd_fill(rd_t *r) {
+    if (r->pos < r->len) return (ssize_t)(r->len - r->pos);
+    r->pos = r->len = 0;
+    ssize_t n = relay_read(r->up, r->buf, sizeof r->buf);
+    if (n <= 0) return n;
+    r->len = (size_t)n;
+    return n;
+}
+
+/* One raw line *with* its CRLF, copied out so it can be relayed unchanged. */
+static int rd_line_raw(rd_t *r, char *out, size_t cap) {
+    size_t o = 0;
+    for (;;) {
+        if (rd_fill(r) <= 0) return 0;
+        char ch = r->buf[r->pos++];
+        if (o + 1 < cap) out[o++] = ch;
+        if (ch == '\n') break;
+    }
+    out[o] = 0;
+    return 1;
+}
+
+static int rd_pump(conn *c, rd_t *r, size_t n) {
+    while (n) {
+        if (rd_fill(r) <= 0) return 0;
+        size_t have = r->len - r->pos;
+        size_t take = have < n ? have : n;
+        if (send_all(c, r->buf + r->pos, take) < 0) return 0;
+        r->pos += take;
+        n -= take;
+    }
+    return 1;
+}
+
+static int rd_pump_to_end(conn *c, rd_t *r) {
+    for (;;) {
+        if (rd_fill(r) <= 0) return 0;
+        size_t have = r->len - r->pos;
+        if (send_all(c, r->buf + r->pos, have) < 0) return 0;
+        r->pos = r->len;
+    }
+}
+
+/* Relay one response. Returns 1 when the upstream connection can be reused. */
+static int relay_response(conn *up_c, conn *c, const char *method) {
+    char head[32768];
+    size_t used = 0;
+    while (1) {
+        if (used >= sizeof head - 1) return -1;
+        ssize_t n = conn_read(up_c, head + used, sizeof head - 1 - used);
+        if (n <= 0) return -1;
+        used += (size_t)n;
+        head[used] = 0;
+        if (strstr(head, "\r\n\r\n")) break;
+    }
+    char *body = strstr(head, "\r\n\r\n") + 4;
+    size_t leftover = used - (size_t)(body - head);
+    const char *sp = strchr(head, ' ');
+    int status = sp ? atoi(sp + 1) : 0;
+
+    char *cl = strcasestr(head, "\r\ncontent-length:");
+    char *te = strcasestr(head, "\r\ntransfer-encoding:");
+    char *ce = strcasestr(head, "\r\nconnection:");
+    int chunked = te && te < body && strcasestr(te, "chunked");
+    long long length = -1;
+    if (cl && cl < body) length = atoll(cl + strlen("\r\ncontent-length:"));
+    int conn_close = ce && ce < body && strcasestr(ce, "close") != NULL;
+    int head_only = method && !strcasecmp(method, "HEAD");
+
+    /* the head only; the leftover bytes are the start of the body */
+    if (send_all(c, head, (size_t)(body - head)) < 0) return 0;
+
+    rd_t r;
+    memset(&r, 0, sizeof r);
+    r.up = up_c;
+    memcpy(r.buf, body, leftover);
+    r.pos = 0;
+    r.len = leftover;
+
+    int reusable = !conn_close && !cfg.target_disable_keepalive && status != 101;
+
+    if (head_only || status == 204 || status == 304) return reusable;
+
+    if (chunked) {
+        for (;;) {
+            char raw[128];
+            if (!rd_line_raw(&r, raw, sizeof raw)) return 0;
+            if (send_all(c, raw, strlen(raw)) < 0) return 0;
+            char num[128];
+            snprintf(num, sizeof num, "%s", raw);
+            char *semi = strchr(num, ';');
+            if (semi) *semi = 0;
+            long long sz = strtoll(num, NULL, 16);
+            if (sz < 0) return 0;
+            if (sz == 0) {
+                /* trailers until an empty line, relayed as they came */
+                for (;;) {
+                    char t[512];
+                    if (!rd_line_raw(&r, t, sizeof t)) return 0;
+                    if (send_all(c, t, strlen(t)) < 0) return 0;
+                    if (!strcmp(t, "\r\n")) return reusable;
+                }
+            }
+            if (!rd_pump(c, &r, (size_t)sz)) return 0;
+            if (!rd_pump(c, &r, 2)) return 0;
+        }
+    }
+
+    if (length >= 0) {
+        if (!rd_pump(c, &r, (size_t)length)) return 0;
+        return reusable;
+    }
+
+    /* no framing: the close is the delimiter, so the connection cannot be reused */
+    rd_pump_to_end(c, &r);
+    return 0;
+}
+
 static void proxy_request(conn *c, const request *req, const char *client_ip, const char *path) {
     if (upgrade_requested(req)) {
         proxy_upgrade(c, req, client_ip, path);
-        return;
-    }
-    conn up_c = {.fd = -1, .ssl = NULL};
-    int up = target_connect(&up_c);
-    if (up < 0) {
-        const char *msg = "betterAnusbis: cannot reach the target\n";
-        respond(c, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
         return;
     }
 
@@ -2334,7 +2538,6 @@ static void proxy_request(conn *c, const request *req, const char *client_ip, co
                                ? cfg.target_host_hdr : cfg.target_host;
     size_t off = (size_t)snprintf(head, sizeof head, "%s %s HTTP/1.1\r\nHost: %s\r\n",
                                  req->method, path, host_hdr);
-    /* forward the client's headers except the ones that must not cross */
     const char *p = req->headers;
     while (p && *p) {
         const char *eol = strstr(p, "\r\n");
@@ -2356,31 +2559,41 @@ static void proxy_request(conn *c, const request *req, const char *client_ip, co
         p = eol + 2;
     }
     off += (size_t)snprintf(head + off, sizeof head - off,
-                            "X-Real-IP: %s\r\nX-Forwarded-For: %s\r\nConnection: close\r\n\r\n",
-                            client_ip, client_ip);
-    if (send_all(&up_c, head, off) < 0) { close(up); return; }
-    if (req->body_len && send_all(&up_c, req->body, req->body_len) < 0) { close(up); return; }
+                            "X-Real-IP: %s\r\nX-Forwarded-For: %s\r\nConnection: %s\r\n\r\n",
+                            client_ip, client_ip,
+                            cfg.target_disable_keepalive ? "close" : "keep-alive");
 
-    /* read the whole reply, then hand it back (simple, and bounded) */
-    size_t cap = 65536, used = 0;
-    char *reply = malloc(cap);
-    if (!reply) { close(up); return; }
-    for (;;) {
-        if (used == cap - 1) {
-            if (cap >= MAX_REPLY) break;
-            cap *= 2;
-            char *bigger = realloc(reply, cap);
-            if (!bigger) break;
-            reply = bigger;
+    /* Two attempts: the first may be a pooled connection the origin has since
+     * closed, which is normal and undetectable until the read comes back empty. */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        conn up_c = {.fd = -1, .ssl = NULL};
+        int pooled = pool_take(&up_c);
+        if (!pooled && target_connect(&up_c) < 0) {
+            const char *msg = "betterAnusbis: cannot reach the target\n";
+            respond(c, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
+            return;
         }
-        ssize_t r = conn_read(&up_c, reply + used, cap - 1 - used);
-        if (r <= 0) break;
-        used += (size_t)r;
+        int failed = send_all(&up_c, head, off) < 0;
+        if (!failed && req->body_len && send_all(&up_c, req->body, req->body_len) < 0) failed = 1;
+        if (failed) {
+            up_close(&up_c);
+            if (pooled) continue;       /* stale connection: retry on a fresh one */
+            const char *msg = "betterAnusbis: cannot reach the target\n";
+            respond(c, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
+            return;
+        }
+        int rc = relay_response(&up_c, c, req->method);
+        if (rc > 0) pool_put(&up_c);
+        else up_close(&up_c);
+        if (rc < 0 && pooled) continue; /* the pooled one died before we wrote */
+        if (rc < 0) {
+            const char *msg = "betterAnusbis: the target closed without answering\n";
+            respond(c, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
+        }
+        return;
     }
-    if (up_c.ssl) { SSL_shutdown((SSL *)up_c.ssl); SSL_free((SSL *)up_c.ssl); }
-    close(up);
-    if (used) send_all(c, reply, used);
-    free(reply);
+    const char *msg = "betterAnusbis: cannot reach the target\n";
+    respond(c, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
 }
 
 static void url_encode(const char *in, char *out, size_t cap) {

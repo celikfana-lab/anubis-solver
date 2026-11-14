@@ -418,17 +418,21 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
 
 ## What it does not do
 
-- **No HTTP keep-alive.** Every HTTP request is its own connection, which is
-  fine behind a reverse proxy. WebSocket upgrades *are* tunnelled, see below.
-- **No HTTP/2.** It reads one request, answers it and closes,
-  which is fine behind a reverse proxy and keeps the listener readable. TLS itself
-  is there (`--tls-cert`/`--tls-key`, and `--target https://` with
-  `--target-insecure` for a self-signed backend).
-- **No imprint page, no OpenGraph rewriting, no localization.** `pass-challenge`,
-  `check`, `ping`, the state endpoint, the honeypot, `robots.txt` and the
-  Prometheus `/metrics` are implemented. The store backends (bbolt, valkey, S3),
-  OpenGraph passthrough and CEL `expression:` rules are the next things worth
-  porting; `PARITY.md` is the full gap list with file references.
+- **No HTTP/2, and the client side has no keep-alive.** The gate reads one
+  request, answers it with `Connection: close` and closes, which keeps the
+  listener readable. TLS itself is there (`--tls-cert`/`--tls-key`, and
+  `--target https://` with `--target-insecure` for a self-signed backend).
+- **The origin does get keep-alive.** Its connections are pooled and reused when
+  the response was framed (Content-Length, chunked, or no body), idle for up to
+  a minute, with one retry when a pooled connection turns out to be dead.
+  `--target-disable-keepalive` turns it off. Three proxied requests cost one
+  connection with the pool, three without it.
+- **No OpenGraph rewriting and no store backends yet.** `pass-challenge`,
+  `check`, `ping`, the state endpoint, the honeypot, `robots.txt`, the
+  Prometheus `/metrics`, impressum, localization and the challenge extensions
+  are implemented or documented above. The store backends (bbolt, valkey, S3)
+  and OpenGraph passthrough are the last two things on the parity list;
+  `PARITY.md` is the full gap list with file references.
 - **Two policy formats, neither of them a CEL engine.** Our own flat rules
   (literal or regex matchers, first match wins) and Anubis's `botPolicies.yaml`
   (rules, weights, thresholds, imports). The expression evaluator covers the

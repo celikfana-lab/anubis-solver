@@ -312,6 +312,13 @@ md5 `925898fa36ea34855d0d1d1e7a6b5b7b`, 3755 lines.
 | `--metrics-bind`, SIGHUP | recorded in 1.1 | unchanged, now covered: seven checks for the metrics listener, and `print_settings` reads the counters |
 | the option parser | hand-written if chain, `--flag value` only | table driven, `--flag=value` too, `--no-flag` / `--flag=false` for every boolean, and the table is the only place a flag is declared |
 
-Still open from the audit, unchanged: item 1 (a random signing key per process), item 3 (the YAML/JSON `bots[]`
-reader), item 4 (POSIX regex for `user_agent_regex` / `path_regex` / `headers_regex`), item 5 (WEIGH and thresholds),
-item 6 (per-rule algorithm), item 8 (backend keep-alive and WebSocket), item 9 (DNSBL).
+Still open from the audit, unchanged: item 2 (the YAML/JSON `bots[]` reader), item 5 (WEIGH and thresholds),
+item 8 (backend keep-alive and WebSocket), item 9 (DNSBL), plus the stores, OpenGraph, localization and impressum.
+
+Closed since the audit:
+
+| audit item | what landed |
+|---|---|
+| 1, the signing key | `--secret-file PATH` loads it or creates it 0600 on first run; `--secret-hex HEX` takes it inline; a file with the wrong contents is a hard error, never overwritten. Five checks |
+| 3, POSIX regex | `matches <ere>` in the policy file, `regcomp(REG_EXTENDED)` at load, `regerror` reported and the rule skipped rather than the gate refusing to start. Four checks |
+| 6, per-rule algorithm | `... algorithm argon2id` on a rule, stored in the challenge ledger next to the difficulty, rendered in the page, recorded in the JWT `method` claim and used for verification. Ignored with a warning under `--stateless`, where the id has no room for it. Three checks |

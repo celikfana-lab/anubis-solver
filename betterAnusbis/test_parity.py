@@ -48,6 +48,7 @@ SOLVER = anubis_solver.AnubisSolver(threads=4)
 # --------------------------------------------------------------------- backend
 class CountingServer(ThreadingHTTPServer):
     conns = 0
+    hits = 0
 
     def get_request(self):
         conn, addr = super().get_request()
@@ -62,7 +63,25 @@ class Backend(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.path.endswith("/count"):
+        if self.path.endswith("/hits"):
+            body = json.dumps({"hits": CountingServer.hits}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.endswith("/ogpage"):
+            CountingServer.hits += 1
+            page = (b'<html><head><title>the real page</title>'
+                    b'<meta property="og:title" content="Cached Title">'
+                    b'<meta property="og:description" content="about the thing">'
+                    b'</head><body>hello</body></html>')
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+        elif self.path.endswith("/count"):
             body = json.dumps({"conns": CountingServer.conns}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -147,6 +166,15 @@ def start_backend():
     srv = CountingServer(("127.0.0.1", BACKEND_PORT), Backend)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
+
+
+def backend_hits():
+    c = http.client.HTTPConnection("127.0.0.1", BACKEND_PORT, timeout=5)
+    c.request("GET", "/hits")
+    r = c.getresponse()
+    body = r.read()
+    c.close()
+    return json.loads(body)["hits"]
 
 
 def backend_conns():
@@ -1035,6 +1063,38 @@ def main():
             request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={cookie}"})
         used = backend_conns() - before - 1
         check("--target-disable-keepalive opens one per request", used == 3, used)
+
+    # ---- 23e. OpenGraph passthrough and its cache
+    with Gate("--difficulty", "6", "--og-passthrough"):
+        st, _, body = request("GET", "/ogpage")
+        check("og tags from the protected page reach the challenge page",
+              b"og:title" in body and b"Cached Title" in body, body[:160])
+        first = backend_hits()
+        st, _, body = request("GET", "/ogpage")
+        check("the second challenge uses the cached tags", backend_hits() == first,
+              backend_hits() - first)
+    with Gate("--difficulty", "6", "--og-override",
+              "og:title=Fixed Title;og:description=Fixed description"):
+        st, _, body = request("GET", "/ogpage")
+        check("--og-override replaces the tags without a fetch",
+              b"Fixed Title" in body and b"og:title" in body, body[:160])
+
+    # ---- 23f. the css-load extension
+    with Gate("--difficulty", "6", "--challenge-extension", "css-load"):
+        st, hdrs, body = request("GET", "/")
+        text = body.decode(errors="replace")
+        m = re.search(r'<link rel="stylesheet" href="([^"]+)"', text)
+        check("the challenge page carries the css-load link", m is not None, text[:120])
+        ch = anubis_solver.parse_challenge(text)
+        sol = SOLVER.solve(ch)
+        q = urlencode({"id": ch.id, "response": sol.response_hex,
+                       "nonce": str(sol.nonce), "redir": "/"})
+        st, _, body = request("GET", API + "pass-challenge?" + q)
+        check("a correct answer is refused until the stylesheet is fetched", st == 403, st)
+        st2, _, _ = request("GET", m.group(1)) if m else (0, [], b"")
+        check("the stylesheet route answers", st2 == 200, st2)
+        st3, hdrs, body = request("GET", API + "pass-challenge?" + q)
+        check("and the same answer is accepted afterwards", st3 == 302, st3)
 
     # ---- 24. DNS: the shipped policy is fully understood, and DNSBL answers
     if os.path.exists(policy):

@@ -152,6 +152,8 @@ policy, honeypot, assets, TLS, metrics
   --difficulty-in-jwt  --webmaster-email ADDR  --preserve-referer-query-param
   --target-disable-keepalive (accepted; this gate always closes)
   --geoip-country PATH  --geoip-asn PATH  --geoip-lookup IP  --dnsbl
+  --og-passthrough  --og-expiry-time SECS  --og-override "og:title=..." 
+  --challenge-extension css-load
 ```
 
 Every flag is also an environment variable, upper case with dashes as
@@ -427,7 +429,16 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
   a minute, with one retry when a pooled connection turns out to be dead.
   `--target-disable-keepalive` turns it off. Three proxied requests cost one
   connection with the pool, three without it.
-- **No OpenGraph rewriting and no store backends yet.** `pass-challenge`,
+- **OpenGraph works for the challenge page, not for every page.** `--og-passthrough`
+  fetches the protected page once, keeps its `og:` and description tags for
+  `--og-expiry-time` and puts them on the challenge page, so a link preview says
+  what the page is about. `--og-override "og:title=...;og:description=..."`
+  replaces them without fetching anything.
+- **`--challenge-extension css-load`** carries a stylesheet link on the challenge
+  page and refuses a pass-challenge until the browser has fetched it, which is
+  what the upstream extension does. `headless` exists only in the enterprise
+  build, so asking for it logs that and checks nothing.
+- **No store backends yet.** `pass-challenge`,
   `check`, `ping`, the state endpoint, the honeypot, `robots.txt`, the
   Prometheus `/metrics`, impressum, localization and the challenge extensions
   are implemented or documented above. The store backends (bbolt, valkey, S3)

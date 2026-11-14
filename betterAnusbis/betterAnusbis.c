@@ -129,6 +129,11 @@ typedef struct {
     const char *public_url;      /* where this gate is reachable, for forwardAuth */
     int dnsbl;                   /* ask DroneBL about the client */
     const char *geoip_lookup;     /* diagnostic: print what the databases say */
+    int ext_css_load;             /* require the css-load extension */
+    int og_passthrough;           /* copy the protected page's og: tags */
+    long og_ttl;                  /* how long a page's tags are cached */
+    const char *og_override;      /* key=value;... replaces the tags entirely */
+    const char *challenge_extension; /* "css-load", and only for now */
     const char *geoip_country_path;
     const char *geoip_asn_path;
     int subrequest;              /* no target: answer auth checks only */
@@ -177,6 +182,9 @@ static config cfg = {
     .secret_file = NULL,
     .data_dir = "data",
     .healthcheck = 0,
+    .og_passthrough = 0,
+    .og_ttl = 86400,
+    .og_override = NULL,
     .bind_network = "tcp",
     .socket_mode = "0770",
     .metrics_network = "tcp",
@@ -584,6 +592,7 @@ typedef struct {
     char algorithm[24];
     char referer[256];
     long long issued_ms;
+    int css_seen;
     int difficulty;
     time_t issued;
     int spent;
@@ -684,6 +693,46 @@ static int ch_peek_algorithm(const char *id, char *out, size_t cap) {
     }
     pthread_mutex_unlock(&ch_lock);
     return found;
+}
+
+/* The css-load extension: the challenge page carries a stylesheet link, a
+ * browser fetches it without being asked, and the pass-challenge request is
+ * only accepted if that fetch happened (lib/challenge/extension/css-load). */
+static int ch_mark_css(const char *id) {
+    if (!cfg.stateful || !id) return 0;
+    uint32_t h = 2166136261u;
+    for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    int found = 0;
+    pthread_mutex_lock(&ch_lock);
+    for (int probe = 0; probe < 32; probe++) {
+        ch_entry *e = &ch_table[(h + (uint32_t)probe) % CH_BUCKETS];
+        if (!e->used) break;
+        if (strcmp(e->id, id) != 0) continue;
+        e->css_seen = 1;
+        found = 1;
+        break;
+    }
+    pthread_mutex_unlock(&ch_lock);
+    return found;
+}
+
+/* 1 seen, 0 the challenge exists but the stylesheet was never fetched,
+ * -1 no such challenge (or no ledger). */
+static int ch_css_seen(const char *id) {
+    if (!id || !cfg.stateful) return -1;
+    uint32_t h = 2166136261u;
+    for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    int seen = -1;
+    pthread_mutex_lock(&ch_lock);
+    for (int probe = 0; probe < 32; probe++) {
+        ch_entry *e = &ch_table[(h + (uint32_t)probe) % CH_BUCKETS];
+        if (!e->used) break;
+        if (strcmp(e->id, id) != 0) continue;
+        seen = e->css_seen ? 1 : 0;
+        break;
+    }
+    pthread_mutex_unlock(&ch_lock);
+    return seen;
 }
 
 /* When it was issued, in milliseconds, so a preact wait of a few hundred is not
@@ -2612,6 +2661,181 @@ static void url_encode(const char *in, char *out, size_t cap) {
     out[o] = 0;
 }
 
+/* --------------------------------------------------------------- OpenGraph
+ *
+ * A link preview of a protected page would otherwise show the challenge page's
+ * own title, which is not what the page is about. With --og-passthrough the
+ * gate fetches the protected page once, keeps its og: and description tags, and
+ * puts them in the challenge page's head. --og-override skips the fetch
+ * entirely, which is what a site with no og tags or a fetch it cannot afford
+ * wants (upstream's `override` is the same idea: a complete replacement, never
+ * a per-tag overlay).
+ */
+#define OG_SLOTS 128
+#define OG_FETCH_MAX (256u << 10)
+
+typedef struct {
+    char path[192];
+    time_t when;
+    char snippet[1536];
+    int used;
+} og_entry;
+
+static og_entry og_cache[OG_SLOTS];
+static pthread_mutex_t og_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void og_escape(const char *in, size_t n, char *out, size_t cap) {
+    size_t o = 0;
+    for (size_t i = 0; i < n && o + 6 < cap; i++) {
+        unsigned char ch = (unsigned char)in[i];
+        if (ch == '"') { out[o++] = '&'; out[o++] = 'q'; out[o++] = 'u'; out[o++] = 'o'; out[o++] = 't'; out[o++] = ';'; }
+        else if (ch == '<') { out[o++] = '&'; out[o++] = 'l'; out[o++] = 't'; out[o++] = ';'; }
+        else if (ch == '>') { out[o++] = '&'; out[o++] = 'g'; out[o++] = 't'; out[o++] = ';'; }
+        else if (ch == '\n' || ch == '\r') continue;
+        else out[o++] = (char)ch;
+    }
+    out[o] = 0;
+}
+
+/* Pull one attribute's value out of a tag: name="value" or name='value'. */
+static int og_attr(const char *tag, size_t len, const char *name, char *out, size_t cap) {
+    size_t nl = strlen(name);
+    for (size_t i = 0; i + nl < len; i++) {
+        if (strncasecmp(tag + i, name, nl)) continue;
+        size_t j = i + nl;
+        while (j < len && (tag[j] == ' ' || tag[j] == '=')) j++;
+        if (j >= len) return 0;
+        char q = tag[j];
+        if (q != '"' && q != '\'') return 0;
+        j++;
+        size_t o = 0;
+        while (j < len && tag[j] != q && o + 1 < cap) out[o++] = tag[j++];
+        out[o] = 0;
+        return (int)o;
+    }
+    return 0;
+}
+
+static void og_extract(const char *html, size_t len, char *out, size_t cap) {
+    size_t o = 0;
+    out[0] = 0;
+    const char *p = html;
+    size_t left = len;
+    int emitted = 0;
+    while (left > 6 && emitted < 6) {
+        const char *m = strcasestr(p, "<meta");
+        if (!m || m >= p + left) break;
+        left -= (size_t)(m - p);
+        p = m;
+        const char *gt = memchr(p, '>', left);
+        if (!gt) break;
+        size_t taglen = (size_t)(gt - p) + 1;
+        char prop[128] = "", nameattr[128] = "", content[512] = "";
+        og_attr(p, taglen, "property=", prop, sizeof prop);
+        og_attr(p, taglen, "name=", nameattr, sizeof nameattr);
+        og_attr(p, taglen, "content=", content, sizeof content);
+        const char *key = NULL;
+        if (prop[0] && !strncasecmp(prop, "og:", 3)) key = prop;
+        else if (!strcasecmp(nameattr, "description")) key = "description";
+        else if (!strcasecmp(nameattr, "twitter:card")) key = "twitter:card";
+        if (key && content[0]) {
+            char safe[600];
+            og_escape(content, strlen(content), safe, sizeof safe);
+            int n = snprintf(out + o, cap - o, "<meta property=\"%s\" content=\"%s\">",
+                             key, safe);
+            if (n > 0) o += (size_t)n;
+            emitted++;
+        }
+        left -= taglen;
+        p = gt + 1;
+        if (o + 700 >= cap) break;
+    }
+}
+
+/* Fetch the protected page and keep its tags. Returns 1 when it got anything. */
+static int og_fetch(const char *path, char *out, size_t cap) {
+    conn up_c = {.fd = -1, .ssl = NULL};
+    if (target_connect(&up_c) < 0) return 0;
+    struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
+    setsockopt(up_c.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    const char *host_hdr = cfg.target_host_hdr && *cfg.target_host_hdr
+                               ? cfg.target_host_hdr : cfg.target_host;
+    char req[1024];
+    int n = snprintf(req, sizeof req,
+                     "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: betterAnusbis-og/1\r\n"
+                     "Connection: close\r\n\r\n", path, host_hdr);
+    if (send_all(&up_c, req, (size_t)n) < 0) {
+        up_close(&up_c);
+        return 0;
+    }
+    char *page = malloc(OG_FETCH_MAX);
+    size_t used = 0;
+    if (page) {
+        while (used < OG_FETCH_MAX - 1) {
+            ssize_t r = conn_read(&up_c, page + used, OG_FETCH_MAX - 1 - used);
+            if (r <= 0) break;
+            used += (size_t)r;
+        }
+        page[used] = 0;
+    }
+    up_close(&up_c);
+    if (!page) return 0;
+    char *body = strstr(page, "\r\n\r\n");
+    if (body) og_extract(body + 4, used - (size_t)(body + 4 - page), out, cap);
+    free(page);
+    return out[0] != 0;
+}
+
+/* The snippet for one path: override, else cache, else fetch. */
+static void og_snippet(const char *path, char *out, size_t cap) {
+    out[0] = 0;
+    if (!cfg.og_passthrough && !(cfg.og_override && *cfg.og_override)) return;
+    if (cfg.og_override && *cfg.og_override) {
+        char copy[1024];
+        snprintf(copy, sizeof copy, "%s", cfg.og_override);
+        size_t o = 0;
+        for (char *pair = copy; pair && *pair && o + 80 < cap;) {
+            char *semi = strchr(pair, ';');
+            if (semi) *semi = 0;
+            char *eq = strchr(pair, '=');
+            if (eq) {
+                *eq = 0;
+                char safe[512];
+                og_escape(eq + 1, strlen(eq + 1), safe, sizeof safe);
+                o += (size_t)snprintf(out + o, cap - o,
+                                      "<meta property=\"%s\" content=\"%s\">", pair, safe);
+            }
+            pair = semi ? semi + 1 : NULL;
+        }
+        return;
+    }
+
+    time_t now = time(NULL);
+    uint32_t h = 2166136261u;
+    for (const char *q = path; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    int slot = (int)(h % OG_SLOTS);
+    pthread_mutex_lock(&og_lock);
+    og_entry *e = &og_cache[slot];
+    if (e->used && !strcmp(e->path, path) && now - e->when < cfg.og_ttl) {
+        snprintf(out, cap, "%s", e->snippet);
+        pthread_mutex_unlock(&og_lock);
+        return;
+    }
+    pthread_mutex_unlock(&og_lock);
+
+    char fetched[1536];
+    if (!og_fetch(path, fetched, sizeof fetched)) return;
+
+    pthread_mutex_lock(&og_lock);
+    e = &og_cache[slot];
+    snprintf(e->path, sizeof e->path, "%s", path);
+    snprintf(e->snippet, sizeof e->snippet, "%s", fetched);
+    e->when = now;
+    e->used = 1;
+    pthread_mutex_unlock(&og_lock);
+    snprintf(out, cap, "%s", fetched);
+}
+
 /* ---------------------------------------------------------------- strings
  *
  * Our page has its own five strings, so they are translated here rather than
@@ -3932,7 +4156,8 @@ static char *prefix_api_paths(char *body) {
 
 static void challenge_page(conn *c, const char *id, const char *random_data,
                            const char *metadata_json, const char *test_cookie,
-                           const char *algorithm, int difficulty, const locale *loc) {
+                           const char *algorithm, int difficulty, const locale *loc,
+                           const char *og) {
     char payload[2048];
     snprintf(payload, sizeof payload,
              "{\"rules\":{\"algorithm\":\"%s\",\"difficulty\":%d},"
@@ -3953,7 +4178,7 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
     snprintf(body, cap,
              "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
              "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-             "<title>%s</title><style>"
+             "<title>%s</title>%s<style>"
              "body{font:16px/1.6 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;"
              "background:#12141a;color:#e6e9f0}a{color:#4d6bfe}"
              "code{font-family:ui-monospace,monospace;font-size:.85em;color:#98a0b3;word-break:break-all}"
@@ -3981,7 +4206,8 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
              "u.searchParams.set(\"id\",\"%s\");u.searchParams.set(\"response\",\"\");u.searchParams.set(\"nonce\",\"0\");"
              "u.searchParams.set(\"redir\",location.pathname);document.getElementById(\"manual\").href=u.toString();})();</script>"
              "%s</body></html>",
-             loc->title, loc->title, status_line, loc->slowing, loc->manual, loc->explain,
+             loc->title, og && *og ? og : "", loc->title, status_line, loc->slowing,
+             loc->manual, loc->explain,
              API_PREFIX, id, payload, CHALLENGE_JS, API_PREFIX, id,
              cfg.impressum_footer && *cfg.impressum_footer ? cfg.impressum_footer : "");
 
@@ -5900,6 +6126,13 @@ static void handle_connection(conn *c, const char *peer_ip) {
                 }
             }
         }
+    } else if (!strncmp(route, API_PREFIX "ext/css-load/", strlen(API_PREFIX) + 13)) {
+        const char *id = route + strlen(API_PREFIX) + 13;
+        const char *css = "/* ok */\n";
+        if (ch_mark_css(id))
+            respond(c, 200, "OK", "text/css", "Cache-Control: no-store\r\n", css, strlen(css));
+        else
+            respond(c, 404, "Not Found", NULL, NULL, "no\n", 3);
     } else if (!strcmp(route, API_PREFIX "state")) {
         __atomic_fetch_add(&m_requests[M_API], 1, __ATOMIC_RELAXED);
         char body[512];
@@ -6030,6 +6263,15 @@ static void handle_connection(conn *c, const char *peer_ip) {
                 goto done;
             }
 
+            if (cfg.ext_css_load && ch_css_seen(id) == 0) {
+                logmsg("rejecting: the css-load extension was not exercised for %s", id);
+                __atomic_fetch_add(&m_failed, 1, __ATOMIC_RELAXED);
+                const char *msg = "betterAnusbis: the challenge page's stylesheet was "
+                                  "never fetched, so the challenge is not accepted yet\n";
+                respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
+                goto done;
+            }
+
             if (cfg.stateful) {
                 char stored[65], taken_algo[24] = "";
                 int stored_difficulty = 0;
@@ -6069,6 +6311,11 @@ static void handle_connection(conn *c, const char *peer_ip) {
                 }
             }
 
+            if (valid && cfg.ext_css_load && !ch_css_seen(id)) {
+                logmsg("rejecting: challenge %s passed but the css-load extension was "
+                       "never exercised", id ? id : "?");
+                valid = 0;
+            }
             if (!valid) {
                 __atomic_fetch_add(&m_failed, 1, __ATOMIC_RELAXED);
                 const char *msg =
@@ -6286,8 +6533,16 @@ static void handle_connection(conn *c, const char *peer_ip) {
             ch_issue(id, rd_hex, difficulty, algorithm, referer);
             __atomic_fetch_add(&m_requests[M_CHALLENGED], 1, __ATOMIC_RELAXED);
             __atomic_fetch_add(&m_issued, 1, __ATOMIC_RELAXED);
+            char og[2048] = "";
+            og_snippet(route, og, sizeof og - 512);
+            if (cfg.ext_css_load) {
+                size_t used = strlen(og);
+                snprintf(og + used, sizeof og - used,
+                         "<link rel=\"stylesheet\" href=\"%sext/css-load/%s\">",
+                         API_PREFIX, id);
+            }
             challenge_page(c, id, rd_hex, metadata, id, algorithm, difficulty,
-                           pick_locale(&req));
+                           pick_locale(&req), og);
         }
     }
 
@@ -6484,6 +6739,14 @@ static void usage(FILE *out) {
         "                         /api/check and the challenge\n"
         "  --public-url URL       where this gate is reachable, used to build the\n"
         "                         forwardAuth redirect\n"
+        "  --challenge-extension NAME\n"
+        "                         css-load: the page's stylesheet must be fetched\n"
+        "                         before pass-challenge is accepted\n"
+        "  --og-passthrough       copy the protected page's og: tags onto the\n"
+        "                         challenge page, cached for --og-expiry-time\n"
+        "  --og-expiry-time SECS  how long those tags are cached (default 86400)\n"
+        "  --og-override LIST     key=value pairs separated by ; to use instead of\n"
+        "                         fetching anything\n"
         "  --geoip-country PATH   MaxMind country database, for geoip: rule matching\n"
         "  --geoip-asn PATH       MaxMind ASN database, for asns: rule matching\n"
         "  --dnsbl                check every client address against DroneBL, cached\n"
@@ -6640,6 +6903,10 @@ static const arg_spec args[] = {
     {"public-url", ARG_STR, &cfg.public_url},
     {"dnsbl", ARG_BOOL, &cfg.dnsbl},
     {"geoip-lookup", ARG_STR, &cfg.geoip_lookup},
+    {"challenge-extension", ARG_STR, &cfg.challenge_extension},
+    {"og-passthrough", ARG_BOOL, &cfg.og_passthrough},
+    {"og-expiry-time", ARG_LONG, &cfg.og_ttl},
+    {"og-override", ARG_STR, &cfg.og_override},
     {"geoip-country", ARG_STR, &cfg.geoip_country_path},
     {"geoip-asn", ARG_STR, &cfg.geoip_asn_path},
     {"forced-language", ARG_STR, &cfg.forced_language},
@@ -7052,6 +7319,24 @@ int main(int argc, char **argv) {
                have_a ? ", ASN " : "", have_a ? "" : "");
         if (have_a) printf("%s: ASN %u\n", cfg.geoip_lookup, asn);
         return 0;
+    }
+
+    if (cfg.challenge_extension && *cfg.challenge_extension) {
+        if (!strcasecmp(cfg.challenge_extension, "css-load")) {
+            if (!cfg.stateful) {
+                fprintf(stderr, "betterAnusbis: --challenge-extension css-load needs the "
+                                "challenge ledger; it cannot work with --stateless\n");
+                return 2;
+            }
+            cfg.ext_css_load = 1;
+        } else if (!strcasecmp(cfg.challenge_extension, "headless")) {
+            logmsg("--challenge-extension headless: this tree has no implementation of it "
+                   "(it exists only in the enterprise build), so nothing is checked");
+        } else {
+            fprintf(stderr, "betterAnusbis: --challenge-extension wants css-load or "
+                            "headless\n");
+            return 2;
+        }
     }
 
     if (cfg.geoip_country_path && *cfg.geoip_country_path &&

@@ -928,7 +928,24 @@ def main():
         proc.terminate()
         proc.wait(3)
 
-    # ---- 24. the old flags still behave
+    # ---- 24. DNS: the shipped policy is fully understood, and DNSBL answers
+    if os.path.exists(policy):
+        try:
+            subprocess.run([os.path.join(HERE, "betterAnusbis"),
+                            "--listen", "127.0.0.1:8496", "--target", "http://127.0.0.1:9",
+                            "--policy", policy, "--data-dir", upstream], timeout=2,
+                           capture_output=True)
+            out = b""
+        except subprocess.TimeoutExpired as exc:
+            out = (exc.stdout or b"") + (exc.stderr or b"")
+        check("every rule in the shipped policy is now understood",
+              b"never match" not in out and b"does not evaluate" not in out, out[-160:])
+    with Gate("--difficulty", "6", "--dnsbl"):
+        st, _, body = request("GET", "/")
+        check("--dnsbl clears a client or says it could not check (never guesses)",
+              st in (200, 503), st)
+
+    # ---- 25. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

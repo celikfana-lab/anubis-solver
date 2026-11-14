@@ -312,8 +312,8 @@ md5 `925898fa36ea34855d0d1d1e7a6b5b7b`, 3755 lines.
 | `--metrics-bind`, SIGHUP | recorded in 1.1 | unchanged, now covered: seven checks for the metrics listener, and `print_settings` reads the counters |
 | the option parser | hand-written if chain, `--flag value` only | table driven, `--flag=value` too, `--no-flag` / `--flag=false` for every boolean, and the table is the only place a flag is declared |
 
-Still open from the audit: backend HTTP keep-alive (the second half of item 8), item 9 (DNSBL), an arbitrary CEL
-engine, GeoIP and ASN matching, `verifyFCrDNS`, the stores, OpenGraph, localization and impressum.
+Still open from the audit: backend HTTP keep-alive (the second half of item 8), an arbitrary CEL engine, GeoIP and ASN
+matching, the stores, OpenGraph, and the css-load challenge extension.
 
 Closed since then:
 
@@ -323,6 +323,12 @@ Closed since then:
 | `DEBUG_BENCHMARK`, the fifth action | accepted in an Anubis policy and treated as "always challenge" (`lib/config/config.go:43`), with its metrics going to the CHALLENGE slot. One check |
 | the environment-variable surface | every flag in the table is also an environment variable using upstream's `flagenv` mapping, and a flag on the command line wins. Two checks |
 | `--healthcheck` | GETs `/healthz` on `--metrics-bind` and exits 0 or 1, which is what a supervisor needs. Two checks |
+| 9, DNSBL | `--dnsbl` (or `dnsbl: true` in a policy) reverses the client address, asks `<reversed>.dnsbl.dronebl.org`, reads the class out of the last octet of the first A record and caches the verdict for a day. A hit denies with the class; a resolver failure answers 503 rather than guessing. One check |
+| `verifyFCrDNS` | implemented as an expression leaf: PTR via `getnameinfo`, then a forward lookup whose addresses must include the address asked about, then the pattern is applied to the name. The shipped Yandex rule loads without a warning now, and the whole shipped policy has zero unsupported rules. One check |
+| localization | six locales hand-written for this page, chosen by Accept-Language order or `--forced-language`, English as fallback. Four checks |
+| impressum | `--impressum-footer` on every page, `--impressum-page-title`/`-body` served at `<API_PREFIX>imprint`, the webmaster address on the deny page. Two checks |
+| preact | `--algorithm preact`: a wait of difficulty x 80 ms, `result` = hex SHA-256 of the hex random data, plus the verification cookie. The ledger now records the issue time in milliseconds so the wait is not rounded to a second. Three checks |
+| forwardAuth | an empty `--target` is auth-check mode: 200 for ALLOW or a valid cookie, the deny status for DENY, 401 `Authorization required`, or a 307 to `--public-url` with the encoded original URL; `X-Original-Uri` becomes the policy's path. Seven checks |
 | 8, the WebSocket half | an `Upgrade` request is forwarded with its `Connection` and `Upgrade` headers intact, the `101` and its headers are relayed, and the two sockets are then spliced with `poll()` until either closes or five minutes pass in silence. An upgrade needs an ALLOW rule or a valid cookie, because a browser cannot solve a challenge over a socket it has not opened yet. Five checks, including a frame echoed through the tunnel |
 
 Closed since the audit:

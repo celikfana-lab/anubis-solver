@@ -127,6 +127,7 @@ typedef struct {
     const char *impressum_title; /* the imprint page's title */
     const char *impressum_body;  /* the imprint page's body */
     const char *public_url;      /* where this gate is reachable, for forwardAuth */
+    int dnsbl;                   /* ask DroneBL about the client */
     int subrequest;              /* no target: answer auth checks only */
     int jwt_alg;                 /* 0 HS256, 1 HS512, 2 EdDSA */
     EVP_PKEY *jwt_pkey;
@@ -1404,6 +1405,154 @@ static void respond_redirect(conn *c, const char *location, const char *extra_he
 }
 
 /* ---------------------------------------------------------------- metrics */
+
+/* ------------------------------------------------------------ DNS lookups
+ *
+ * Two features need DNS and neither needs a hand-written resolver: the system
+ * one is fine. A DNSBL query is an A lookup of a reversed address, and
+ * forward-confirmed reverse DNS is a PTR lookup followed by an A lookup of the
+ * name it returned.
+ */
+#define DNSBL_ZONE "dnsbl.dronebl.org"
+#define DNSBL_TTL 86400
+#define DNSBL_SLOTS 512
+
+typedef struct {
+    char ip[64];
+    int verdict;             /* 0 clean, >0 class, -1 lookup failed */
+    time_t when;
+    int used;
+} dnsbl_entry;
+static dnsbl_entry dnsbl_cache[DNSBL_SLOTS];
+static pthread_mutex_t dnsbl_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void reverse_ip(const char *ip, char *out, size_t cap) {
+    out[0] = 0;
+    struct in_addr v4;
+    struct in6_addr v6;
+    if (!strchr(ip, ':')) {
+        if (inet_pton(AF_INET, ip, &v4) != 1) return;
+        unsigned char *b = (unsigned char *)&v4.s_addr;
+        snprintf(out, cap, "%u.%u.%u.%u", b[3], b[2], b[1], b[0]);
+        return;
+    }
+    if (inet_pton(AF_INET6, ip, &v6) != 1) return;
+    size_t o = 0;
+    for (int i = 15; i >= 0; i--) {
+        o += (size_t)snprintf(out + o, cap - o, "%x.%x.", v6.s6_addr[i] & 0xf,
+                              v6.s6_addr[i] >> 4);
+        if (o >= cap) return;
+    }
+    out[o] = 0;
+    if (o && out[o - 1] == '.') out[o - 1] = 0;
+}
+
+static int dnsbl_lookup(const char *ip) {
+    char rev[256], name[320];
+    reverse_ip(ip, rev, sizeof rev);
+    if (!rev[0]) return 0;
+    snprintf(name, sizeof name, "%s." DNSBL_ZONE, rev);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo *res = NULL;
+    int rc = getaddrinfo(name, NULL, &hints, &res);
+    if (rc == EAI_NONAME
+#ifdef EAI_NODATA
+        || rc == EAI_NODATA
+#endif
+    ) {
+        if (res) freeaddrinfo(res);
+        return 0;                       /* not listed */
+    }
+    if (rc != 0) {
+        if (res) freeaddrinfo(res);
+        return -1;
+    }
+    int cls = 0;
+    if (res) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
+        cls = (int)(ntohl(sin->sin_addr.s_addr) & 0xff);
+        freeaddrinfo(res);
+    }
+    return cls;                         /* 0 means all good */
+}
+
+static int dnsbl_verdict(const char *ip) {
+    time_t now = time(NULL);
+    uint32_t h = 2166136261u;
+    for (const char *q = ip; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    int slot = (int)(h % DNSBL_SLOTS);
+    int result;
+    pthread_mutex_lock(&dnsbl_lock);
+    dnsbl_entry *e = &dnsbl_cache[slot];
+    if (e->used && !strcmp(e->ip, ip) && now - e->when < DNSBL_TTL) {
+        result = e->verdict;
+        pthread_mutex_unlock(&dnsbl_lock);
+        return result;
+    }
+    pthread_mutex_unlock(&dnsbl_lock);
+
+    result = dnsbl_lookup(ip);
+
+    pthread_mutex_lock(&dnsbl_lock);
+    e = &dnsbl_cache[slot];
+    snprintf(e->ip, sizeof e->ip, "%s", ip);
+    e->verdict = result;
+    e->when = now;
+    e->used = 1;
+    pthread_mutex_unlock(&dnsbl_lock);
+    return result;
+}
+
+/* verifyFCrDNS(ip, "^.*example$"): the PTR name must exist, and one of its
+ * forward addresses must be the address we asked about
+ * (internal/dns/dns.go:90-148). Returns the verified name, or 0. */
+static int fcrdns_name(const char *ip, char *out, size_t cap) {
+    struct sockaddr_in v4;
+    struct sockaddr_in6 v6;
+    struct sockaddr *sa;
+    socklen_t salen;
+    memset(&v4, 0, sizeof v4);
+    memset(&v6, 0, sizeof v6);
+    if (!strchr(ip, ':')) {
+        if (inet_pton(AF_INET, ip, &v4.sin_addr) != 1) return 0;
+        v4.sin_family = AF_INET;
+        sa = (struct sockaddr *)&v4;
+        salen = sizeof v4;
+    } else {
+        if (inet_pton(AF_INET6, ip, &v6.sin6_addr) != 1) return 0;
+        v6.sin6_family = AF_INET6;
+        sa = (struct sockaddr *)&v6;
+        salen = sizeof v6;
+    }
+    char name[NI_MAXHOST];
+    if (getnameinfo(sa, salen, name, sizeof name, NULL, 0, NI_NAMEREQD) != 0) return 0;
+
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(name, NULL, &hints, &res) != 0) return 0;
+    int confirmed = 0;
+    for (struct addrinfo *a = res; a; a = a->ai_next) {
+        if (a->ai_family == AF_INET &&
+            !memcmp(&((struct sockaddr_in *)a->ai_addr)->sin_addr, &v4.sin_addr, 4)) {
+            confirmed = 1;
+            break;
+        }
+        if (a->ai_family == AF_INET6 &&
+            !memcmp(&((struct sockaddr_in6 *)a->ai_addr)->sin6_addr, &v6.sin6_addr, 16)) {
+            confirmed = 1;
+            break;
+        }
+    }
+    freeaddrinfo(res);
+    if (!confirmed) return 0;
+    snprintf(out, cap, "%s", name);
+    return 1;
+}
 
 static size_t render_metrics(char *buf, size_t cap) {
     size_t o = 0;
@@ -3972,6 +4121,22 @@ static int ex_leaf(exctx *cx, const char *s) {
         subject = p + 1;
     } else if (!strcmp(s, "true")) {
         return 1;
+    } else if (!strncmp(s, "verifyFCrDNS(", 13)) {
+        const char *q = s + 13;
+        while (*q == ' ') q++;
+        if (strncmp(q, "remoteAddress", 13)) return (cx->ok = 0), 0;
+        q += 13;
+        while (*q == ' ') q++;
+        if (*q != ',') return (cx->ok = 0), 0;
+        q++;
+        char pat[256];
+        if (!ex_quoted(&q, pat, sizeof pat)) return (cx->ok = 0), 0;
+        while (*q == ' ') q++;
+        if (*q != ')') return (cx->ok = 0), 0;
+        if (!cx->rq) return 0;          /* understood; nothing to check yet */
+        char name[NI_MAXHOST];
+        if (!fcrdns_name(cx->ip, name, sizeof name)) return 0;
+        return ex_regex(pat, name);
     } else if (!strcmp(s, "false")) {
         return 0;
     } else {
@@ -4001,14 +4166,33 @@ static int ex_leaf(exctx *cx, const char *s) {
         return 0;
     }
     char needle[256];
+    int needle_var = 0;         /* 1 host, 2 userAgent, 3 path */
     if (op[0] == '=' || op[0] == '!') {
-        if (!ex_quoted(&q, needle, sizeof needle)) return (cx->ok = 0), 0;
+        if (!ex_quoted(&q, needle, sizeof needle)) {
+            /* the right-hand side may be a variable, e.g. != host */
+            ex_trim(&q);
+            size_t idlen = strcspn(q, " )");
+            if (idlen == 4 && !strncmp(q, "host", 4)) needle_var = 1;
+            else if (idlen == 9 && !strncmp(q, "userAgent", 9)) needle_var = 2;
+            else if (idlen == 4 && !strncmp(q, "path", 4)) needle_var = 3;
+            else return (cx->ok = 0), 0;
+            q += idlen;
+        }
     } else {
         if (*q != '(') return (cx->ok = 0), 0;
         q++;
         if (!ex_quoted(&q, needle, sizeof needle)) return (cx->ok = 0), 0;
         ex_trim(&q);
         if (*q != ')') return (cx->ok = 0), 0;
+    }
+
+    if (needle_var && cx->rq) {
+        const char *v = needle_var == 1 ? header_value(cx->rq, "Host")
+                       : needle_var == 2 ? header_value(cx->rq, "User-Agent")
+                                         : cx->rq->ppath;
+        snprintf(needle, sizeof needle, "%s", v ? v : "");
+    } else if (needle_var) {
+        needle[0] = 0;
     }
 
     const char *have = "";
@@ -4477,9 +4661,11 @@ static void yml_load_document(const y_node *root, const char *from, int depth,
     }
 
     const y_node *dnsbl = y_get(root, "dnsbl");
-    if (dnsbl && y_bool(dnsbl, 0))
-        logmsg("policy: dnsbl is enabled in the policy, but this gate has no DNSBL "
-               "lookup; that check is not applied");
+    if (dnsbl && y_bool(dnsbl, 0)) {
+        cfg.dnsbl = 1;
+        logmsg("policy: dnsbl is enabled, so every client address is checked against "
+               "DroneBL once a day");
+    }
 
     /* blocks we knowingly do not implement */
     static const char *const ignored[] = {
@@ -5181,6 +5367,24 @@ static void handle_connection(conn *c, const char *peer_ip) {
             collapse_slashes(route_buf, req.ppath, sizeof req.ppath);
             route = route_buf;
         }
+        if (cfg.dnsbl) {
+            int verdict = dnsbl_verdict(client_ip);
+            if (verdict < 0) {
+                const char *msg = "betterAnusbis: the DNSBL lookup failed\n";
+                respond(c, 503, "Service Unavailable", NULL, NULL, msg, strlen(msg));
+                goto done;
+            }
+            if (verdict > 0) {
+                char msg[256];
+                snprintf(msg, sizeof msg,
+                         "betterAnusbis: %s\nlisted by DroneBL in class %d\n",
+                         pick_locale(&req)->denied, verdict);
+                __atomic_fetch_add(&m_requests[M_DENIED], 1, __ATOMIC_RELAXED);
+                respond(c, cfg.deny_status, reason_for(cfg.deny_status), NULL, NULL,
+                        msg, strlen(msg));
+                goto done;
+            }
+        }
         int difficulty = cfg.difficulty;
         int policy_difficulty = 0;
         const char *algorithm = cfg.algorithm;
@@ -5235,6 +5439,24 @@ static void handle_connection(conn *c, const char *peer_ip) {
         int policy_difficulty = 0;
         const char *algorithm = cfg.algorithm;
         rule_action action = policy_decide(&req, client_ip, &policy_difficulty, &algorithm);
+        if (cfg.dnsbl) {
+            int verdict = dnsbl_verdict(client_ip);
+            if (verdict < 0) {
+                const char *msg = "betterAnusbis: the DNSBL lookup failed\n";
+                respond(c, 503, "Service Unavailable", NULL, NULL, msg, strlen(msg));
+                goto done;
+            }
+            if (verdict > 0) {
+                char msg[256];
+                snprintf(msg, sizeof msg,
+                         "betterAnusbis: %s\nlisted by DroneBL in class %d\n",
+                         pick_locale(&req)->denied, verdict);
+                __atomic_fetch_add(&m_requests[M_DENIED], 1, __ATOMIC_RELAXED);
+                respond(c, cfg.deny_status, reason_for(cfg.deny_status), NULL, NULL,
+                        msg, strlen(msg));
+                goto done;
+            }
+        }
         if (action == RULE_ALLOW) {
             __atomic_fetch_add(&m_requests[M_ALLOWED], 1, __ATOMIC_RELAXED);
             __atomic_fetch_add(&m_proxied, 1, __ATOMIC_RELAXED);
@@ -5500,6 +5722,8 @@ static void usage(FILE *out) {
         "                         /api/check and the challenge\n"
         "  --public-url URL       where this gate is reachable, used to build the\n"
         "                         forwardAuth redirect\n"
+        "  --dnsbl                check every client address against DroneBL, cached\n"
+        "                         for a day; a lookup failure answers 503\n"
         "  --target-sni NAME      TLS name to send to the target; \"auto\" reuses the\n"
         "                         Host header (default: the host we dialled)\n"
         "  --target-host NAME     Host header to send to the target\n"
@@ -5650,6 +5874,7 @@ static const arg_spec args[] = {
     {"socket-mode", ARG_STR, &cfg.socket_mode},
     {"metrics-bind-network", ARG_STR, &cfg.metrics_network},
     {"public-url", ARG_STR, &cfg.public_url},
+    {"dnsbl", ARG_BOOL, &cfg.dnsbl},
     {"forced-language", ARG_STR, &cfg.forced_language},
     {"impressum-footer", ARG_STR, &cfg.impressum_footer},
     {"impressum-page-title", ARG_STR, &cfg.impressum_title},

@@ -350,6 +350,27 @@ window) and **retired on use**, so a solved challenge cannot be replayed:
 `expired`). `--stateless` restores the old stateless id encoding — the trade is in
 the design notes above.
 
+## WebSocket
+
+An upgrade is tunnelled, not answered. If the request carries
+`Connection: Upgrade` and `Upgrade: websocket` (or `h2c`), the gate forwards the
+request as written, relays the backend's `101` and its headers, and then stops
+being an HTTP client: two sockets, one pipe, spliced with `poll()` until either
+end closes or nothing has been said for five minutes.
+
+A browser cannot solve a challenge from inside a WebSocket, so an upgrade has to
+get through one of the two ways any proxied WebSocket does:
+
+- a rule that allows the path, e.g. `allow path prefix /ws` (or a
+  `path_regex` in an Anubis policy), or
+- the auth cookie from a challenge the browser already passed, sent in the
+  handshake like any other header.
+
+Anything else gets the challenge page, which is the same thing Anubis does.
+
+Two honest limits: closing either end closes both, so a half-close is not
+forwarded; and the idle timeout is a fixed five minutes, not configurable yet.
+
 ## Inspecting a running gate
 
 `kill -HUP <pid>` prints the effective settings, as parsed and validated, plus
@@ -386,10 +407,9 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
 
 ## What it does not do
 
-- **No WebSocket tunnel and no keep-alive.** A `Connection: Upgrade` request is
-  forwarded as a plain request, so Grafana, Jupyter and anything else that
-  upgrades does not work through this. `PARITY.md` item 8.
-- **No HTTP/2 and no keep-alive.** It reads one request, answers it and closes,
+- **No HTTP keep-alive.** Every HTTP request is its own connection, which is
+  fine behind a reverse proxy. WebSocket upgrades *are* tunnelled, see below.
+- **No HTTP/2.** It reads one request, answers it and closes,
   which is fine behind a reverse proxy and keeps the listener readable. TLS itself
   is there (`--tls-cert`/`--tls-key`, and `--target https://` with
   `--target-insecure` for a self-signed backend).
@@ -432,8 +452,9 @@ kills/restarts betterAnusbis per algorithm. `test_parity.py` starts both sides
 itself and asserts what the HTTP response says: status lines, every Set-Cookie
 attribute, the Location header after a blocked redirect, the counters a scrape
 returns, the headers the backend received after XFF flattening, and the decision
-the shipped `data/botPolicies.yaml` produces for nine probe requests. 96 checks,
-no logs read. The Anubis policy checks skip themselves when the upstream data
+the shipped `data/botPolicies.yaml` produces for nine probe requests, and a real
+WebSocket upgrade: the 101, its `Sec-WebSocket-Accept`, and a frame echoed byte
+for byte through the tunnel. 103 checks, no logs read. The Anubis policy checks skip themselves when the upstream data
 directory is not there; set `ANUBIS_DATA_DIR` to point at one. `wasm/live-server.md` in the parent repository has a policy file for
 the real Anubis if you want to compare side by side.
 

@@ -312,7 +312,7 @@ md5 `925898fa36ea34855d0d1d1e7a6b5b7b`, 3755 lines.
 | `--metrics-bind`, SIGHUP | recorded in 1.1 | unchanged, now covered: seven checks for the metrics listener, and `print_settings` reads the counters |
 | the option parser | hand-written if chain, `--flag value` only | table driven, `--flag=value` too, `--no-flag` / `--flag=false` for every boolean, and the table is the only place a flag is declared |
 
-Still open from the audit, unchanged: item 8 (backend keep-alive and WebSocket), item 9 (DNSBL), an arbitrary CEL
+Still open from the audit: backend HTTP keep-alive (the second half of item 8), item 9 (DNSBL), an arbitrary CEL
 engine, GeoIP and ASN matching, `verifyFCrDNS`, the stores, OpenGraph, localization and impressum.
 
 Closed since then:
@@ -323,6 +323,7 @@ Closed since then:
 | `DEBUG_BENCHMARK`, the fifth action | accepted in an Anubis policy and treated as "always challenge" (`lib/config/config.go:43`), with its metrics going to the CHALLENGE slot. One check |
 | the environment-variable surface | every flag in the table is also an environment variable using upstream's `flagenv` mapping, and a flag on the command line wins. Two checks |
 | `--healthcheck` | GETs `/healthz` on `--metrics-bind` and exits 0 or 1, which is what a supervisor needs. Two checks |
+| 8, the WebSocket half | an `Upgrade` request is forwarded with its `Connection` and `Upgrade` headers intact, the `101` and its headers are relayed, and the two sockets are then spliced with `poll()` until either closes or five minutes pass in silence. An upgrade needs an ALLOW rule or a valid cookie, because a browser cannot solve a challenge over a socket it has not opened yet. Five checks, including a frame echoed through the tunnel |
 
 Closed since the audit:
 

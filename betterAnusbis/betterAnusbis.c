@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -1393,7 +1394,140 @@ static int target_connect(conn *up) {
     return fd;
 }
 
+/* An upgrade is a request whose response never ends: after the 101 the two
+ * sockets are one pipe. Anubis gets this from httputil.ReverseProxy, which has
+ * handled upgrades since Go 1.12; here it is explicit, because the whole point
+ * is to stop being an HTTP client and start being a splice.
+ *
+ * Grafana, Jupyter, the MinIO console and every live-reload dev server need it,
+ * and a gate that answers 101 with a challenge page is worse than no gate. */
+
+static int upgrade_requested(const request *req) {
+    const char *up = header_value(req, "Upgrade");
+    if (!up || !*up) return 0;
+    char upgrade[64];
+    snprintf(upgrade, sizeof upgrade, "%s", up);   /* header_value is a shared buffer */
+    const char *conn = header_value(req, "Connection");
+    if (!conn || !*conn) return 0;
+    return strcasestr(conn, "upgrade") != NULL && (!strcasecmp(upgrade, "websocket") ||
+                                                   !strcasecmp(upgrade, "h2c") ||
+                                                   !strcasecmp(upgrade, "HTTP/2.0"));
+}
+
+/* Read once from a conn, draining whatever the TLS layer already holds, and
+ * tell the caller whether the peer is done. */
+static ssize_t relay_read(conn *c, char *buf, size_t cap) {
+    for (;;) {
+        ssize_t n = conn_read(c, buf, cap);
+        if (n > 0) return n;
+        if (c->ssl && SSL_pending((SSL *)c->ssl) > 0) continue;
+        return n;
+    }
+}
+
+static void proxy_upgrade(conn *c, const request *req, const char *client_ip, const char *path) {
+    conn up_c = {.fd = -1, .ssl = NULL};
+    if (target_connect(&up_c) < 0) {
+        const char *msg = "betterAnusbis: cannot reach the target\n";
+        respond(c, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
+        return;
+    }
+
+    /* Forward the request as written, except the two headers we own. Unlike the
+     * ordinary path, Connection and Upgrade must survive: they are the request. */
+    char head[16384];
+    size_t off = 0;
+    const char *host_hdr = cfg.target_host_hdr && *cfg.target_host_hdr
+                               ? cfg.target_host_hdr : cfg.target_host;
+    sb_app(head, sizeof head, &off, "%s %s HTTP/1.1\r\nHost: %s\r\n",
+           req->method, path, host_hdr);
+    const char *p = req->headers;
+    while (p && *p) {
+        const char *eol = strstr(p, "\r\n");
+        if (!eol) break;
+        size_t n = (size_t)(eol - p);
+        if (n > 0 && n < 1024 &&
+            strncasecmp(p, "Host:", 5) && strncasecmp(p, "X-Real-IP:", 10) &&
+            strncasecmp(p, "X-Forwarded-For:", 16) && strncasecmp(p, "Proxy-", 6) &&
+            strncasecmp(p, "TE:", 3) && strncasecmp(p, "Trailer:", 8)) {
+            if (off + n + 2 < sizeof head) {
+                memcpy(head + off, p, n);
+                off += n;
+                head[off++] = '\r';
+                head[off++] = '\n';
+            }
+        }
+        p = eol + 2;
+    }
+    sb_app(head, sizeof head, &off, "X-Real-IP: %s\r\nX-Forwarded-For: %s\r\n\r\n",
+           client_ip, client_ip);
+    if (send_all(&up_c, head, off) < 0) goto done;
+
+    /* The answer head, then whatever of the tunnel arrived with it. */
+    char resp[16384];
+    size_t used = 0;
+    while (used < sizeof resp - 1) {
+        ssize_t r = conn_read(&up_c, resp + used, sizeof resp - 1 - used);
+        if (r <= 0) break;
+        used += (size_t)r;
+        resp[used] = 0;
+        if (strstr(resp, "\r\n\r\n")) break;
+    }
+    if (!used) {
+        const char *msg = "betterAnusbis: the target closed during the upgrade\n";
+        respond(c, 502, "Bad Gateway", NULL, NULL, msg, strlen(msg));
+        goto done;
+    }
+    if (send_all(c, resp, used) < 0) goto done;
+
+    const char *sp = strchr(resp, ' ');
+    int status = sp ? atoi(sp + 1) : 0;
+    if (status != 101) {
+        /* Not an upgrade after all: hand back what the target said and stop. */
+        char buf[8192];
+        for (;;) {
+            ssize_t r = conn_read(&up_c, buf, sizeof buf);
+            if (r <= 0) break;
+            if (send_all(c, buf, (size_t)r) < 0) break;
+        }
+        goto done;
+    }
+    if (cfg.verbose)
+        logmsg("upgrade to %s accepted, splicing (client %s)", cfg.target_host, client_ip);
+
+    /* Splice. Idle for five minutes and both ends go: a live socket that has
+     * said nothing for five minutes is not live. */
+    for (;;) {
+        struct pollfd pfd[2] = {{c->fd, POLLIN, 0}, {up_c.fd, POLLIN, 0}};
+        int ready = poll(pfd, 2, 300000);
+        if (ready <= 0) break;
+        char buf[32768];
+        if (pfd[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+            ssize_t r = relay_read(c, buf, sizeof buf);
+            if (r <= 0) break;
+            if (send_all(&up_c, buf, (size_t)r) < 0) break;
+        }
+        if (pfd[1].revents & (POLLIN | POLLHUP | POLLERR)) {
+            ssize_t r = relay_read(&up_c, buf, sizeof buf);
+            if (r <= 0) break;
+            if (send_all(c, buf, (size_t)r) < 0) break;
+        }
+    }
+
+done:
+    if (up_c.ssl) {
+        SSL_shutdown((SSL *)up_c.ssl);
+        SSL_free((SSL *)up_c.ssl);
+        up_c.ssl = NULL;
+    }
+    if (up_c.fd >= 0) close(up_c.fd);
+}
+
 static void proxy_request(conn *c, const request *req, const char *client_ip, const char *path) {
+    if (upgrade_requested(req)) {
+        proxy_upgrade(c, req, client_ip, path);
+        return;
+    }
     conn up_c = {.fd = -1, .ssl = NULL};
     int up = target_connect(&up_c);
     if (up < 0) {

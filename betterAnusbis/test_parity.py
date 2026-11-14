@@ -19,6 +19,8 @@ import sys
 import tempfile
 import threading
 import time
+import base64
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlencode
 
@@ -31,6 +33,8 @@ import anubis_solver  # noqa: E402
 BACKEND_PORT = 8411
 GATE_PORT = 8412
 METRICS_PORT = 8413
+WS_PORT = 8414
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 BASE = f"http://127.0.0.1:{GATE_PORT}"
 API = "/.within.website/x/cmd/anubis/api/"
 
@@ -67,6 +71,51 @@ class Backend(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def _ws_serve(conn):
+    try:
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = conn.recv(4096)
+            if not chunk:
+                return
+            data += chunk
+        key = ""
+        for line in data.split(b"\r\n\r\n")[0].decode(errors="replace").split("\r\n"):
+            if line.lower().startswith("sec-websocket-key:"):
+                key = line.split(":", 1)[1].strip()
+        accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+        conn.sendall(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                      "Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept +
+                      "\r\n\r\n").encode())
+        while True:
+            chunk = conn.recv(4096)
+            if not chunk:
+                break
+            conn.sendall(chunk)          # echo the frame bytes verbatim
+    except OSError:
+        pass
+    finally:
+        conn.close()
+
+
+def start_ws_backend():
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", WS_PORT))
+    srv.listen(8)
+
+    def loop():
+        while True:
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            threading.Thread(target=_ws_serve, args=(conn,), daemon=True).start()
+
+    threading.Thread(target=loop, daemon=True).start()
+    return srv
+
+
 def start_backend():
     srv = ThreadingHTTPServer(("127.0.0.1", BACKEND_PORT), Backend)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -75,9 +124,11 @@ def start_backend():
 
 # ------------------------------------------------------------------------ gate
 class Gate:
-    def __init__(self, *args, policy: str | None = None, env: dict | None = None):
+    def __init__(self, *args, policy: str | None = None, env: dict | None = None,
+                 target: int = BACKEND_PORT):
         self.args = list(args)
         self.env = env
+        self.target = target
         self.policy_path = None
         if policy is not None:
             fd, self.policy_path = tempfile.mkstemp(suffix=".policy")
@@ -92,7 +143,7 @@ class Gate:
         self.proc = subprocess.Popen(
             [os.path.join(HERE, "betterAnusbis"),
              "--listen", f"127.0.0.1:{GATE_PORT}",
-             "--target", f"http://127.0.0.1:{BACKEND_PORT}", *self.args],
+             "--target", f"http://127.0.0.1:{self.target}", *self.args],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
         )
         deadline = time.time() + 8
@@ -135,6 +186,32 @@ def header(hdrs, name):
         if k.lower() == name.lower():
             return v
     return None
+
+
+def ws_roundtrip(cookie: str | None = None, timeout=10):
+    """Upgrade through the gate and push one frame through the tunnel."""
+    sock = socket.create_connection(("127.0.0.1", GATE_PORT), timeout)
+    req = ("GET /ws HTTP/1.1\r\nHost: ws.test\r\nUpgrade: websocket\r\n"
+           "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+           "Sec-WebSocket-Version: 13\r\n")
+    if cookie:
+        req += f"Cookie: techaro.lol-anubis-auth={cookie}\r\n"
+    req += "\r\n"
+    sock.sendall(req.encode())
+    head = b""
+    while b"\r\n\r\n" not in head:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        head += chunk
+    status = head.split(b"\r\n")[0].decode(errors="replace")
+    payload = b"\x81\x85\x00\x00\x00\x00hello"
+    echoed = b""
+    if "101" in status:
+        sock.sendall(payload)
+        echoed = sock.recv(4096)
+    sock.close()
+    return status, head, echoed, payload
 
 
 def set_cookies(hdrs):
@@ -599,7 +676,36 @@ def main():
                         capture_output=True, timeout=10)
     check("--healthcheck exits 1 when nothing answers", hc.returncode == 1, hc.returncode)
 
-    # ---- 17. the old flags still behave
+    # ---- 17. WebSocket upgrades
+    start_ws_backend()
+    allow = os.path.join(tempfile.mkdtemp(), "ws-allow.policy")
+    with open(allow, "w") as f:
+        f.write("allow path prefix /ws\n")
+    with Gate("--difficulty", "6", "--policy", allow, target=WS_PORT):
+        status, head, echoed, payload = ws_roundtrip()
+        check("an allowed path is upgraded to 101", "101 Switching Protocols" in status, status)
+        check("the 101 relays the backend's Sec-WebSocket-Accept",
+              b"Sec-WebSocket-Accept:" in head, head[:80])
+        check("frames cross the gate byte for byte", echoed == payload, (echoed, payload))
+    with Gate("--difficulty", "6", target=WS_PORT):
+        status, head, echoed, payload = ws_roundtrip()
+        check("an unauthenticated upgrade gets the challenge, not a tunnel",
+              "200" in status and b"anubis_challenge" in head + b"", status)
+        status, hdrs, body, ch = solve_once()
+        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
+                      if "cookie-verification" not in c), "")
+        status, head, echoed, payload = ws_roundtrip(cookie=token)
+        check("a client that solved a challenge is upgraded", "101" in status, status)
+        check("and its frames cross too", echoed == payload, (echoed, payload))
+    deny = os.path.join(tempfile.mkdtemp(), "ws-deny.policy")
+    with open(deny, "w") as f:
+        f.write("deny path prefix /ws\n")
+    with Gate("--difficulty", "6", "--policy", deny, target=WS_PORT):
+        status, head, echoed, payload = ws_roundtrip()
+        check("a denied path is denied before any upgrade", "101" not in status
+              and b"denied by policy" in head, status)
+
+    # ---- 18. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

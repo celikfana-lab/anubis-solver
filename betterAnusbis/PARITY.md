@@ -312,8 +312,8 @@ md5 `925898fa36ea34855d0d1d1e7a6b5b7b`, 3755 lines.
 | `--metrics-bind`, SIGHUP | recorded in 1.1 | unchanged, now covered: seven checks for the metrics listener, and `print_settings` reads the counters |
 | the option parser | hand-written if chain, `--flag value` only | table driven, `--flag=value` too, `--no-flag` / `--flag=false` for every boolean, and the table is the only place a flag is declared |
 
-Still open from the audit, unchanged: item 2 (the YAML/JSON `bots[]` reader), item 5 (WEIGH and thresholds),
-item 8 (backend keep-alive and WebSocket), item 9 (DNSBL), plus the stores, OpenGraph, localization and impressum.
+Still open from the audit, unchanged: item 8 (backend keep-alive and WebSocket), item 9 (DNSBL), an arbitrary CEL
+engine, GeoIP and ASN matching, `verifyFCrDNS`, the stores, OpenGraph, localization and impressum.
 
 Closed since the audit:
 
@@ -322,3 +322,5 @@ Closed since the audit:
 | 1, the signing key | `--secret-file PATH` loads it or creates it 0600 on first run; `--secret-hex HEX` takes it inline; a file with the wrong contents is a hard error, never overwritten. Five checks |
 | 3, POSIX regex | `matches <ere>` in the policy file, `regcomp(REG_EXTENDED)` at load, `regerror` reported and the rule skipped rather than the gate refusing to start. Four checks |
 | 6, per-rule algorithm | `... algorithm argon2id` on a rule, stored in the challenge ledger next to the difficulty, rendered in the page, recorded in the JWT `method` claim and used for verification. Ignored with a warning under `--stateless`, where the id has no room for it. Three checks |
+| 2, the `bots[]` reader | `--policy` now detects and reads Anubis's own schema: `bots[]`, `thresholds[]`, `import:` with the `(data)/` macro, `user_agent_regex`, `path_regex`, `headers_regex`, `remote_addresses` as IPv4 and IPv6 CIDR, `expression` in its shipped forms, `challenge{algorithm,difficulty}`, `weight.adjust`, `status_codes`, `honeypot.enabled`. Anubis's default-allow semantics come with it. The shipped policy loads 41 rules and 5 thresholds with 2359 CIDRs, and nine checks in `test_parity.py` assert the decision it produces for nine probe requests |
+| 5, WEIGH and thresholds | weight accumulates across `WEIGH` rules in file order, then the thresholds are consulted in order, and a `CHALLENGE` rule still short-circuits them. The arithmetic subset of CEL is understood (`weight <= 0`, `all:`, `any:`), which is all the shipped thresholds use |

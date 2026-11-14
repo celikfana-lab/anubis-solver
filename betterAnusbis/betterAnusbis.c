@@ -105,6 +105,7 @@ typedef struct {
     const char *jwt_restrict_hdr;/* bind the cookie to the client address; "" = off */
     const char *secret_hex;      /* 64 hex chars: the HMAC key, so restarts keep cookies */
     const char *secret_file;     /* read it from here, or create it here with 0600 */
+    const char *data_dir;        /* where (data)/... resolves for Anubis policies */
 } config;
 
 static config cfg = {
@@ -145,6 +146,7 @@ static config cfg = {
     .jwt_restrict_hdr = "X-Real-IP",
     .secret_hex = NULL,
     .secret_file = NULL,
+    .data_dir = "data",
 };
 
 static void logmsg(const char *fmt, ...) {
@@ -2770,6 +2772,1324 @@ typedef struct {
     int has_re;
 } rule;
 
+/* ======================================================================== *
+ * Anubis's own policy format
+ *
+ * botPolicies.yaml is a YAML document: a list of bot rules, a list of weight
+ * thresholds, and a handful of global blocks. This section reads the subset of
+ * YAML that the format actually uses (block maps and sequences, folded and
+ * literal scalars, quoted and plain scalars, comments), resolves import: lines
+ * including the (data)/ macro, translates the RE2-isms the shipped patterns use
+ * into POSIX ERE, and evaluates the CEL subset the shipped expressions use.
+ *
+ * It is deliberately not a YAML library and not a CEL implementation. Anything
+ * it cannot express is reported at load time, by name, instead of quietly
+ * changing the meaning of a policy.
+ * ======================================================================== */
+
+#define MAX_YAML_RULES 4096
+#define MAX_YAML_THRESHOLDS 64
+#define MAX_IMPORT_DEPTH 16
+#define MAX_RULE_HEADERS 4
+
+typedef enum { Y_SCALAR, Y_MAP, Y_SEQ } y_type;
+
+typedef struct y_node {
+    y_type type;
+    char *key;              /* set when this node is a map member */
+    char *scalar;           /* for Y_SCALAR */
+    struct y_node *child;   /* for Y_MAP / Y_SEQ: first child */
+    struct y_node *next;    /* sibling */
+} y_node;
+
+typedef struct {
+    char *text;             /* the line with the indent removed */
+    int indent;
+    int blank;
+} y_line;
+
+typedef struct {
+    y_line *lines;
+    int n, pos;
+    const char *path;
+} y_file;
+
+static void *y_alloc(size_t n) {
+    void *p = calloc(1, n);
+    return p;
+}
+
+static char *y_dup(const char *s) {
+    size_t n = strlen(s);
+    char *p = malloc(n + 1);
+    if (p) memcpy(p, s, n + 1);
+    return p;
+}
+
+static y_node *y_new(y_type t) {
+    y_node *n = y_alloc(sizeof *n);
+    if (n) n->type = t;
+    return n;
+}
+
+static void y_free(y_node *n) {
+    while (n) {
+        y_node *next = n->next;
+        y_free(n->child);
+        free(n->key);
+        free(n->scalar);
+        free(n);
+        n = next;
+    }
+}
+
+/* ---- reading the file -------------------------------------------------- */
+
+static void y_strip_comment(char *s) {
+    int q = 0;
+    for (char *p = s; *p; p++) {
+        if (q) {
+            if (*p == q) q = 0;
+            continue;
+        }
+        if (*p == '"' || *p == '\'') {
+            q = *p;
+            continue;
+        }
+        /* YAML needs whitespace before an inline comment; that keeps # inside a
+         * pattern such as [#] from being eaten */
+        if (*p == '#' && (p == s || p[-1] == ' ' || p[-1] == '\t')) {
+            *p = 0;
+            return;
+        }
+    }
+}
+
+static int y_open(const char *path, y_file *f) {
+    memset(f, 0, sizeof *f);
+    f->path = path;
+    FILE *fp = fopen(path, "r");
+    if (!fp) return -1;
+    char *buf = NULL;
+    size_t used = 0, cap = 0;
+    for (;;) {
+        if (used + 4096 > cap) {
+            cap = cap ? cap * 2 : 65536;
+            char *bigger = realloc(buf, cap);
+            if (!bigger) {
+                free(buf);
+                fclose(fp);
+                return -1;
+            }
+            buf = bigger;
+        }
+        size_t got = fread(buf + used, 1, cap - used - 1, fp);
+        used += got;
+        if (got == 0) break;
+    }
+    fclose(fp);
+    if (!buf) return -1;
+    buf[used] = 0;
+
+    /* split into lines, strip comments, keep blanks (block scalars need them) */
+    int cap_lines = 256;
+    f->lines = y_alloc((size_t)cap_lines * sizeof *f->lines);
+    if (!f->lines) {
+        free(buf);
+        return -1;
+    }
+    char *p = buf;
+    while (*p) {
+        char *eol = strchr(p, '\n');
+        if (eol) *eol = 0;
+        size_t len = strlen(p);
+        if (len && p[len - 1] == '\r') p[--len] = 0;
+        y_strip_comment(p);
+        len = strlen(p);
+        while (len && (p[len - 1] == ' ' || p[len - 1] == '\t')) p[--len] = 0;
+
+        if (f->n == cap_lines) {
+            cap_lines *= 2;
+            y_line *bigger = realloc(f->lines, (size_t)cap_lines * sizeof *f->lines);
+            if (!bigger) {
+                free(buf);
+                return -1;
+            }
+            f->lines = bigger;
+        }
+        int indent = 0;
+        while (p[indent] == ' ' || p[indent] == '\t') indent++;
+        f->lines[f->n].indent = indent;
+        f->lines[f->n].blank = (p[indent] == 0);
+        f->lines[f->n].text = y_dup(p + indent);
+        f->n++;
+        if (!eol) break;
+        p = eol + 1;
+    }
+    free(buf);
+    return 0;
+}
+
+static void y_close(y_file *f) {
+    for (int i = 0; i < f->n; i++) free(f->lines[i].text);
+    free(f->lines);
+    f->lines = NULL;
+    f->n = f->pos = 0;
+}
+
+static int y_next_indent(const y_file *f) {
+    for (int i = f->pos; i < f->n; i++) {
+        if (f->lines[i].blank) continue;
+        return f->lines[i].indent;
+    }
+    return -1;
+}
+
+/* ---- block scalars ----------------------------------------------------- */
+
+static char *y_block_scalar(y_file *f, int parent_indent, int literal) {
+    int start = f->pos, end = f->pos;
+    while (end < f->n) {
+        if (f->lines[end].blank) {
+            end++;
+            continue;
+        }
+        if (f->lines[end].indent <= parent_indent) break;
+        end++;
+    }
+    int base = -1;
+    for (int i = start; i < end; i++) {
+        if (f->lines[i].blank) continue;
+        if (base < 0 || f->lines[i].indent < base) base = f->lines[i].indent;
+    }
+    if (base < 0) base = parent_indent + 1;
+
+    size_t cap = 64, len = 0;
+    char *out = malloc(cap);
+    if (!out) return NULL;
+    out[0] = 0;
+    for (int i = start; i < end; i++) {
+        y_line *ln = &f->lines[i];
+        size_t need = len + (ln->blank ? 1 : strlen(ln->text) + 8);
+        if (need + 2 > cap) {
+            while (need + 2 > cap) cap *= 2;
+            char *bigger = realloc(out, cap);
+            if (!bigger) {
+                free(out);
+                return NULL;
+            }
+            out = bigger;
+        }
+        if (ln->blank) {
+            out[len++] = '\n';
+            out[len] = 0;
+            continue;
+        }
+        int extra = ln->indent - base;
+        if (extra < 0) extra = 0;
+        int need_space = !literal && len > 0 && out[len - 1] != '\n';
+        if (need_space) out[len++] = ' ';
+        for (int k = 0; k < extra; k++) out[len++] = ' ';
+        size_t tl = strlen(ln->text);
+        memcpy(out + len, ln->text, tl);
+        len += tl;
+        out[len] = 0;
+        if (literal) {
+            out[len++] = '\n';
+            out[len] = 0;
+        }
+    }
+    f->pos = end;
+    while (len && (out[len - 1] == '\n' || out[len - 1] == ' ')) out[--len] = 0;
+    return out;
+}
+
+/* ---- scalars and the block parser -------------------------------------- */
+
+static char *y_unquote(const char *v) {
+    size_t n = strlen(v);
+    if (n >= 2 && ((v[0] == '"' && v[n - 1] == '"') || (v[0] == '\'' && v[n - 1] == '\''))) {
+        char *out = y_dup(v + 1);
+        if (!out) return NULL;
+        out[n - 2] = 0;
+        /* a doubled quote is one quote, in both YAML styles */
+        char *w = out;
+        for (char *r = out; *r; r++) {
+            *w++ = *r;
+            if (*r == v[0] && r[1] == v[0]) r++;
+        }
+        *w = 0;
+        return out;
+    }
+    return y_dup(v);
+}
+
+static int y_is_block_marker(const char *v) {
+    return !strcmp(v, ">") || !strcmp(v, ">-") || !strcmp(v, ">+") ||
+           !strcmp(v, "|") || !strcmp(v, "|-") || !strcmp(v, "|+");
+}
+
+static int y_is_literal(const char *v) { return v[0] == '|'; }
+
+static y_node *y_parse_block(y_file *f, int indent);
+
+/* One `key: value` pair. f->pos already points past the line it came from. */
+static void y_take_pair(y_file *f, y_node *map, const char *text, int indent) {
+    int q = 0;
+    const char *colon = NULL;
+    for (const char *p = text; *p; p++) {
+        if (q) {
+            if (*p == q) q = 0;
+            continue;
+        }
+        if (*p == '"' || *p == '\'') {
+            q = *p;
+            continue;
+        }
+        if (*p == ':') {
+            colon = p;
+            break;
+        }
+    }
+    if (!colon) return;
+
+    size_t kl = (size_t)(colon - text);
+    while (kl && text[kl - 1] == ' ') kl--;
+    char key[160];
+    if (kl >= sizeof key) kl = sizeof key - 1;
+    memcpy(key, text, kl);
+    key[kl] = 0;
+
+    const char *val = colon + 1;
+    while (*val == ' ') val++;
+
+    y_node *member = y_new(Y_SCALAR);
+    if (!member) return;
+    member->key = y_dup(key);
+    if (*val == 0) {
+        int ni = y_next_indent(f);
+        if (ni > indent) {
+            y_node *child = y_parse_block(f, ni);
+            if (child) {
+                member->type = child->type;
+                member->child = child->child;
+                free(child->key);
+                free(child);
+            }
+        } else {
+            member->scalar = y_dup("");
+        }
+    } else if (y_is_block_marker(val)) {
+        member->scalar = y_block_scalar(f, indent, y_is_literal(val));
+    } else {
+        member->scalar = y_unquote(val);
+    }
+    /* append */
+    if (!map->child) {
+        map->child = member;
+    } else {
+        y_node *t = map->child;
+        while (t->next) t = t->next;
+        t->next = member;
+    }
+}
+
+static y_node *y_parse_map_body(y_file *f, int indent, const char *seed) {
+    y_node *map = y_new(Y_MAP);
+    if (!map) return NULL;
+    if (seed && *seed) y_take_pair(f, map, seed, indent);
+    while (f->pos < f->n) {
+        y_line *ln = &f->lines[f->pos];
+        if (ln->blank) {
+            f->pos++;
+            continue;
+        }
+        if (ln->indent != indent) break;
+        if (ln->text[0] == '-') break;
+        char *text = ln->text;
+        f->pos++;
+        y_take_pair(f, map, text, indent);
+    }
+    return map;
+}
+
+static y_node *y_parse_seq_body(y_file *f, int indent) {
+    y_node *seq = y_new(Y_SEQ);
+    if (!seq) return NULL;
+    while (f->pos < f->n) {
+        y_line *ln = &f->lines[f->pos];
+        if (ln->blank) {
+            f->pos++;
+            continue;
+        }
+        if (ln->indent != indent || ln->text[0] != '-') break;
+        const char *rest = ln->text + 1;
+        while (*rest == ' ') rest++;
+        int item_indent = ln->indent;
+        int content_indent = item_indent + 2;
+        f->pos++;
+
+        y_node *item;
+        if (*rest == 0) {
+            int ni = y_next_indent(f);
+            item = (ni > item_indent) ? y_parse_block(f, ni) : y_new(Y_SCALAR);
+        } else if (strchr(rest, ':') && rest[0] != '"' && rest[0] != '\'') {
+            item = y_parse_map_body(f, content_indent, rest);
+        } else if (rest[0] == '"' || rest[0] == '\'') {
+            /* a quoted scalar may still be a key, but only if a colon follows
+             * the closing quote */
+            item = y_new(Y_SCALAR);
+            item->scalar = y_unquote(rest);
+        } else {
+            item = y_new(Y_SCALAR);
+            item->scalar = y_unquote(rest);
+        }
+        if (!item) break;
+        if (!seq->child) {
+            seq->child = item;
+        } else {
+            y_node *t = seq->child;
+            while (t->next) t = t->next;
+            t->next = item;
+        }
+    }
+    return seq;
+}
+
+static y_node *y_parse_block(y_file *f, int indent) {
+    if (f->pos >= f->n) return NULL;
+    if (f->lines[f->pos].blank) {
+        f->pos++;
+        return y_parse_block(f, indent);
+    }
+    if (f->lines[f->pos].text[0] == '-') return y_parse_seq_body(f, indent);
+    return y_parse_map_body(f, indent, NULL);
+}
+
+/* ---- accessors --------------------------------------------------------- */
+
+static const y_node *y_get(const y_node *map, const char *key) {
+    if (!map || map->type != Y_MAP) return NULL;
+    for (const y_node *c = map->child; c; c = c->next)
+        if (c->key && !strcmp(c->key, key)) return c;
+    return NULL;
+}
+
+static const char *y_str(const y_node *n, const char *def) {
+    if (!n) return def;
+    if (n->type == Y_SCALAR && n->scalar) return n->scalar;
+    return def;
+}
+
+static int y_bool(const y_node *n, int def) {
+    const char *s = y_str(n, NULL);
+    if (!s) return def;
+    if (!strcasecmp(s, "true") || !strcmp(s, "yes") || !strcmp(s, "on")) return 1;
+    if (!strcasecmp(s, "false") || !strcmp(s, "no") || !strcmp(s, "off")) return 0;
+    return def;
+}
+
+/* ---- CIDR arena -------------------------------------------------------- */
+
+typedef struct {
+    int v4;
+    uint32_t net4, mask4;
+    uint8_t net6[16], mask6[16];
+} cidr;
+
+static cidr *cidr_pool;
+static size_t cidr_count, cidr_cap;
+
+static int cidr_parse(const char *spec, cidr *out) {
+    memset(out, 0, sizeof *out);
+    char tmp[128];
+    snprintf(tmp, sizeof tmp, "%s", spec);
+    char *slash = strchr(tmp, '/');
+    int bits = slash ? atoi(slash + 1) : -1;
+    if (slash) *slash = 0;
+    struct in_addr a4;
+    struct in6_addr a6;
+    if (inet_pton(AF_INET, tmp, &a4) == 1) {
+        if (bits < 0) bits = 32;
+        if (bits > 32) bits = 32;
+        out->v4 = 1;
+        out->mask4 = bits == 0 ? 0 : 0xFFFFFFFFu << (32 - bits);
+        out->net4 = ntohl(a4.s_addr) & out->mask4;
+        return 0;
+    }
+    if (inet_pton(AF_INET6, tmp, &a6) == 1) {
+        if (bits < 0) bits = 128;
+        if (bits > 128) bits = 128;
+        for (int i = 0; i < 16; i++) {
+            int keep = bits - i * 8;
+            uint8_t m = keep >= 8 ? 0xff : keep <= 0 ? 0 : (uint8_t)(0xffu << (8 - keep));
+            out->mask6[i] = m;
+            out->net6[i] = a6.s6_addr[i] & m;
+        }
+        return 0;
+    }
+    return -1;
+}
+
+static int cidr_contains(const cidr *c, const char *ip) {
+    struct in6_addr a6;
+    struct in_addr a4;
+    if (c->v4) {
+        if (strchr(ip, ':')) {
+            /* a mapped v4 client still has to match a v4 rule */
+            struct in6_addr v6;
+            static const uint8_t mapped[12] = {0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+            if (inet_pton(AF_INET6, ip, &v6) != 1) return 0;
+            if (memcmp(v6.s6_addr, mapped, 12) != 0) return 0;
+            char v4s[32];
+            snprintf(v4s, sizeof v4s, "%u.%u.%u.%u", v6.s6_addr[12], v6.s6_addr[13],
+                     v6.s6_addr[14], v6.s6_addr[15]);
+            return cidr_contains(c, v4s);
+        }
+        if (inet_pton(AF_INET, ip, &a4) != 1) return 0;
+        return (ntohl(a4.s_addr) & c->mask4) == c->net4;
+    }
+    if (!strchr(ip, ':')) {
+        if (inet_pton(AF_INET, ip, &a4) != 1) return 0;
+        memset(&a6, 0, sizeof a6);
+        a6.s6_addr[10] = a6.s6_addr[11] = 0xff;
+        memcpy(a6.s6_addr + 12, &a4, 4);
+    } else if (inet_pton(AF_INET6, ip, &a6) != 1) {
+        return 0;
+    }
+    for (int i = 0; i < 16; i++)
+        if ((a6.s6_addr[i] & c->mask6[i]) != c->net6[i]) return 0;
+    return 1;
+}
+
+static int cidr_add(const char *spec) {
+    cidr c;
+    if (cidr_parse(spec, &c) != 0) return -1;
+    if (cidr_count == cidr_cap) {
+        size_t bigger = cidr_cap ? cidr_cap * 2 : 256;
+        cidr *p = realloc(cidr_pool, bigger * sizeof *p);
+        if (!p) return -1;
+        cidr_pool = p;
+        cidr_cap = bigger;
+    }
+    cidr_pool[cidr_count++] = c;
+    return 0;
+}
+
+/* ---- the CEL subset ---------------------------------------------------- */
+
+/* defined with the policy table below; the expression engine needs it for
+ * .matches() */
+static char *re2_to_posix(const char *pat, int *case_insensitive);
+
+typedef struct {
+    const request *rq;
+    const char *ip;
+    double weight;
+    int ok;                  /* 0 once anything unsupported is seen */
+} exctx;
+
+static void ex_trim(const char **p) {
+    while (**p == ' ' || **p == '\t') (*p)++;
+}
+
+static void ex_rtrim(char *s) {
+    size_t n = strlen(s);
+    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = 0;
+}
+
+/* .matches("regex") is used by two shipped rules. Compile on demand and keep a
+ * few patterns; a policy has a handful, not thousands. */
+#define EX_RE_CACHE 8
+static struct {
+    char pat[256];
+    regex_t re;
+    int set;
+} ex_re_cache[EX_RE_CACHE];
+static int ex_re_next;
+
+static int ex_regex(const char *pat, const char *hay) {
+    for (int i = 0; i < EX_RE_CACHE; i++)
+        if (ex_re_cache[i].set && !strcmp(ex_re_cache[i].pat, pat))
+            return regexec(&ex_re_cache[i].re, hay, 0, NULL, 0) == 0;
+    int slot = ex_re_next++ % EX_RE_CACHE;
+    if (ex_re_cache[slot].set) {
+        regfree(&ex_re_cache[slot].re);
+        ex_re_cache[slot].set = 0;
+    }
+    int icase = 0;
+    char *posix = re2_to_posix(pat, &icase);
+    if (!posix) return 0;
+    int rc = regcomp(&ex_re_cache[slot].re, posix, REG_EXTENDED | REG_NOSUB |
+                     (icase ? REG_ICASE : 0));
+    free(posix);
+    if (rc != 0) return 0;
+    snprintf(ex_re_cache[slot].pat, sizeof ex_re_cache[slot].pat, "%s", pat);
+    ex_re_cache[slot].set = 1;
+    return regexec(&ex_re_cache[slot].re, hay, 0, NULL, 0) == 0;
+}
+
+static int ex_match_parens(const char *s) {
+    /* s starts with '('; is its match the final character? */
+    int depth = 0, q = 0;
+    for (size_t i = 0; s[i]; i++) {
+        char c = s[i];
+        if (q) {
+            if (c == q) q = 0;
+            continue;
+        }
+        if (c == '"' || c == '\'') q = c;
+        else if (c == '(') depth++;
+        else if (c == ')') {
+            depth--;
+            if (depth == 0) return s[i + 1] == 0;
+        }
+    }
+    return 0;
+}
+
+static int ex_find_top(const char *s, const char *op, size_t *at) {
+    int depth = 0, q = 0;
+    size_t n = strlen(op);
+    for (size_t i = 0; s[i]; i++) {
+        char c = s[i];
+        if (q) {
+            if (c == q) q = 0;
+            continue;
+        }
+        if (c == '"' || c == '\'') { q = c; continue; }
+        if (c == '(') { depth++; continue; }
+        if (c == ')') { if (depth) depth--; continue; }
+        if (!depth && !strncmp(s + i, op, n)) {
+            *at = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Reads a quoted string at *p into buf. Returns 1 on success and advances *p. */
+static int ex_quoted(const char **p, char *buf, size_t cap) {
+    ex_trim(p);
+    char q = **p;
+    if (q != '"' && q != '\'') return 0;
+    (*p)++;
+    size_t n = 0;
+    while (**p && **p != q) {
+        if (n + 1 < cap) buf[n++] = **p;
+        (*p)++;
+    }
+    if (**p != q) return 0;
+    (*p)++;
+    buf[n] = 0;
+    return 1;
+}
+
+static int ex_cmp_num(double a, const char *op, double b) {
+    if (!strcmp(op, ">=")) return a >= b;
+    if (!strcmp(op, "<=")) return a <= b;
+    if (!strcmp(op, "==")) return a == b;
+    if (!strcmp(op, "!=")) return a != b;
+    if (!strcmp(op, ">")) return a > b;
+    if (!strcmp(op, "<")) return a < b;
+    return 0;
+}
+
+static int ex_str_pred(const char *hay, const char *op, const char *needle) {
+    if (!strcmp(op, "==")) return !strcmp(hay, needle);
+    if (!strcmp(op, "!=")) return strcmp(hay, needle) != 0;
+    if (!strcmp(op, "contains")) return strstr(hay, needle) != NULL;
+    if (!strcmp(op, "startsWith")) return !strncmp(hay, needle, strlen(needle));
+    if (!strcmp(op, "endsWith")) {
+        size_t h = strlen(hay), n = strlen(needle);
+        return h >= n && !strcmp(hay + h - n, needle);
+    }
+    return 0;
+}
+
+static int ex_eval(exctx *cx, const char *raw);
+
+static int ex_leaf(exctx *cx, const char *s) {
+    /* "NAME" in headers */
+    const char *p = s;
+    if (*p == '"' || *p == '\'') {
+        char name[128];
+        if (ex_quoted(&p, name, sizeof name)) {
+            ex_trim(&p);
+            if (!strcmp(p, "in headers")) {
+                return cx->rq ? header_value(cx->rq, name) != NULL : 0;
+            }
+        }
+        cx->ok = 0;
+        return 0;
+    }
+
+    /* weight OP number, load_1m OP number, load_15m OP number */
+    struct {
+        const char *name;
+        int which;          /* 0 weight, 1 load_1m, 2 load_15m */
+    } subjects[] = {{"weight", 0}, {"load_1m", 1}, {"load_15m", 2}};
+    for (size_t i = 0; i < sizeof subjects / sizeof subjects[0]; i++) {
+        size_t n = strlen(subjects[i].name);
+        if (strncmp(s, subjects[i].name, n) != 0) continue;
+        const char *r = s + n;
+        ex_trim(&r);
+        char op[3] = "";
+        if (r[0] == '>' || r[0] == '<' || r[0] == '=' || r[0] == '!') {
+            size_t ol = (r[1] == '=') ? 2 : 1;
+            memcpy(op, r, ol);
+            op[ol] = 0;
+            r += ol;
+        } else {
+            cx->ok = 0;
+            return 0;
+        }
+        ex_trim(&r);
+        char *end = NULL;
+        double num = strtod(r, &end);
+        if (end == r) {
+            cx->ok = 0;
+            return 0;
+        }
+        while (*end == ' ') end++;
+        if (*end) {
+            cx->ok = 0;
+            return 0;
+        }
+        double value = subjects[i].which == 0 ? cx->weight : 0;
+        if (subjects[i].which == 1 || subjects[i].which == 2) {
+            FILE *lf = fopen("/proc/loadavg", "r");
+            if (lf) {
+                double l1 = 0, l5 = 0;
+                if (fscanf(lf, "%lf %lf", &l1, &l5) == 2)
+                    value = subjects[i].which == 1 ? l1 : l5;
+                fclose(lf);
+            }
+        }
+        return ex_cmp_num(value, op, num);
+    }
+
+    /* userAgent / path / headers["N"], then a predicate */
+    const char *subject = NULL;
+    char hdrname[128] = "";
+    if (!strncmp(s, "userAgent", 9)) {
+        subject = s + 9;
+    } else if (!strncmp(s, "host", 4)) {
+        subject = s + 4;
+    } else if (!strncmp(s, "path", 4)) {
+        subject = s + 4;
+    } else if (!strncmp(s, "headers[", 8)) {
+        p = s + 8;
+        if (!ex_quoted(&p, hdrname, sizeof hdrname)) return (cx->ok = 0), 0;
+        ex_trim(&p);
+        if (*p != ']') return (cx->ok = 0), 0;
+        subject = p + 1;
+    } else if (!strcmp(s, "true")) {
+        return 1;
+    } else if (!strcmp(s, "false")) {
+        return 0;
+    } else {
+        cx->ok = 0;
+        return 0;
+    }
+
+    const char *q = subject;
+    ex_trim(&q);
+    char op[24] = "";
+    if (q[0] == '.') {
+        q++;
+        const char *open = strchr(q, '(');
+        if (!open) return (cx->ok = 0), 0;
+        size_t ol = (size_t)(open - q);
+        if (ol >= sizeof op) return (cx->ok = 0), 0;
+        memcpy(op, q, ol);
+        op[ol] = 0;
+        q = open;
+    } else if (q[0] == '=' || q[0] == '!') {
+        size_t ol = (q[1] == '=') ? 2 : 1;
+        memcpy(op, q, ol);
+        op[ol] = 0;
+        q += ol;
+    } else {
+        cx->ok = 0;
+        return 0;
+    }
+    char needle[256];
+    if (op[0] == '=' || op[0] == '!') {
+        if (!ex_quoted(&q, needle, sizeof needle)) return (cx->ok = 0), 0;
+    } else {
+        if (*q != '(') return (cx->ok = 0), 0;
+        q++;
+        if (!ex_quoted(&q, needle, sizeof needle)) return (cx->ok = 0), 0;
+        ex_trim(&q);
+        if (*q != ')') return (cx->ok = 0), 0;
+    }
+
+    const char *have = "";
+    if (!strncmp(s, "userAgent", 9)) {
+        have = cx->rq ? header_value(cx->rq, "User-Agent") : "";
+    } else if (!strncmp(s, "host", 4)) {
+        have = cx->rq ? header_value(cx->rq, "Host") : "";
+    } else if (!strncmp(s, "path", 4)) {
+        have = cx->rq ? cx->rq->path : "";
+    } else {
+        have = cx->rq ? header_value(cx->rq, hdrname) : "";
+    }
+    if (!strcmp(op, "matches")) return ex_regex(needle, have ? have : "");
+    return ex_str_pred(have ? have : "", op, needle);
+}
+
+static int ex_eval(exctx *cx, const char *raw) {
+    char buf[1024];
+    snprintf(buf, sizeof buf, "%s", raw);
+    ex_rtrim(buf);
+    char *s = buf;
+    ex_trim((const char **)&s);
+    /* strip redundant outer parentheses */
+    int guard = 0;
+    while (s[0] == '(' && ex_match_parens(s) && guard++ < 8) {
+        s[strlen(s) - 1] = 0;
+        s++;
+        ex_trim((const char **)&s);
+    }
+    if (!*s) return (cx->ok = 0), 0;
+
+    size_t at;
+    if (ex_find_top(s, "||", &at)) {
+        char left[1024];
+        snprintf(left, sizeof left, "%.*s", (int)at, s);
+        ex_rtrim(left);
+        return ex_eval(cx, left) || ex_eval(cx, s + at + 2);
+    }
+    if (ex_find_top(s, "&&", &at)) {
+        char left[1024];
+        snprintf(left, sizeof left, "%.*s", (int)at, s);
+        ex_rtrim(left);
+        return ex_eval(cx, left) && ex_eval(cx, s + at + 2);
+    }
+    if (s[0] == '!' && s[1] != '=') return !ex_eval(cx, s + 1);
+    return ex_leaf(cx, s);
+}
+
+/* ---- the rule and threshold tables ------------------------------------ */
+
+typedef struct {
+    char name[96];
+    int action;                 /* 0 ALLOW, 1 DENY, 2 CHALLENGE, 3 WEIGH */
+    regex_t ua_re, path_re;
+    int has_ua, has_path;
+    struct {
+        char name[64];
+        regex_t re;
+    } hdr[MAX_RULE_HEADERS];
+    int nhdr;
+    char expr[1024];
+    int has_expr;
+    size_t cidr_start, cidr_len;
+    int difficulty;
+    char algorithm[24];
+    int weight_adjust;
+    const char *from;
+} yrule;
+
+typedef struct {
+    char name[96];
+    int action;
+    int difficulty;
+    char algorithm[24];
+    char expr[1024];
+    int has_expr;
+    const char *from;
+} ythreshold;
+
+static yrule *yml_rules;
+static int yml_rule_count, yml_rule_cap;
+static ythreshold yml_thresholds[MAX_YAML_THRESHOLDS];
+static int yml_threshold_count;
+static int yml_loaded;
+static const char *yml_data_dir = "data";
+static int yml_unsupported_reported;
+
+/* The shipped patterns are written for RE2. These substitutions cover the
+ * syntax that appears in the tree; anything else fails to compile and the rule
+ * is reported and skipped, rather than silently matching nothing. */
+static char *re2_to_posix(const char *pat, int *case_insensitive) {
+    size_t cap = strlen(pat) * 8 + 16;
+    char *out = malloc(cap);
+    if (!out) return NULL;
+    size_t o = 0;
+    *case_insensitive = 0;
+    for (size_t i = 0; pat[i]; i++) {
+        if (!strncmp(pat + i, "(?:", 3)) {
+            out[o++] = '(';                 /* POSIX groups do not capture */
+            i += 2;
+            continue;
+        }
+        if (!strncmp(pat + i, "(?i:", 4)) {
+            /* POSIX has no partial case folding. Folding the whole pattern is
+             * what these patterns mean in practice; say so once. */
+            if (o == 0) *case_insensitive = 1;
+            else yml_unsupported_reported = 1;
+            out[o++] = '(';
+            i += 3;
+            continue;
+        }
+        if (pat[i] == '\\' && pat[i + 1] == 'd') {
+            memcpy(out + o, "[0-9]", 5);
+            o += 5;
+            i++;
+            continue;
+        }
+        if (pat[i] == '\\' && pat[i + 1] == 'w') {
+            memcpy(out + o, "[[:alnum:]_]", 12);
+            o += 12;
+            i++;
+            continue;
+        }
+        if (pat[i] == '\\' && pat[i + 1] == 's') {
+            memcpy(out + o, "[[:space:]]", 11);
+            o += 11;
+            i++;
+            continue;
+        }
+        out[o++] = pat[i];
+    }
+    out[o] = 0;
+    return out;
+}
+
+static int yml_compile(regex_t *re, const char *pat, int *icase_out) {
+    int icase = 0;
+    char *posix = re2_to_posix(pat, &icase);
+    if (!posix) return -1;
+    int flags = REG_EXTENDED | REG_NOSUB | (icase ? REG_ICASE : 0);
+    int rc = regcomp(re, posix, flags);
+    if (rc != 0) {
+        char why[256];
+        regerror(rc, re, why, sizeof why);
+        logmsg("policy: /%s/ does not compile as a POSIX regex (%s)", posix, why);
+        free(posix);
+        return -1;
+    }
+    free(posix);
+    if (icase_out) *icase_out = icase;
+    return 0;
+}
+
+static int yml_action_of(const char *s) {
+    if (!s) return -1;
+    if (!strcasecmp(s, "ALLOW")) return 0;
+    if (!strcasecmp(s, "DENY")) return 1;
+    if (!strcasecmp(s, "CHALLENGE")) return 2;
+    if (!strcasecmp(s, "WEIGH")) return 3;
+    return -1;
+}
+
+/* ---- interpreting one rule -------------------------------------------- */
+
+static void yml_load_rule(const y_node *n, const char *from) {
+    if (yml_rule_count >= MAX_YAML_RULES) {
+        static int warned;
+        if (!warned) {
+            logmsg("policy: more than %d rules, the rest are ignored", MAX_YAML_RULES);
+            warned = 1;
+        }
+        return;
+    }
+    const char *name = y_str(y_get(n, "name"), "");
+    int action = yml_action_of(y_str(y_get(n, "action"), NULL));
+    if (action < 0) {
+        logmsg("policy: rule '%s' (%s) has no known action, skipped", name, from);
+        return;
+    }
+    const y_node *geo = y_get(n, "geoip");
+    const y_node *asns = y_get(n, "asns");
+    if (geo || asns) {
+        logmsg("policy: rule '%s' matches on GeoIP or ASN, which this gate does not "
+               "have; the rule is ignored", name);
+        return;
+    }
+
+    yrule r;
+    memset(&r, 0, sizeof r);
+    snprintf(r.name, sizeof r.name, "%s", name);
+    r.action = action;
+    r.from = from;
+
+    const char *ua = y_str(y_get(n, "user_agent_regex"), NULL);
+    if (ua) {
+        if (yml_compile(&r.ua_re, ua, NULL) == 0) r.has_ua = 1;
+        else logmsg("policy: rule '%s' has a user_agent_regex that cannot be used, rule skipped", name);
+        if (!r.has_ua) {
+            if (r.has_path) regfree(&r.path_re);
+            for (int i = 0; i < r.nhdr; i++) regfree(&r.hdr[i].re);
+            return;
+        }
+    }
+    const char *path = y_str(y_get(n, "path_regex"), NULL);
+    if (path) {
+        if (yml_compile(&r.path_re, path, NULL) == 0) r.has_path = 1;
+        else {
+            logmsg("policy: rule '%s' has a path_regex that cannot be used, rule skipped", name);
+            if (r.has_ua) regfree(&r.ua_re);
+            return;
+        }
+    }
+
+    const y_node *hdr = y_get(n, "headers_regex");
+    if (hdr && hdr->type == Y_MAP) {
+        for (const y_node *h = hdr->child; h && r.nhdr < MAX_RULE_HEADERS; h = h->next) {
+            if (!h->key) continue;
+            snprintf(r.hdr[r.nhdr].name, sizeof r.hdr[r.nhdr].name, "%s", h->key);
+            if (yml_compile(&r.hdr[r.nhdr].re, y_str(h, ""), NULL) != 0) {
+                logmsg("policy: rule '%s' has a headers_regex that cannot be used, rule skipped", name);
+                goto fail;
+            }
+            r.nhdr++;
+        }
+    }
+
+    const y_node *expr = y_get(n, "expression");
+    if (expr) {
+        if (expr->type == Y_SCALAR) {
+            snprintf(r.expr, sizeof r.expr, "%s", y_str(expr, ""));
+            r.has_expr = 1;
+        } else if (expr->type == Y_MAP) {
+            const y_node *all = y_get(expr, "all");
+            const y_node *any = y_get(expr, "any");
+            const y_node *list = all ? all : any;
+            if (!list || list->type != Y_SEQ) {
+                logmsg("policy: rule '%s' has an expression that is neither a string "
+                       "nor all/any, rule skipped", name);
+                goto fail;
+            }
+            /* Fold the list into one expression: all() and any() have the same
+             * meaning as the operators, and the evaluator already has both. */
+            size_t off = 0;
+            for (const y_node *it = list->child; it; it = it->next) {
+                const char *item = y_str(it, NULL);
+                if (!item) continue;
+                off += (size_t)snprintf(r.expr + off, sizeof r.expr - off, "(%s)%s", item,
+                                        it->next ? (all ? " && " : " || ") : "");
+                if (off >= sizeof r.expr) {
+                    logmsg("policy: rule '%s' has an expression that is too long, rule skipped", name);
+                    goto fail;
+                }
+            }
+            r.has_expr = 1;
+        }
+        if (r.has_expr) {
+            exctx probe = {0};
+            probe.ok = 1;
+            ex_eval(&probe, r.expr);
+            if (!probe.ok) {
+                logmsg("policy: rule '%s' expresses something this gate does not "
+                       "evaluate: %s. The rule will never match", name, r.expr);
+            }
+        }
+    }
+
+    const y_node *ch = y_get(n, "challenge");
+    if (ch) {
+        r.difficulty = atoi(y_str(y_get(ch, "difficulty"), "0"));
+        const char *alg = y_str(y_get(ch, "algorithm"), NULL);
+        if (alg) {
+            if (algorithm_known(alg)) snprintf(r.algorithm, sizeof r.algorithm, "%s", alg);
+            else logmsg("policy: rule '%s' names algorithm %s, which this gate does not "
+                        "implement; the global algorithm is used", name, alg);
+        }
+    }
+
+    const y_node *w = y_get(n, "weight");
+    if (w) r.weight_adjust = atoi(y_str(y_get(w, "adjust"), "0"));
+
+    const y_node *remote = y_get(n, "remote_addresses");
+    if (remote && remote->type == Y_SEQ) {
+        r.cidr_start = cidr_count;
+        for (const y_node *it = remote->child; it; it = it->next) {
+            const char *spec = y_str(it, NULL);
+            if (!spec) continue;
+            if (cidr_add(spec) != 0)
+                logmsg("policy: rule '%s' lists %s, which is not a CIDR", name, spec);
+        }
+        r.cidr_len = cidr_count - r.cidr_start;
+    }
+
+    if (yml_rule_count == yml_rule_cap) {
+        int bigger = yml_rule_cap ? yml_rule_cap * 2 : 128;
+        yrule *p = realloc(yml_rules, (size_t)bigger * sizeof *p);
+        if (!p) return;
+        yml_rules = p;
+        yml_rule_cap = bigger;
+    }
+    yml_rules[yml_rule_count++] = r;
+    return;
+
+fail:
+    if (r.has_ua) regfree(&r.ua_re);
+    if (r.has_path) regfree(&r.path_re);
+    for (int i = 0; i < r.nhdr; i++) regfree(&r.hdr[i].re);
+}
+
+/* ---- imports ----------------------------------------------------------- */
+
+static void yml_import(const char *ref, const char *base_dir, int depth);
+
+static void yml_load_document(const y_node *root, const char *from, int depth,
+                              const char *base_dir);
+
+static void yml_import(const char *ref, const char *base_dir, int depth) {
+    if (depth > MAX_IMPORT_DEPTH) {
+        logmsg("policy: imports nested deeper than %d at %s, stopped", MAX_IMPORT_DEPTH, ref);
+        return;
+    }
+    char path[2048];
+    if (!strncmp(ref, "(data)/", 7)) {
+        if (!yml_data_dir || !*yml_data_dir) {
+            logmsg("policy: %s needs a data directory; pass --data-dir", ref);
+            return;
+        }
+        snprintf(path, sizeof path, "%s/%s", yml_data_dir, ref + 7);
+    } else if (ref[0] == '/') {
+        snprintf(path, sizeof path, "%s", ref);
+    } else {
+        snprintf(path, sizeof path, "%s/%s", base_dir && *base_dir ? base_dir : ".", ref);
+    }
+
+    y_file f;
+    if (y_open(path, &f) != 0) {
+        logmsg("policy: cannot read the import %s (%s)", ref, path);
+        return;
+    }
+    y_node *root = y_parse_block(&f, f.lines[0].blank ? f.lines[1].indent : f.lines[0].indent);
+    y_close(&f);
+    if (!root) {
+        logmsg("policy: %s parsed as empty", path);
+        return;
+    }
+    char dir[1024];
+    snprintf(dir, sizeof dir, "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = 0;
+    else snprintf(dir, sizeof dir, ".");
+    yml_load_document(root, path, depth, dir);
+    y_free(root);
+}
+
+/* ---- interpreting a document ------------------------------------------ */
+
+static void yml_load_document(const y_node *root, const char *from, int depth,
+                              const char *base_dir) {
+    if (!root) return;
+
+    /* A bare list is a list of bot rules, which is what the imported files are. */
+    if (root->type == Y_SEQ) {
+        for (const y_node *it = root->child; it; it = it->next) {
+            if (!it) continue;
+            const char *imp = y_str(y_get(it, "import"), NULL);
+            if (imp) {
+                yml_import(imp, base_dir, depth + 1);
+                continue;
+            }
+            if (it->type == Y_MAP) yml_load_rule(it, from);
+        }
+        return;
+    }
+    if (root->type != Y_MAP) return;
+
+    const y_node *bots = y_get(root, "bots");
+    if (bots && bots->type == Y_SEQ) {
+        for (const y_node *it = bots->child; it; it = it->next) {
+            const char *imp = y_str(y_get(it, "import"), NULL);
+            if (imp) {
+                yml_import(imp, base_dir, depth + 1);
+                continue;
+            }
+            if (it->type == Y_MAP) yml_load_rule(it, from);
+        }
+    }
+
+    const y_node *th = y_get(root, "thresholds");
+    if (th && th->type == Y_SEQ) {
+        for (const y_node *it = th->child; it; it = it->next) {
+            if (yml_threshold_count >= MAX_YAML_THRESHOLDS) {
+                logmsg("policy: more than %d thresholds, the rest are ignored",
+                       MAX_YAML_THRESHOLDS);
+                break;
+            }
+            ythreshold t;
+            memset(&t, 0, sizeof t);
+            snprintf(t.name, sizeof t.name, "%s", y_str(y_get(it, "name"), ""));
+            int action = yml_action_of(y_str(y_get(it, "action"), NULL));
+            if (action < 0) {
+                logmsg("policy: threshold '%s' has no known action, skipped", t.name);
+                continue;
+            }
+            t.action = action;
+            t.from = from;
+            const y_node *expr = y_get(it, "expression");
+            if (expr) {
+                if (expr->type == Y_SCALAR) {
+                    snprintf(t.expr, sizeof t.expr, "%s", y_str(expr, ""));
+                    t.has_expr = 1;
+                } else if (expr->type == Y_MAP) {
+                    const y_node *all = y_get(expr, "all");
+                    const y_node *any = y_get(expr, "any");
+                    const y_node *list = all ? all : any;
+                    size_t off = 0;
+                    if (!list || list->type != Y_SEQ) {
+                        logmsg("policy: threshold '%s' has an expression this gate cannot "
+                               "read, skipped", t.name);
+                        continue;
+                    }
+                    for (const y_node *x = list->child; x; x = x->next) {
+                        const char *item = y_str(x, NULL);
+                        if (!item) continue;
+                        off += (size_t)snprintf(t.expr + off, sizeof t.expr - off, "(%s)%s",
+                                                item, x->next ? (all ? " && " : " || ") : "");
+                        if (off >= sizeof t.expr) break;
+                    }
+                    t.has_expr = 1;
+                }
+            }
+            const y_node *ch = y_get(it, "challenge");
+            if (ch) {
+                t.difficulty = atoi(y_str(y_get(ch, "difficulty"), "0"));
+                const char *alg = y_str(y_get(ch, "algorithm"), NULL);
+                if (alg && algorithm_known(alg)) snprintf(t.algorithm, sizeof t.algorithm, "%s", alg);
+            }
+            if (!t.has_expr) {
+                logmsg("policy: threshold '%s' has no expression this gate can read, skipped",
+                       t.name);
+                continue;
+            }
+            yml_thresholds[yml_threshold_count++] = t;
+        }
+    }
+
+    const y_node *sc = y_get(root, "status_codes");
+    if (sc) {
+        int c = atoi(y_str(y_get(sc, "CHALLENGE"), "0"));
+        int d = atoi(y_str(y_get(sc, "DENY"), "0"));
+        if (c >= 100 && c <= 599) cfg.challenge_status = c;
+        if (d >= 100 && d <= 599) cfg.deny_status = d;
+    }
+
+    const y_node *hp = y_get(root, "honeypot");
+    if (hp) {
+        if (y_get(hp, "enabled")) cfg.honeypot = y_bool(y_get(hp, "enabled"), 1);
+        const char *logf = y_str(y_get(hp, "ip_log_file"), NULL);
+        if (logf && *logf) cfg.honeypot_log = y_dup(logf);
+    }
+
+    const y_node *dnsbl = y_get(root, "dnsbl");
+    if (dnsbl && y_bool(dnsbl, 0))
+        logmsg("policy: dnsbl is enabled in the policy, but this gate has no DNSBL "
+               "lookup; that check is not applied");
+
+    /* blocks we knowingly do not implement */
+    static const char *const ignored[] = {
+        "openGraph", "impressum", "store", "metrics", "geoip", "logging", NULL
+    };
+    for (int i = 0; ignored[i]; i++)
+        if (y_get(root, ignored[i]))
+            logmsg("policy: the '%s' block is ignored by betterAnusbis", ignored[i]);
+}
+
+/* ---- matching ---------------------------------------------------------- */
+
+static int yml_rule_matches(const yrule *r, const request *rq, const char *ip,
+                            double weight) {
+    if (!r->has_ua && !r->has_path && r->nhdr == 0 && !r->has_expr && r->cidr_len == 0)
+        return 0;               /* a rule with no condition would match everything */
+    if (r->has_ua) {
+        const char *ua = header_value(rq, "User-Agent");
+        if (!ua || regexec(&r->ua_re, ua, 0, NULL, 0) != 0) return 0;
+    }
+    if (r->has_path) {
+        if (regexec(&r->path_re, rq->path, 0, NULL, 0) != 0) return 0;
+    }
+    for (int i = 0; i < r->nhdr; i++) {
+        const char *v = header_value(rq, r->hdr[i].name);
+        if (!v || regexec(&r->hdr[i].re, v, 0, NULL, 0) != 0) return 0;
+    }
+    if (r->cidr_len) {
+        int hit = 0;
+        for (size_t i = 0; i < r->cidr_len; i++)
+            if (cidr_contains(&cidr_pool[r->cidr_start + i], ip)) { hit = 1; break; }
+        if (!hit) return 0;
+    }
+    if (r->has_expr) {
+        exctx cx = {.rq = rq, .ip = ip, .weight = weight, .ok = 1};
+        if (!ex_eval(&cx, r->expr)) return 0;
+    }
+    return 1;
+}
+
+static int yml_decide(const request *rq, const char *ip, int *difficulty,
+                      const char **algorithm) {
+    double weight = 0;
+    for (int i = 0; i < yml_rule_count; i++) {
+        const yrule *r = &yml_rules[i];
+        if (!yml_rule_matches(r, rq, ip, weight)) continue;
+        if (r->action == 3) {          /* WEIGH */
+            weight += r->weight_adjust;
+            continue;
+        }
+        __atomic_fetch_add(&m_policy[i < MAX_RULES ? i : MAX_RULES][r->action], 1,
+                           __ATOMIC_RELAXED);
+        if (r->difficulty > 0) *difficulty = r->difficulty;
+        if (r->algorithm[0]) *algorithm = r->algorithm;
+        return r->action;
+    }
+    for (int i = 0; i < yml_threshold_count; i++) {
+        const ythreshold *t = &yml_thresholds[i];
+        if (!t->has_expr) continue;
+        exctx cx = {.rq = rq, .ip = ip, .weight = weight, .ok = 1};
+        if (!ex_eval(&cx, t->expr)) continue;
+        if (t->difficulty > 0) *difficulty = t->difficulty;
+        if (t->algorithm[0]) *algorithm = t->algorithm;
+        return t->action;
+    }
+    /* Anubis allows a request that matches no rule and no threshold. */
+    return 0;
+}
+
+static void policy_load_yaml(const char *path) {
+    y_file f;
+    if (y_open(path, &f) != 0) {
+        logmsg("cannot read the policy %s, challenging everything", path);
+        return;
+    }
+    int first = 0;
+    while (first < f.n && f.lines[first].blank) first++;
+    y_node *root = first < f.n ? y_parse_block(&f, f.lines[first].indent) : NULL;
+    y_close(&f);
+    if (!root) {
+        logmsg("policy: %s parsed as empty; challenging everything", path);
+        return;
+    }
+    char dir[1024];
+    snprintf(dir, sizeof dir, "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = 0;
+    else snprintf(dir, sizeof dir, ".");
+
+    yml_load_document(root, path, 0, dir);
+    y_free(root);
+    yml_loaded = 1;
+
+    int weighed = 0, with_cidr = 0;
+    for (int i = 0; i < yml_rule_count; i++) {
+        if (yml_rules[i].action == 3) weighed++;
+        if (yml_rules[i].cidr_len) with_cidr++;
+    }
+    logmsg("policy: %d rule(s) and %d threshold(s) read from the Anubis format, "
+           "%d conditional, %d range-restricted, %zu CIDR(s). A request that matches "
+           "nothing is allowed, as Anubis does",
+           yml_rule_count, yml_threshold_count, weighed, with_cidr, cidr_count);
+}
+
 static rule rules[MAX_RULES];
 static int rule_count;
 static int default_action = RULE_CHALLENGE;
@@ -2827,6 +4147,7 @@ static const char *policy_tail(const char *line) {
 /* Returns the action to take, and sets *difficulty to the rule's own or the global. */
 static rule_action policy_decide(const request *req, const char *client_ip, int *difficulty,
                                  const char **algorithm) {
+    if (yml_loaded) return (rule_action)yml_decide(req, client_ip, difficulty, algorithm);
     *difficulty = default_difficulty ? default_difficulty : cfg.difficulty;
     *algorithm = default_algorithm[0] ? default_algorithm : cfg.algorithm;
     for (int i = 0; i < rule_count; i++) {
@@ -2840,7 +4161,36 @@ static rule_action policy_decide(const request *req, const char *client_ip, int 
     return (rule_action)default_action;
 }
 
+/* Which policy format is this? Anubis's schema starts with a top-level key or a
+ * bare rule list; ours starts with allow/deny/challenge/default. */
+static int policy_looks_like_anubis(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    char line[512];
+    int answer = 0;
+    while (fgets(line, sizeof line, f)) {
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == 0 || *p == '\n' || *p == '\r' || *p == '#') continue;
+        if (!strncmp(p, "bots:", 5) || !strncmp(p, "thresholds:", 11) ||
+            !strncmp(p, "status_codes:", 13) || !strncmp(p, "openGraph:", 10) ||
+            !strncmp(p, "honeypot:", 9) || !strncmp(p, "store:", 6) ||
+            !strncmp(p, "dnsbl:", 6) || !strncmp(p, "impressum:", 10) ||
+            !strncmp(p, "metrics:", 8) || !strncmp(p, "geoip:", 6) ||
+            !strncmp(p, "logging:", 8) || *p == '-' || *p == '{')
+            answer = 1;
+        break;
+    }
+    fclose(f);
+    return answer;
+}
+
 static void policy_load(const char *path) {
+    if (policy_looks_like_anubis(path)) {
+        yml_data_dir = cfg.data_dir && *cfg.data_dir ? cfg.data_dir : "data";
+        policy_load_yaml(path);
+        return;
+    }
     FILE *f = fopen(path, "r");
     if (!f) { logmsg("cannot read the policy %s, challenging everything", path); return; }
     char line[512];
@@ -3484,7 +4834,10 @@ static void usage(FILE *out) {
         "                         Anubis, whose default is any domain at all\n"
         "\n"
         "policy, honeypot, assets\n"
-        "  --policy FILE          rule file (allow/deny/challenge), see README\n"
+        "  --policy FILE          rule file: Anubis's botPolicies.yaml, or this\n"
+        "                         gate's own allow/deny/challenge lines (see README)\n"
+        "  --data-dir DIR         where (data)/... imports resolve for an Anubis\n"
+        "                         policy (default data)\n"
         "  --no-honeypot          disable the trap link and the tarpit\n"
         "  --honeypot-log FILE    append one line per trap hit\n"
         "  --stateless            do not keep issued challenges (they can be replayed)\n"
@@ -3560,6 +4913,7 @@ static const arg_spec args[] = {
     {"jwt-restriction-header", ARG_STR, &cfg.jwt_restrict_hdr},
     {"secret-hex", ARG_STR, &cfg.secret_hex},
     {"secret-file", ARG_STR, &cfg.secret_file},
+    {"data-dir", ARG_STR, &cfg.data_dir},
 };
 
 static int parse_args(int argc, char **argv) {

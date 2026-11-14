@@ -74,6 +74,7 @@ And it actually rejects things:
 | subpath | `--base-prefix` / `--strip-base-prefix`, same pair as `cmd/anubis` |
 | metrics | `anubis_challenges_issued`, `anubis_challenges_validated`, `anubis_failed_validations`, `anubis_proxied_requests_total`, `anubis_policy_results` with upstream's names and fewer labels (no ASN), plus `/healthz`; `--metrics-bind` puts them on their own listener |
 | token binding | the JWT carries a `restrict` claim holding the client address, the way `--jwt-restriction-header` does; a stolen cookie is useless from another address. Tokens minted before this existed carry no claim and keep working |
+| policy file | `--policy data/botPolicies.yaml` reads Anubis's own schema: `bots[]` with `user_agent_regex`, `path_regex`, `headers_regex`, `remote_addresses`, `expression`, `challenge{algorithm,difficulty}`, `weight.adjust`, `import:` including the `(data)/` macro, plus `thresholds[]`, `status_codes` and `honeypot.enabled`. Anubis's default-allow semantics come with it: a request that matches no rule and no threshold is allowed |
 
 ## Two design decisions worth knowing
 
@@ -140,8 +141,10 @@ the token
   --secret-hex HEX            the same key inline, 64 hex characters
 
 policy, honeypot, assets, TLS, metrics
-  --policy FILE  --honeypot-log FILE  --web DIR  --tls-cert/--tls-key
-  --no-honeypot  --stateless  --metrics-bind ADDR:PORT
+  --policy FILE              Anubis's botPolicies.yaml, or this gate's own rules
+  --data-dir DIR             where (data)/... imports resolve (default data)
+  --honeypot-log FILE  --web DIR  --tls-cert/--tls-key  --metrics-bind ADDR:PORT
+  --no-honeypot  --stateless
 ```
 
 Difficulty 4 is a good default for a human-facing site (a few milliseconds of
@@ -280,6 +283,51 @@ cannot contain spaces, since a rule line is whitespace separated.
 Measured on the running server: `AhrefsBot` → denied, `curl` UA → difficulty
 16, anyone else → difficulty 4, `/health` → proxied with no challenge at all.
 
+### Anubis's own policy file
+
+`--policy` detects the format by looking at the file: a top-level `bots:` or a
+bare `- ` list is Anubis's schema, a line starting with `allow`/`deny`/
+`challenge`/`default` is ours. Pointing it at the real `data/botPolicies.yaml`
+loads that file's import graph:
+
+```
+[betterAnusbis] policy: 41 rule(s) and 5 threshold(s) read from the Anubis format,
+                6 conditional, 6 range-restricted, 2359 CIDR(s). A request that
+                matches nothing is allowed, as Anubis does
+```
+
+The shipped policy then behaves the way its author meant:
+
+| request | decision |
+|---|---|
+| `curl/8.5.0` | allowed (weight 0 hits `minimal-suspicion`) |
+| Firefox UA | fast challenge at difficulty 2 (the `generic-browser` rule weighs +10) |
+| `ChatGPT-User` | denied (the AI client rule) |
+| Googlebot from `66.249.64.5` | allowed (`remote_addresses` matches) |
+| Googlebot from anywhere else | fast at 2, not allowed: the UA alone proves nothing |
+| `X-Firefox-Ai: 1` | metarefresh at difficulty 1 (weight 5) |
+| no `User-Agent` at all | denied (`rfc-violations`) |
+| `/robots.txt` | allowed, proxied |
+
+What is honoured: `ALLOW`/`DENY`/`CHALLENGE`/`WEIGH`, rule order, the weight
+accumulation, `thresholds` with the arithmetic subset of CEL (`weight <= 0`,
+`all:`/`any:`), `remote_addresses` as IPv4 and IPv6 CIDR, `headers_regex`,
+`expression` in its shipped forms (`"H" in headers`, `userAgent.contains`,
+`path.startsWith`, `headers["H"].matches`, `host`, `load_1m`/`load_15m`),
+`status_codes`, `honeypot.enabled`, and `import:` including `(data)/`.
+
+What is reported and skipped, by name, at load: `geoip` and `asns` matchers,
+`verifyFCrDNS`, the `openGraph`, `store`, `metrics`, `logging` and `impressum`
+blocks, and `dnsbl: true`. Nothing is silently reinterpreted: a rule that
+cannot be evaluated logs "will never match" rather than quietly matching
+everything or nothing.
+
+Two translation notes, both reported when they happen: POSIX ERE has no
+non-capturing groups or `\d`, so `(?:` becomes `(`, `\d` becomes `[0-9]`, and a
+pattern wrapped in `(?i:...)` is compiled case-insensitively as a whole (POSIX
+has no partial folding). A pattern that still will not compile is logged with
+`regerror`'s words and its rule skipped.
+
 ## State verification
 
 Challenges are kept server-side (`ch_table`, 4096 entries, expiring with the cookie
@@ -339,11 +387,12 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
   Prometheus `/metrics` are implemented. The store backends (bbolt, valkey, S3),
   OpenGraph passthrough and CEL `expression:` rules are the next things worth
   porting; `PARITY.md` is the full gap list with file references.
-- **Policy is a flat file, not a language.** `allow`/`deny`/`challenge` on user
-  agent, path, header or CIDR, first match wins, optional `difficulty` and
-  `algorithm` per line, literal matchers plus POSIX extended regex. No weights,
-  no thresholds, no CEL expressions, no GeoIP, no ASN, no DNSBL, no imports, no
-  rule names in the metrics.
+- **Two policy formats, neither of them a CEL engine.** Our own flat rules
+  (literal or regex matchers, first match wins) and Anubis's `botPolicies.yaml`
+  (rules, weights, thresholds, imports). The expression evaluator covers the
+  forms the shipped policies use, not CEL: no GeoIP countries, no ASN matching,
+  no `verifyFCrDNS`, and no arbitrary CEL you invent. Everything it cannot
+  evaluate is named in the log at startup.
 - **`--stateless` gives up replay protection.** By default an issued challenge is
   consumed once; that table is what makes a second submission fail.
 
@@ -371,8 +420,10 @@ python3 test_parity.py        # the flags taken from cmd/anubis, checked on the 
 kills/restarts betterAnusbis per algorithm. `test_parity.py` starts both sides
 itself and asserts what the HTTP response says: status lines, every Set-Cookie
 attribute, the Location header after a blocked redirect, the counters a scrape
-returns, and the headers the backend received after XFF flattening. 74 checks,
-no logs read. `wasm/live-server.md` in the parent repository has a policy file for
+returns, the headers the backend received after XFF flattening, and the decision
+the shipped `data/botPolicies.yaml` produces for nine probe requests. 83 checks,
+no logs read. The Anubis policy checks skip themselves when the upstream data
+directory is not there; set `ANUBIS_DATA_DIR` to point at one. `wasm/live-server.md` in the parent repository has a policy file for
 the real Anubis if you want to compare side by side.
 
 ---

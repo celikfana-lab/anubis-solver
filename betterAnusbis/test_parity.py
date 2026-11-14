@@ -469,7 +469,58 @@ def main():
         status, hdrs, body, ch = solve_once(headers={"User-Agent": "Mozilla/5.0"})
         check("everyone else keeps the global algorithm", ch.algorithm == "sha256", ch.algorithm)
 
-    # ---- 13. the old flags still behave
+    # ---- 13. a real Anubis botPolicies.yaml, imported and evaluated
+    upstream = os.environ.get("ANUBIS_DATA_DIR",
+                              "/media/miku6/kubuntu_2404/home/miku/DOWN/pyani/anubis/data")
+    policy = os.path.join(upstream, "botPolicies.yaml")
+    if not os.path.exists(policy):
+        print("  (skipped the Anubis policy checks: no botPolicies.yaml under "
+              f"{upstream}; set ANUBIS_DATA_DIR)")
+    else:
+        with Gate("--policy", policy, "--data-dir", upstream):
+            def decide(ua, path="/", headers=None):
+                hdrs = {"User-Agent": ua}
+                hdrs.update(headers or {})
+                st, _, body = request("GET", path, headers=hdrs)
+                text = body.decode(errors="replace")
+                if "PAST THE WALL" in text:
+                    return "allow"
+                if "denied by policy" in text:
+                    return "deny"
+                ch = anubis_solver.parse_challenge(text)
+                if ch is not None:
+                    return f"challenge {ch.algorithm} {ch.difficulty}"
+                return "other"
+
+            check("a curl UA carries weight 0 and is allowed", decide("curl/8.5.0") == "allow",
+                  decide("curl/8.5.0"))
+            check("a browser UA is weighed +10 and gets fast at 2",
+                  decide("Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0") == "challenge fast 2",
+                  decide("Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0"))
+            check("an AI client UA is denied", decide("ChatGPT-User/1.0") == "deny",
+                  decide("ChatGPT-User/1.0"))
+            googlebot = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+            check("Googlebot from a Google range is allowed",
+                  decide(googlebot, headers={"X-Forwarded-For": "66.249.64.5"}) == "allow",
+                  decide(googlebot, headers={"X-Forwarded-For": "66.249.64.5"}))
+            check("Googlebot from anywhere else is only a browser",
+                  decide(googlebot, headers={"X-Forwarded-For": "1.2.3.4"}) == "challenge fast 2",
+                  decide(googlebot, headers={"X-Forwarded-For": "1.2.3.4"}))
+            check("the keep-internet-working rules allow /robots.txt",
+                  decide("curl/8.5.0", path="/robots.txt") not in ("deny",) and
+                  "challenge" not in decide("curl/8.5.0", path="/robots.txt"),
+                  decide("curl/8.5.0", path="/robots.txt"))
+            check("a header expression adds weight 5 and gets metarefresh at 1",
+                  decide("curl/8.5.0", headers={"X-Firefox-Ai": "1"}) == "challenge metarefresh 1",
+                  decide("curl/8.5.0", headers={"X-Firefox-Ai": "1"}))
+            check("an empty User-Agent is denied by the rfc-violations rule",
+                  decide("") == "deny", decide(""))
+            status, hdrs, body, ch = solve_once(headers={"User-Agent": "Mozilla/5.0 Firefox/128.0"})
+            check("a challenge the YAML policy chose is solvable end to end",
+                  status == 302 and ch.algorithm == "fast" and ch.difficulty == 2,
+                  f"{status} {ch.algorithm} {ch.difficulty}")
+
+    # ---- 14. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

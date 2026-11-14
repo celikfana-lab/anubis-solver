@@ -120,6 +120,7 @@ the challenge
 
 cookies
   --cookie-prefix NAME       default techaro.lol-anubis
+  --dynamic-cookie-suffix[=B]  hash the cookie settings into the name (default on)
   --cookie-domain DNS        Domain=
   --cookie-expiration-time S Max-Age and JWT exp, 0 = session cookie (604800)
   --cookie-secure[=B]        default: on exactly when we serve TLS
@@ -146,7 +147,10 @@ policy, honeypot, assets, TLS, metrics
   --policy FILE              Anubis's botPolicies.yaml, or this gate's own rules
   --data-dir DIR             where (data)/... imports resolve (default data)
   --honeypot-log FILE  --web DIR  --tls-cert/--tls-key  --metrics-bind ADDR:PORT
-  --no-honeypot  --stateless  --healthcheck
+  --no-honeypot  --stateless  --healthcheck  --slog-level LEVEL
+  --bind-network tcp|unix  --socket-mode 0770  --metrics-bind-network tcp|unix
+  --difficulty-in-jwt  --webmaster-email ADDR  --preserve-referer-query-param
+  --target-disable-keepalive (accepted; this gate always closes)
 ```
 
 Every flag is also an environment variable, upper case with dashes as

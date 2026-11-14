@@ -21,6 +21,7 @@ import threading
 import time
 import base64
 import hashlib
+import stat as statmod
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlencode
 
@@ -195,7 +196,7 @@ def ws_roundtrip(cookie: str | None = None, timeout=10):
            "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
            "Sec-WebSocket-Version: 13\r\n")
     if cookie:
-        req += f"Cookie: techaro.lol-anubis-auth={cookie}\r\n"
+        req += f"Cookie: {AUTH_NAME}={cookie}\r\n"
     req += "\r\n"
     sock.sendall(req.encode())
     head = b""
@@ -205,6 +206,16 @@ def ws_roundtrip(cookie: str | None = None, timeout=10):
             break
         head += chunk
     status = head.split(b"\r\n")[0].decode(errors="replace")
+    if "101" not in status:
+        sock.settimeout(1.0)
+        try:
+            while len(head) < 65536:
+                more = sock.recv(4096)
+                if not more:
+                    break
+                head += more
+        except (socket.timeout, OSError):
+            pass
     payload = b"\x81\x85\x00\x00\x00\x00hello"
     echoed = b""
     if "101" in status:
@@ -214,8 +225,38 @@ def ws_roundtrip(cookie: str | None = None, timeout=10):
     return status, head, echoed, payload
 
 
+def unix_http(sockpath, path, timeout=10):
+    """One request over a AF_UNIX socket, answered until the peer closes."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    sock.connect(sockpath)
+    sock.sendall(f"GET {path} HTTP/1.1\r\nHost: unix.test\r\nConnection: close\r\n\r\n".encode())
+    data = b""
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+    sock.close()
+    return data
+
+
 def set_cookies(hdrs):
     return [v for k, v in hdrs if k.lower() == "set-cookie"]
+
+AUTH_NAME = "techaro.lol-anubis-auth"
+
+
+def token_of(hdrs):
+    """The auth cookie value, and remember the name it actually arrived under."""
+    global AUTH_NAME
+    for c in set_cookies(hdrs):
+        if "cookie-verification" in c:
+            continue
+        name, _, rest = c.partition("=")
+        AUTH_NAME = name.strip()
+        return rest.split(";")[0]
+    return ""
 
 
 # ---------------------------------------------------------------------- solve
@@ -312,20 +353,18 @@ def main():
               "/anubis" + API + "pass-challenge" in text, text[:0])
         status, hdrs, body, ch = solve_once(prefix="/anubis")
         check("a challenge solved under the prefix is accepted", status == 302, status)
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
-        st, _, body = request("GET", "/anubis/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        token = token_of(hdrs)
+        st, _, body = request("GET", "/anubis/", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("the token opens the door under the prefix",
               st == 200 and b"PAST THE WALL" in body, st)
-        st, _, body = request("GET", "/anubis/echo", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        st, _, body = request("GET", "/anubis/echo", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("--base-prefix keeps the prefix on the upstream path (no strip)",
               st == 200 and b"/anubis/echo" in body, body[:200])
 
     with Gate("--difficulty", "6", "--base-prefix", "/anubis", "--strip-base-prefix"):
         status, hdrs, body, ch = solve_once(prefix="/anubis")
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
-        st, _, body = request("GET", "/anubis/echo", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        token = token_of(hdrs)
+        st, _, body = request("GET", "/anubis/echo", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("--strip-base-prefix removes it before the target",
               st == 200 and b'"path": "/echo"' in body, body[:200])
 
@@ -375,10 +414,9 @@ def main():
     # ---- 6. the backend sees the flattened address and the Host override
     with Gate("--difficulty", "6", "--target-host", "backend.internal"):
         status, hdrs, body, ch = solve_once(headers={"X-Forwarded-For": "5.6.7.8"})
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
+        token = token_of(hdrs)
         st, _, body = request("GET", "/echo",
-                              headers={"Cookie": f"techaro.lol-anubis-auth={token}",
+                              headers={"Cookie": f"{AUTH_NAME}={token}",
                                        "X-Forwarded-For": "5.6.7.8"})
         seen = json.loads(body)
         check("--target-host rewrites the upstream Host header",
@@ -437,24 +475,21 @@ def main():
     def token_for(args=(), headers=None):
         with Gate("--difficulty", "6", *args):
             status, hdrs, body, ch = solve_once(headers=headers)
-            return next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                         if "cookie-verification" not in c), "")
+            return token_of(hdrs)
 
     with Gate("--difficulty", "6"):
         status, hdrs, body, ch = solve_once()
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        token = token_of(hdrs)
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("a token works from the address that solved it", st == 200 and b"PAST THE WALL" in body, st)
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}",
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}",
                                                    "X-Forwarded-For": "9.9.9.9"})
         check("the same token is refused from another address",
               b"anubis_challenge" in body and b"PAST THE WALL" not in body, st)
     with Gate("--difficulty", "6", "--jwt-restriction-header", ""):
         status, hdrs, body, ch = solve_once()
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}",
+        token = token_of(hdrs)
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}",
                                                    "X-Forwarded-For": "9.9.9.9"})
         check("--jwt-restriction-header \"\" turns the binding off",
               st == 200 and b"PAST THE WALL" in body, st)
@@ -472,24 +507,22 @@ def main():
     # ---- 10. the restriction header is the value the token is bound to
     with Gate("--difficulty", "6", "--jwt-restriction-header", "X-Client-IP"):
         status, hdrs, body, ch = solve_once(headers={"X-Client-IP": "1.1.1.1"})
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}",
+        token = token_of(hdrs)
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}",
                                                    "X-Client-IP": "1.1.1.1"})
         check("the header value that solved it opens the door",
               st == 200 and b"PAST THE WALL" in body, st)
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}",
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}",
                                                    "X-Client-IP": "2.2.2.2"})
         check("a different header value is refused",
               b"anubis_challenge" in body, st)
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("losing the header loses the token, as with upstream",
               b"anubis_challenge" in body, st)
     with Gate("--difficulty", "6", "--jwt-restriction-header", "X-Client-IP"):
         status, hdrs, body, ch = solve_once()
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        token = token_of(hdrs)
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("with no such header at all, the computed address is the binding",
               st == 200 and b"PAST THE WALL" in body, st)
 
@@ -497,16 +530,15 @@ def main():
     secret = os.path.join(tempfile.mkdtemp(), "signing.key")
     with Gate("--difficulty", "6", "--secret-file", secret):
         status, hdrs, body, ch = solve_once()
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        token = token_of(hdrs)
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("a token works while the gate that minted it is up",
               st == 200 and b"PAST THE WALL" in body, st)
     check("--secret-file created the key", os.path.exists(secret), secret)
     mode = os.stat(secret).st_mode & 0o777 if os.path.exists(secret) else 0
     check("the key file is 0600", mode == 0o600, oct(mode))
     with Gate("--difficulty", "6", "--secret-file", secret):
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("the same token still works after a restart",
               st == 200 and b"PAST THE WALL" in body, st)
     junk = os.path.join(tempfile.mkdtemp(), "junk.key")
@@ -614,13 +646,12 @@ def main():
     with Gate("--difficulty", "6", "--deny-status", "403",
               policy="deny ua matches ParityBot\n"):
         status, hdrs, body, ch = solve_once()
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}",
+        token = token_of(hdrs)
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}",
                                                    "User-Agent": "ParityBot/1.0"})
         check("a DENY rule still denies a client that already solved a challenge",
               st == 403 and b"denied by policy" in body, st)
-        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        st, _, body = request("GET", "/", headers={"Cookie": f"{AUTH_NAME}={token}"})
         check("and that same cookie is fine for everyone else",
               st == 200 and b"PAST THE WALL" in body, st)
 
@@ -692,8 +723,7 @@ def main():
         check("an unauthenticated upgrade gets the challenge, not a tunnel",
               "200" in status and b"anubis_challenge" in head + b"", status)
         status, hdrs, body, ch = solve_once()
-        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
-                      if "cookie-verification" not in c), "")
+        token = token_of(hdrs)
         status, head, echoed, payload = ws_roundtrip(cookie=token)
         check("a client that solved a challenge is upgraded", "101" in status, status)
         check("and its frames cross too", echoed == payload, (echoed, payload))
@@ -705,7 +735,74 @@ def main():
         check("a denied path is denied before any upgrade", "101" not in status
               and b"denied by policy" in head, status)
 
-    # ---- 18. the old flags still behave
+    # ---- 18. the small parity flags
+    with Gate("--difficulty", "6"):
+        status, hdrs, body, ch = solve_once()
+        names = [c.split("=", 1)[0].strip() for c in set_cookies(hdrs)
+                 if "cookie-verification" not in c]
+        check("the cookie name carries the settings suffix by default",
+              names and names[0].startswith("techaro.lol-anubis-auth-")
+              and len(names[0].split("-")[-1]) == 8, names)
+    with Gate("--difficulty", "6", "--no-dynamic-cookie-suffix"):
+        status, hdrs, body, ch = solve_once()
+        names = [c.split("=", 1)[0].strip() for c in set_cookies(hdrs)
+                 if "cookie-verification" not in c]
+        check("--no-dynamic-cookie-suffix leaves the name alone",
+              names == ["techaro.lol-anubis-auth"], names)
+    with Gate("--difficulty", "6", "--difficulty-in-jwt"):
+        status, hdrs, body, ch = solve_once()
+        token = token_of(hdrs)
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        check("--difficulty-in-jwt puts the difficulty in the token",
+              claims.get("difficulty") == 6, claims)
+    with Gate("--difficulty", "6", "--webmaster-email", "ops@example.org",
+              "--deny-status", "403", policy="deny ua matches ParityBot\n"):
+        st, _, body = request("GET", "/", headers={"User-Agent": "ParityBot/1"})
+        check("--webmaster-email is printed on the deny page",
+              st == 403 and b"ops@example.org" in body, body[:80])
+    with Gate("--difficulty", "6", "--preserve-referer-query-param"):
+        status, hdrs, body, ch = solve_once(redir="/landing")
+        check("an internal challenge redirect gets no attribution",
+              header(hdrs, "Location") == "/landing", header(hdrs, "Location"))
+    with Gate("--difficulty", "6", "--preserve-referer-query-param"):
+        st, hdrs, body = request("GET", "/", headers={"Referer": "https://news.example/x"})
+        ch = anubis_solver.parse_challenge(body.decode(errors="replace"))
+        sol = SOLVER.solve(ch)
+        q = urlencode({"id": ch.id, "response": sol.response_hex, "nonce": str(sol.nonce),
+                       "redir": "/landing"})
+        status, hdrs, body = request("GET", API + "pass-challenge?" + q,
+                                     headers={"Referer": "https://news.example/x"})
+        loc = header(hdrs, "Location") or ""
+        check("an external Referer becomes utm_source/utm_medium",
+              "utm_source=news.example" in loc and "utm_medium=referral" in loc, loc)
+
+    # ---- 19. unix sockets for either listener
+    sockdir = tempfile.mkdtemp()
+    gate_sock = os.path.join(sockdir, "gate.sock")
+    metrics_sock = os.path.join(sockdir, "metrics.sock")
+    proc = subprocess.Popen(
+        [os.path.join(HERE, "betterAnusbis"), "--listen", gate_sock, "--bind-network", "unix",
+         "--target", f"http://127.0.0.1:{BACKEND_PORT}", "--difficulty", "6",
+         "--metrics-bind", metrics_sock, "--metrics-bind-network", "unix"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        deadline = time.time() + 8
+        while time.time() < deadline and not os.path.exists(gate_sock):
+            time.sleep(0.05)
+        reply = unix_http(gate_sock, "/")
+        check("a unix listener serves the challenge", b"anubis_challenge" in reply, reply[:60])
+        mode = statmod.S_IMODE(os.stat(gate_sock).st_mode) if os.path.exists(gate_sock) else 0
+        check("the unix socket is 0770 by default", mode == 0o770, oct(mode))
+        metrics = unix_http(metrics_sock, "/metrics")
+        check("a unix metrics listener serves /metrics",
+              b"anubis_challenges_issued" in metrics, metrics[:80])
+    finally:
+        proc.terminate()
+        proc.wait(3)
+
+    # ---- 20. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

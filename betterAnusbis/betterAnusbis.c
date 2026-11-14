@@ -35,6 +35,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -108,6 +109,16 @@ typedef struct {
     const char *secret_file;     /* read it from here, or create it here with 0600 */
     const char *data_dir;        /* where (data)/... resolves for Anubis policies */
     int healthcheck;             /* GET /healthz on the metrics listener and exit */
+    const char *bind_network;    /* tcp or unix, for the listener */
+    const char *socket_mode;     /* unix socket permissions, octal */
+    const char *metrics_network; /* tcp or unix, for the metrics listener */
+    const char *log_level;       /* DEBUG, INFO, WARN or ERROR */
+    int difficulty_in_jwt;       /* add the difficulty claim to the token */
+    int dynamic_cookie_suffix;   /* hash the cookie settings into its name */
+    const char *webmaster_email; /* shown on a deny page */
+    int preserve_referer_qp;     /* utm_source/utm_medium from the Referer */
+    int target_disable_keepalive;/* accepted; this gate always closes */
+    char verify_name[256];       /* the -cookie-verification name, suffix and all */
 } config;
 
 static config cfg = {
@@ -150,9 +161,20 @@ static config cfg = {
     .secret_file = NULL,
     .data_dir = "data",
     .healthcheck = 0,
+    .bind_network = "tcp",
+    .socket_mode = "0770",
+    .metrics_network = "tcp",
+    .log_level = "INFO",
+    .difficulty_in_jwt = 0,
+    .dynamic_cookie_suffix = 1,  /* upstream's default */
+    .webmaster_email = NULL,
+    .preserve_referer_qp = 0,
 };
 
+static int log_quiet;            /* WARN and ERROR: keep the startup lines, drop info */
+
 static void logmsg(const char *fmt, ...) {
+    if (log_quiet) return;
     va_list ap;
     va_start(ap, fmt);
     fprintf(stderr, "[betterAnusbis] ");
@@ -282,24 +304,27 @@ static int hmac_sha256(const uint8_t *key, size_t keylen, const uint8_t *msg, si
 
 /* A JWT HS256 with the claims Anubis uses, so tools that expect one can read it. */
 static int sign_token(char *out, size_t cap, const char *challenge_id,
-                      const char *restrict_to, const char *algorithm) {
+                      const char *restrict_to, const char *algorithm, int difficulty) {
     char payload[768];
     time_t now = time(NULL);
     /* policyRule is Anubis's rule hash; here it stands for the algorithm+difficulty.
      * Anubis binds the token to the client by default (--jwt-restriction-header,
      * X-Real-IP); so do we, because a cookie that works from any address is a
      * cookie that works from whoever steals it. */
+    char difficulty_part[48] = "";
+    if (cfg.difficulty_in_jwt)
+        snprintf(difficulty_part, sizeof difficulty_part, ",\"difficulty\":%d", difficulty);
     char restrict_part[128] = "";
     if (restrict_to && *restrict_to && cfg.jwt_restrict_hdr && *cfg.jwt_restrict_hdr)
         snprintf(restrict_part, sizeof restrict_part, ",\"restrict\":\"%s\"", restrict_to);
     snprintf(payload, sizeof payload,
              "{\"challenge\":\"%s\",\"method\":\"%s\",\"policyRule\":\"rule-0\","
-             "\"action\":\"CHALLENGE\",\"iat\":%lld,\"exp\":%lld%s}",
+             "\"action\":\"CHALLENGE\",\"iat\":%lld,\"exp\":%lld%s%s}",
              challenge_id ? challenge_id : "issued",
              algorithm && *algorithm ? algorithm : cfg.algorithm,
              (long long)now,
              (long long)(now + (cfg.cookie_ttl > 0 ? cfg.cookie_ttl : COOKIE_TTL)),
-             restrict_part);
+             difficulty_part, restrict_part);
 
     const char *header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
     char h64[256], p64[768];
@@ -443,6 +468,7 @@ typedef struct {
     char id[80];
     char rd[65];
     char algorithm[24];
+    char referer[256];
     int difficulty;
     time_t issued;
     int spent;
@@ -453,7 +479,8 @@ static ch_entry ch_table[CH_BUCKETS];
 static pthread_mutex_t ch_lock = PTHREAD_MUTEX_INITIALIZER;
 static long long ch_issued, ch_accepted, ch_replayed, ch_expired;
 
-static void ch_issue(const char *id, const char *rd, int difficulty, const char *algorithm) {
+static void ch_issue(const char *id, const char *rd, int difficulty, const char *algorithm,
+                     const char *referer) {
     if (!cfg.stateful) return;
     time_t now = time(NULL);
     uint32_t h = 2166136261u;
@@ -465,6 +492,7 @@ static void ch_issue(const char *id, const char *rd, int difficulty, const char 
             snprintf(e->id, sizeof e->id, "%s", id);
             snprintf(e->rd, sizeof e->rd, "%s", rd);
             snprintf(e->algorithm, sizeof e->algorithm, "%s", algorithm);
+            snprintf(e->referer, sizeof e->referer, "%s", referer ? referer : "");
             e->difficulty = difficulty;
             e->issued = now;
             e->spent = 0;
@@ -476,6 +504,7 @@ static void ch_issue(const char *id, const char *rd, int difficulty, const char 
         if (!strcmp(e->id, id)) {          /* re-issued: refresh it */
             snprintf(e->rd, sizeof e->rd, "%s", rd);
             snprintf(e->algorithm, sizeof e->algorithm, "%s", algorithm);
+            snprintf(e->referer, sizeof e->referer, "%s", referer ? referer : "");
             e->difficulty = difficulty;
             e->issued = now;
             e->spent = 0;
@@ -530,6 +559,62 @@ static int ch_peek_algorithm(const char *id, char *out, size_t cap) {
     }
     pthread_mutex_unlock(&ch_lock);
     return found;
+}
+
+/* The Referer recorded when the challenge was issued, which is what the
+ * attribution query is derived from (lib/anubis.go:812-853). */
+static int ch_peek_referer(const char *id, char *out, size_t cap) {
+    if (!cfg.stateful || !id) return 0;
+    uint32_t h = 2166136261u;
+    for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    int found = 0;
+    pthread_mutex_lock(&ch_lock);
+    for (int probe = 0; probe < 32; probe++) {
+        ch_entry *e = &ch_table[(h + (uint32_t)probe) % CH_BUCKETS];
+        if (!e->used) break;
+        if (strcmp(e->id, id) != 0) continue;
+        snprintf(out, cap, "%s", e->referer);
+        found = 1;
+        break;
+    }
+    pthread_mutex_unlock(&ch_lock);
+    return found;
+}
+
+/* utm_source/utm_medium for analytics that cannot read document.referrer,
+ * because the browser's history is the challenge page. Only for an external
+ * referer, and only when the redirect carries no attribution of its own. */
+static void with_referer_attribution(const char *redir, const char *referer,
+                                     const char *host, char *out, size_t cap) {
+    static const char *const already[] = {
+        "ref", "source", "utm_source", "utm_medium", "utm_campaign", "utm_content",
+        "utm_term", "gclid", "msclkid", NULL
+    };
+    if (!cfg.preserve_referer_qp || !referer || !*referer) {
+        snprintf(out, cap, "%s", redir);
+        return;
+    }
+    const char *h = strstr(referer, "://");
+    h = h ? h + 3 : referer;
+    size_t hn = strcspn(h, "/?#");
+    if (!hn || (host && hn == strlen(host) && !strncasecmp(h, host, hn))) {
+        snprintf(out, cap, "%s", redir);
+        return;
+    }
+    char refhost[128];
+    if (hn >= sizeof refhost) hn = sizeof refhost - 1;
+    memcpy(refhost, h, hn);
+    refhost[hn] = 0;
+    for (int i = 0; already[i]; i++) {
+        char probe[64];
+        snprintf(probe, sizeof probe, "%s=", already[i]);
+        if (strstr(redir, probe)) {
+            snprintf(out, cap, "%s", redir);
+            return;
+        }
+    }
+    const char *sep = strchr(redir, '?') ? "&" : "?";
+    snprintf(out, cap, "%s%sutm_source=%s&utm_medium=referral", redir, sep, refhost);
 }
 
 /* ------------------------------------------------------------ honeypot */
@@ -2885,8 +2970,8 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
 
     char extra[512];
     snprintf(extra, sizeof extra,
-             "Set-Cookie: %s-cookie-verification=%s; Path=/; SameSite=Lax\r\n",
-             cfg.cookie_prefix, test_cookie ? test_cookie : id);
+             "Set-Cookie: %s=%s; Path=/; SameSite=Lax\r\n",
+             cfg.verify_name, test_cookie ? test_cookie : id);
     respond(c, cfg.challenge_status, reason_for(cfg.challenge_status),
             "text/html; charset=utf-8", extra, body, strlen(body));
     free(body);
@@ -4646,6 +4731,11 @@ static void handle_connection(conn *c, const char *peer_ip) {
         (void)query_param(req.query, "elapsedTime", elapsed_buf, sizeof elapsed_buf);
         char redir_safe[2048];
         const char *go = safe_redirect(&req, redir, redir_safe, sizeof redir_safe);
+        char attributed[3072], ref[256] = "";
+        ch_peek_referer(id, ref, sizeof ref);
+        with_referer_attribution(go, ref, header_value(&req, "Host"), attributed,
+                                 sizeof attributed);
+        go = attributed;
 
         /* The id carries the challenge, so the server keeps no state:
          *   id = <hex randomData>.<unix time it was issued>
@@ -4704,7 +4794,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
                 }
                 if (valid) {
                     char token[2048];
-                    if (sign_token(token, sizeof token, id, bind_to, algorithm) == 0) {
+                    if (sign_token(token, sizeof token, id, bind_to, algorithm, used_difficulty) == 0) {
                         char attrs[512];
                         cookie_attrs(attrs, sizeof attrs, cfg.cookie_ttl > 0 ? cfg.cookie_ttl : -1);
                         char extra[4096];
@@ -4774,7 +4864,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
                 respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
             } else {
                 char token[2048];
-                if (sign_token(token, sizeof token, id, bind_to, algorithm) != 0) {
+                if (sign_token(token, sizeof token, id, bind_to, algorithm, used_difficulty) != 0) {
                     respond(c, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
                 } else {
                     char attrs[512];
@@ -4782,8 +4872,8 @@ static void handle_connection(conn *c, const char *peer_ip) {
                     char extra[4096];
                     snprintf(extra, sizeof extra,
                              "Set-Cookie: %s=%s%s\r\n"
-                             "Set-Cookie: %s-cookie-verification=; Path=/; Max-Age=0\r\n",
-                             cfg.cookie_name, token, attrs, cfg.cookie_prefix);
+                             "Set-Cookie: %s=; Path=/; Max-Age=0\r\n",
+                             cfg.cookie_name, token, attrs, cfg.verify_name);
                     respond_redirect(c, go, extra);
                     __atomic_fetch_add(&m_validated, 1, __ATOMIC_RELAXED);
                     logmsg("challenge passed (nonce %llu, %s, difficulty %d)", nonce,
@@ -4828,7 +4918,10 @@ static void handle_connection(conn *c, const char *peer_ip) {
         if (action == RULE_DENY) {
             /* Anubis DENYs with a 200 on purpose, so the scraper thinks it got
              * the page; --deny-status 403 is the honest answer. */
-            const char *msg = "betterAnusbis: denied by policy\n";
+            char msg[512];
+            snprintf(msg, sizeof msg, "betterAnusbis: denied by policy\n%s%s\n",
+                     cfg.webmaster_email && *cfg.webmaster_email ? "contact: " : "",
+                     cfg.webmaster_email && *cfg.webmaster_email ? cfg.webmaster_email : "");
             __atomic_fetch_add(&m_requests[M_DENIED], 1, __ATOMIC_RELAXED);
             respond(c, cfg.deny_status, reason_for(cfg.deny_status), NULL, NULL,
                     msg, strlen(msg));
@@ -4866,13 +4959,21 @@ static void handle_connection(conn *c, const char *peer_ip) {
             hex_encode(rd, sizeof rd, rd_hex);
             char id[128];
             snprintf(id, sizeof id, "%s.%lld", rd_hex, (long long)time(NULL));
+            char referer[256] = "";
+            {
+                const char *r = header_value(&req, "Referer");
+                size_t rn = 0;
+                for (const char *q = r ? r : ""; *q && rn + 1 < sizeof referer; q++)
+                    if (*q != '"' && *q != '\\') referer[rn++] = *q;
+                referer[rn] = 0;
+            }
             const char *ua = header_value(&req, "User-Agent");
-            char metadata[512];
+            char metadata[1024];
             snprintf(metadata, sizeof metadata,
-                     "{\"Referer\":\"\",\"User-Agent\":\"%.200s\",\"X-Real-IP\":\"%s\"}",
-                     ua ? ua : "", client_ip);
+                     "{\"Referer\":\"%s\",\"User-Agent\":\"%.200s\",\"X-Real-IP\":\"%s\"}",
+                     referer, ua ? ua : "", client_ip);
 
-            ch_issue(id, rd_hex, difficulty, algorithm);
+            ch_issue(id, rd_hex, difficulty, algorithm, referer);
             __atomic_fetch_add(&m_requests[M_CHALLENGED], 1, __ATOMIC_RELAXED);
             __atomic_fetch_add(&m_issued, 1, __ATOMIC_RELAXED);
             challenge_page(c, id, rd_hex, metadata, id, algorithm, difficulty);
@@ -4917,6 +5018,11 @@ static void *thread_main(void *arg) {
             inet_ntop(AF_INET, &((struct sockaddr_in *)&peer)->sin_addr, ip, sizeof ip);
         else if (peer.ss_family == AF_INET6)
             inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&peer)->sin6_addr, ip, sizeof ip);
+        else if (peer.ss_family == AF_UNIX)
+            /* a unix socket only ever has same-host peers, and loopback is the
+             * truth here; it also makes X-Forwarded-For from that proxy trusted,
+             * which is what the deployment wants */
+            snprintf(ip, sizeof ip, "127.0.0.1");
     }
     handle_connection(&c, ip);
     if (c.ssl) {
@@ -4964,6 +5070,70 @@ static int parse_listen(const char *spec, struct sockaddr_in6 *out) {
     return -1;                  /* a bind address, not a hostname to resolve */
 }
 
+/* Both listeners can be a unix socket, which is how nginx and Traefik prefer to
+ * talk to a gate on the same host: no port, no firewall question, and a socket
+ * a non-root process can own. A stale socket file from a crashed run is removed
+ * first, because bind() will not reuse it. */
+static int make_listener(const char *spec, const char *network, const char *mode,
+                         int *is_unix) {
+    *is_unix = 0;
+    if (network && !strcasecmp(network, "unix")) {
+        struct sockaddr_un un;
+        memset(&un, 0, sizeof un);
+        un.sun_family = AF_UNIX;
+        if (strlen(spec) >= sizeof un.sun_path) {
+            fprintf(stderr, "betterAnusbis: the socket path %s is too long\n", spec);
+            return -1;
+        }
+        snprintf(un.sun_path, sizeof un.sun_path, "%s", spec);
+        unlink(spec);
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            perror("socket");
+            return -1;
+        }
+        if (bind(fd, (struct sockaddr *)&un, sizeof un) != 0) {
+            fprintf(stderr, "betterAnusbis: cannot bind %s: %s\n", spec, strerror(errno));
+            close(fd);
+            return -1;
+        }
+        mode_t m = (mode_t)strtol(mode ? mode : "0770", NULL, 8);
+        chmod(spec, m);
+        if (listen(fd, 128) != 0) {
+            perror("listen");
+            close(fd);
+            return -1;
+        }
+        *is_unix = 1;
+        return fd;
+    }
+
+    struct sockaddr_in6 addr;
+    if (parse_listen(spec, &addr) != 0) {
+        fprintf(stderr, "betterAnusbis: --listen wants ADDR:PORT\n");
+        return -1;
+    }
+    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    if (fd < 0) {
+        perror("socket");
+        return -1;
+    }
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &(int){0}, sizeof(int));
+    if (bind(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
+        fprintf(stderr, "betterAnusbis: cannot bind %s: %s\n", spec, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, 128) != 0) {
+        perror("listen");
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
 static void parse_target(const char *url) {
     const char *p = url;
     cfg.target_tls = 0;
@@ -4993,7 +5163,11 @@ static void usage(FILE *out) {
         "\n"
         "where to listen, what to protect\n"
         "  --listen ADDR:PORT     where to listen; omit the address for every\n"
-        "                         interface (default :8080)\n"
+        "                         interface (default :8080). With\n"
+        "                         --bind-network unix this is a socket path\n"
+        "  --bind-network NAME    tcp (default) or unix\n"
+        "  --socket-mode OCTAL    permissions for a unix socket (default 0770)\n"
+        "  --metrics-bind-network NAME  tcp (default) or unix, for the metrics listener\n"
         "  --target URL           the backend to protect (required)\n"
         "  --target-sni NAME      TLS name to send to the target; \"auto\" reuses the\n"
         "                         Host header (default: the host we dialled)\n"
@@ -5053,6 +5227,17 @@ static void usage(FILE *out) {
         "TLS, metrics, noise\n"
         "  --tls-cert FILE        serve HTTPS with this PEM certificate chain\n"
         "  --tls-key FILE         ...and this PEM private key\n"
+        "  --slog-level LEVEL     DEBUG, INFO (default), WARN or ERROR\n"
+        "  --difficulty-in-jwt    add the difficulty claim to the token\n"
+        "  --dynamic-cookie-suffix[=B]\n"
+        "                         hash the cookie settings into the cookie name,\n"
+        "                         so stale cookies under old settings are ignored\n"
+        "                         (default on, as Anubis ships it)\n"
+        "  --webmaster-email ADDR printed on a deny page, for appeals\n"
+        "  --preserve-referer-query-param\n"
+        "                         add utm_source/utm_medium from an external Referer\n"
+        "  --target-disable-keepalive\n"
+        "                         accepted for compatibility; this gate always closes\n"
         "  --secret-file PATH     keep the signing key here, creating it 0600 if it\n"
         "                         is missing; without this the key is random per run\n"
         "                         and every restart logs everyone out\n"
@@ -5126,6 +5311,15 @@ static const arg_spec args[] = {
     {"secret-file", ARG_STR, &cfg.secret_file},
     {"data-dir", ARG_STR, &cfg.data_dir},
     {"healthcheck", ARG_BOOL, &cfg.healthcheck},
+    {"bind-network", ARG_STR, &cfg.bind_network},
+    {"socket-mode", ARG_STR, &cfg.socket_mode},
+    {"metrics-bind-network", ARG_STR, &cfg.metrics_network},
+    {"slog-level", ARG_STR, &cfg.log_level},
+    {"difficulty-in-jwt", ARG_BOOL, &cfg.difficulty_in_jwt},
+    {"dynamic-cookie-suffix", ARG_BOOL, &cfg.dynamic_cookie_suffix},
+    {"webmaster-email", ARG_STR, &cfg.webmaster_email},
+    {"preserve-referer-query-param", ARG_BOOL, &cfg.preserve_referer_qp},
+    {"target-disable-keepalive", ARG_BOOL, &cfg.target_disable_keepalive},
 };
 
 static int arg_apply(const arg_spec *spec, const char *val, int negated) {
@@ -5309,6 +5503,32 @@ static int do_healthcheck(const char *addr) {
     return status == 200 ? 0 : 1;
 }
 
+/* Anubis hashes the cookie settings into the cookie name, so a browser cannot
+ * keep presenting a cookie that was minted under different settings
+ * (lib/http.go:118-127). Same seven fields, same 4-byte digest, same 8 hex. */
+static void build_cookie_names(void) {
+    const char *ss = cfg.cookie_same_site && *cfg.cookie_same_site ? cfg.cookie_same_site : "lax";
+    int ss_mode = !strcasecmp(ss, "default") ? 0 : !strcasecmp(ss, "lax") ? 1
+                : !strcasecmp(ss, "strict") ? 2 : 3;
+    char material[512];
+    snprintf(material, sizeof material, "%d|%d|%d|%d|%s|%d|%s",
+             cfg.cookie_http_only, cookie_use_secure(), cfg.cookie_partitioned, ss_mode,
+             cfg.cookie_domain ? cfg.cookie_domain : "", 0,
+             cfg.base_prefix ? cfg.base_prefix : "");
+    char suffix[16] = "";
+    if (cfg.dynamic_cookie_suffix) {
+        uint8_t digest[32];
+        char hex[16];
+        if (sha256_raw((const uint8_t *)material, strlen(material), digest) == 0) {
+            hex_encode(digest, 4, hex);
+            snprintf(suffix, sizeof suffix, "-%s", hex);
+        }
+    }
+    snprintf(cfg.cookie_name, sizeof cfg.cookie_name, "%s-auth%s", cfg.cookie_prefix, suffix);
+    snprintf(cfg.verify_name, sizeof cfg.verify_name, "%s-cookie-verification%s",
+             cfg.cookie_prefix, suffix);
+}
+
 static volatile sig_atomic_t hup_pending;
 
 static void on_reload(int sig) {
@@ -5319,8 +5539,8 @@ static void on_reload(int sig) {
 /* What SIGHUP prints: the settings as they actually ended up, after defaults and
  * validation, not as they were typed. */
 static void print_settings(void) {
-    logmsg("settings: listen=%s target=%s algorithm=%s difficulty=%d",
-           cfg.listen, cfg.target, cfg.algorithm, cfg.difficulty);
+    logmsg("settings: listen=%s (%s) target=%s algorithm=%s difficulty=%d",
+           cfg.listen, cfg.bind_network, cfg.target, cfg.algorithm, cfg.difficulty);
     logmsg("settings: cookie name=%s domain=%s secure=%s http_only=%s same_site=%s "
            "partitioned=%s ttl=%ld",
            cfg.cookie_name, *cfg.cookie_domain ? cfg.cookie_domain : "(host only)",
@@ -5391,6 +5611,15 @@ int main(int argc, char **argv) {
         fprintf(stderr, "betterAnusbis: --cookie-same-site must be default, lax, strict or none\n");
         return 2;
     }
+    if (!strcasecmp(cfg.log_level, "DEBUG")) {
+        cfg.verbose = 1;
+    } else if (!strcasecmp(cfg.log_level, "WARN") || !strcasecmp(cfg.log_level, "WARNING") ||
+               !strcasecmp(cfg.log_level, "ERROR")) {
+        log_quiet = 1;
+    } else if (strcasecmp(cfg.log_level, "INFO")) {
+        fprintf(stderr, "betterAnusbis: --slog-level wants DEBUG, INFO, WARN or ERROR\n");
+        return 2;
+    }
     if (cfg.cookie_ttl < 0) cfg.cookie_ttl = 0;      /* 0: a session cookie */
     /* the base prefix has to look like a path, and must not end in a slash */
     if (cfg.base_prefix && *cfg.base_prefix) {
@@ -5432,7 +5661,7 @@ int main(int argc, char **argv) {
 
     if (cfg.policy_file) policy_load(cfg.policy_file);
     parse_target(cfg.target);
-    snprintf(cfg.cookie_name, sizeof cfg.cookie_name, "%s-auth", cfg.cookie_prefix);
+    build_cookie_names();
     if (cfg.secret_hex && *cfg.secret_hex) {
         if (hex_decode(cfg.secret_hex, cfg.secret, sizeof cfg.secret) != (int)sizeof cfg.secret) {
             fprintf(stderr, "betterAnusbis: --secret-hex wants exactly 64 hex characters\n");
@@ -5453,8 +5682,18 @@ int main(int argc, char **argv) {
     sigaction(SIGHUP, &hup, NULL);
 
     struct sockaddr_in6 addr;
-    if (parse_listen(cfg.listen, &addr) != 0) {
-        fprintf(stderr, "betterAnusbis: --listen wants ADDR:PORT\n");
+    memset(&addr, 0, sizeof addr);
+    if (strcasecmp(cfg.bind_network, "unix") && parse_listen(cfg.listen, &addr) != 0) {
+        fprintf(stderr, "betterAnusbis: --listen wants ADDR:PORT (or a socket path "
+                        "with --bind-network unix)\n");
+        return 2;
+    }
+    if (strcasecmp(cfg.bind_network, "tcp") && strcasecmp(cfg.bind_network, "unix")) {
+        fprintf(stderr, "betterAnusbis: --bind-network wants tcp or unix\n");
+        return 2;
+    }
+    if (strcasecmp(cfg.metrics_network, "tcp") && strcasecmp(cfg.metrics_network, "unix")) {
+        fprintf(stderr, "betterAnusbis: --metrics-bind-network wants tcp or unix\n");
         return 2;
     }
     if ((cfg.tls_cert && !cfg.tls_key) || (!cfg.tls_cert && cfg.tls_key)) {
@@ -5483,35 +5722,21 @@ int main(int argc, char **argv) {
         }
     }
 
-    int srv = socket(AF_INET6, SOCK_STREAM, 0);
-    if (srv < 0) { perror("socket"); return 1; }
-    int one = 1;
-    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-    setsockopt(srv, IPPROTO_IPV6, IPV6_V6ONLY, &(int){0}, sizeof(int));
-    if (bind(srv, (struct sockaddr *)&addr, sizeof addr) != 0) { perror("bind"); return 1; }
-    if (listen(srv, 128) != 0) { perror("listen"); return 1; }
+    int srv_unix = 0;
+    int srv = make_listener(cfg.listen, cfg.bind_network, cfg.socket_mode, &srv_unix);
+    if (srv < 0) return 1;
 
-    logmsg("betterAnusbis " VERSION " listening on %s (%s) -> %s (%s, difficulty %d)",
-           cfg.listen, use_tls ? "https" : "http", cfg.target, cfg.algorithm, cfg.difficulty);
-    logmsg("open %s://127.0.0.1:%d/ and the challenge page solves it for you",
-           use_tls ? "https" : "http", ntohs(addr.sin6_port));
+    logmsg("betterAnusbis " VERSION " listening on %s (%s%s) -> %s (%s, difficulty %d)",
+           cfg.listen, use_tls ? "https" : "http",
+           srv_unix ? " unix socket" : "", cfg.target, cfg.algorithm, cfg.difficulty);
+    if (!srv_unix)
+        logmsg("open %s://127.0.0.1:%d/ and the challenge page solves it for you",
+               use_tls ? "https" : "http", ntohs(addr.sin6_port));
 
     if (cfg.metrics_bind && *cfg.metrics_bind) {
-        struct sockaddr_in6 maddr;
-        if (parse_listen(cfg.metrics_bind, &maddr) != 0) {
-            fprintf(stderr, "betterAnusbis: --metrics-bind wants ADDR:PORT\n");
-            return 2;
-        }
-        int mfd = socket(AF_INET6, SOCK_STREAM, 0);
-        if (mfd < 0) { perror("socket"); return 1; }
-        setsockopt(mfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-        setsockopt(mfd, IPPROTO_IPV6, IPV6_V6ONLY, &(int){0}, sizeof(int));
-        if (bind(mfd, (struct sockaddr *)&maddr, sizeof maddr) != 0) {
-            fprintf(stderr, "betterAnusbis: cannot bind metrics to %s: %s\n",
-                    cfg.metrics_bind, strerror(errno));
-            return 1;
-        }
-        if (listen(mfd, 64) != 0) { perror("listen"); return 1; }
+        int munix = 0;
+        int mfd = make_listener(cfg.metrics_bind, cfg.metrics_network, cfg.socket_mode, &munix);
+        if (mfd < 0) return 1;
         int *mp = malloc(sizeof *mp);
         if (!mp) return 1;
         *mp = mfd;
@@ -5521,7 +5746,8 @@ int main(int argc, char **argv) {
             return 1;
         }
         pthread_detach(mt);
-        logmsg("metrics on %s (GET /metrics, GET /healthz)", cfg.metrics_bind);
+        logmsg("metrics on %s%s (GET /metrics, GET /healthz)", cfg.metrics_bind,
+               munix ? " (unix socket)" : "");
     }
 
     for (;;) {

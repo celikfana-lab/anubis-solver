@@ -72,6 +72,8 @@ And it actually rejects things:
 | client IP | `X-Forwarded-For` flattened right-to-left, CGNAT and link-local hops always dropped, RFC1918 unless `--no-xff-strip-private`; `--custom-real-ip-header` reads a proxy-specific header, `--use-remote-address` ignores them all |
 | redirect | `redir=` restricted to this host or `--redirect-domains`, with the same four-wildcard glob limit as `REDIRECT_DOMAINS` |
 | subpath | `--base-prefix` / `--strip-base-prefix`, same pair as `cmd/anubis` |
+| request shape | a path with a `.` or `..` segment is refused with 400 before anything else, and repeated slashes are collapsed for rule matching, as `lib/policy/checker.go:192-231` does |
+| health | `--healthcheck` GETs `/healthz` on the metrics listener and exits 0 or 1, for a supervisor that knows nothing about this program |
 | metrics | `anubis_challenges_issued`, `anubis_challenges_validated`, `anubis_failed_validations`, `anubis_proxied_requests_total`, `anubis_policy_results` with upstream's names and fewer labels (no ASN), plus `/healthz`; `--metrics-bind` puts them on their own listener |
 | token binding | the JWT carries a `restrict` claim holding the client address, the way `--jwt-restriction-header` does; a stolen cookie is useless from another address. Tokens minted before this existed carry no claim and keep working |
 | policy file | `--policy data/botPolicies.yaml` reads Anubis's own schema: `bots[]` with `user_agent_regex`, `path_regex`, `headers_regex`, `remote_addresses`, `expression`, `challenge{algorithm,difficulty}`, `weight.adjust`, `import:` including the `(data)/` macro, plus `thresholds[]`, `status_codes` and `honeypot.enabled`. Anubis's default-allow semantics come with it: a request that matches no rule and no threshold is allowed |
@@ -144,8 +146,14 @@ policy, honeypot, assets, TLS, metrics
   --policy FILE              Anubis's botPolicies.yaml, or this gate's own rules
   --data-dir DIR             where (data)/... imports resolve (default data)
   --honeypot-log FILE  --web DIR  --tls-cert/--tls-key  --metrics-bind ADDR:PORT
-  --no-honeypot  --stateless
+  --no-honeypot  --stateless  --healthcheck
 ```
+
+Every flag is also an environment variable, upper case with dashes as
+underscores: `--cookie-same-site` is `COOKIE_SAME_SITE`, `--listen` is `LISTEN`.
+A flag on the command line wins over the environment, so a container can carry
+its configuration in `environment:` and still be overridden by hand. This is
+the same mapping upstream's `flagenv` gives its flags.
 
 Difficulty 4 is a good default for a human-facing site (a few milliseconds of
 work); 12–16 is a wall worth having against a script.
@@ -378,6 +386,9 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
 
 ## What it does not do
 
+- **No WebSocket tunnel and no keep-alive.** A `Connection: Upgrade` request is
+  forwarded as a plain request, so Grafana, Jupyter and anything else that
+  upgrades does not work through this. `PARITY.md` item 8.
 - **No HTTP/2 and no keep-alive.** It reads one request, answers it and closes,
   which is fine behind a reverse proxy and keeps the listener readable. TLS itself
   is there (`--tls-cert`/`--tls-key`, and `--target https://` with
@@ -421,7 +432,7 @@ kills/restarts betterAnusbis per algorithm. `test_parity.py` starts both sides
 itself and asserts what the HTTP response says: status lines, every Set-Cookie
 attribute, the Location header after a blocked redirect, the counters a scrape
 returns, the headers the backend received after XFF flattening, and the decision
-the shipped `data/botPolicies.yaml` produces for nine probe requests. 83 checks,
+the shipped `data/botPolicies.yaml` produces for nine probe requests. 96 checks,
 no logs read. The Anubis policy checks skip themselves when the upstream data
 directory is not there; set `ANUBIS_DATA_DIR` to point at one. `wasm/live-server.md` in the parent repository has a policy file for
 the real Anubis if you want to compare side by side.

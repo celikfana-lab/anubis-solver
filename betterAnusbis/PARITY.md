@@ -315,6 +315,15 @@ md5 `925898fa36ea34855d0d1d1e7a6b5b7b`, 3755 lines.
 Still open from the audit, unchanged: item 8 (backend keep-alive and WebSocket), item 9 (DNSBL), an arbitrary CEL
 engine, GeoIP and ASN matching, `verifyFCrDNS`, the stores, OpenGraph, localization and impressum.
 
+Closed since then:
+
+| audit item | what landed |
+|---|---|
+| the request preconditions in section 1.2 | a path with a `.` or `..` segment is refused with 400 before the body is read, and repeated slashes are collapsed into `request.ppath` for rule matching only, the path upstream still receives is untouched. Four checks |
+| `DEBUG_BENCHMARK`, the fifth action | accepted in an Anubis policy and treated as "always challenge" (`lib/config/config.go:43`), with its metrics going to the CHALLENGE slot. One check |
+| the environment-variable surface | every flag in the table is also an environment variable using upstream's `flagenv` mapping, and a flag on the command line wins. Two checks |
+| `--healthcheck` | GETs `/healthz` on `--metrics-bind` and exits 0 or 1, which is what a supervisor needs. Two checks |
+
 Closed since the audit:
 
 | audit item | what landed |

@@ -75,8 +75,9 @@ def start_backend():
 
 # ------------------------------------------------------------------------ gate
 class Gate:
-    def __init__(self, *args, policy: str | None = None):
+    def __init__(self, *args, policy: str | None = None, env: dict | None = None):
         self.args = list(args)
+        self.env = env
         self.policy_path = None
         if policy is not None:
             fd, self.policy_path = tempfile.mkstemp(suffix=".policy")
@@ -86,11 +87,13 @@ class Gate:
         self.proc = None
 
     def __enter__(self):
+        env = dict(os.environ)
+        env.update(self.env or {})
         self.proc = subprocess.Popen(
             [os.path.join(HERE, "betterAnusbis"),
              "--listen", f"127.0.0.1:{GATE_PORT}",
              "--target", f"http://127.0.0.1:{BACKEND_PORT}", *self.args],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
         )
         deadline = time.time() + 8
         while time.time() < deadline:
@@ -544,7 +547,59 @@ def main():
         check("and that same cookie is fine for everyone else",
               st == 200 and b"PAST THE WALL" in body, st)
 
-    # ---- 14. the old flags still behave
+    # ---- 14. the request-shape rules Anubis applies before any policy
+    with Gate("--difficulty", "6", policy="allow path prefix /health\n"):
+        st, _, body = request("GET", "/a/../b")
+        check("a path with a .. segment is refused before anything else", st == 400, st)
+        st, _, body = request("GET", "/a/./b")
+        check("a path with a . segment is refused too", st == 400, st)
+        st, _, body = request("GET", "/health//deep")
+        check("repeated slashes are collapsed for rule matching",
+              st == 200 and b"PAST THE WALL" in body, st)
+
+    # ---- 15. every flag is an environment variable
+    env = {"LISTEN": f"127.0.0.1:{GATE_PORT}", "TARGET": f"http://127.0.0.1:{BACKEND_PORT}",
+           "DIFFICULTY": "6", "ALGORITHM": "sha256",
+           "COOKIE_SAME_SITE": "strict"}
+    proc = subprocess.Popen([os.path.join(HERE, "betterAnusbis")],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            env={**os.environ, **env})
+    try:
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", GATE_PORT), 0.2):
+                    break
+            except OSError:
+                time.sleep(0.05)
+        st, hdrs, body = request("GET", "/")
+        check("LISTEN, TARGET, DIFFICULTY and ALGORITHM work from the environment",
+              st == 200 and b"anubis_challenge" in body, st)
+        status, hdrs, body, ch = solve_once()
+        auth = next((c for c in set_cookies(hdrs) if "cookie-verification" not in c), "")
+        check("COOKIE_SAME_SITE is read from the environment too",
+              "SameSite=Strict" in auth, auth)
+    finally:
+        proc.terminate()
+        proc.wait(3)
+
+    # ---- 16. DEBUG_BENCHMARK as a rule action, and the healthcheck
+    with Gate("--difficulty", "6", "--metrics-bind", f"127.0.0.1:{METRICS_PORT}",
+              policy="- name: bench\n  action: DEBUG_BENCHMARK\n  path_regex: .*\n"):
+        st, _, body = request("GET", "/anything")
+        check("a DEBUG_BENCHMARK rule always challenges",
+              st == 200 and b"anubis_challenge" in body, st)
+        hc = subprocess.run([os.path.join(HERE, "betterAnusbis"),
+                             "--healthcheck", "--metrics-bind", f"127.0.0.1:{METRICS_PORT}"],
+                            capture_output=True, timeout=10)
+        check("--healthcheck exits 0 against a live metrics listener", hc.returncode == 0,
+              hc.stderr.decode()[-120:])
+    hc = subprocess.run([os.path.join(HERE, "betterAnusbis"),
+                         "--healthcheck", "--metrics-bind", "127.0.0.1:8499"],
+                        capture_output=True, timeout=10)
+    check("--healthcheck exits 1 when nothing answers", hc.returncode == 1, hc.returncode)
+
+    # ---- 17. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

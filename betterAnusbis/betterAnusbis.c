@@ -106,6 +106,7 @@ typedef struct {
     const char *secret_hex;      /* 64 hex chars: the HMAC key, so restarts keep cookies */
     const char *secret_file;     /* read it from here, or create it here with 0600 */
     const char *data_dir;        /* where (data)/... resolves for Anubis policies */
+    int healthcheck;             /* GET /healthz on the metrics listener and exit */
 } config;
 
 static config cfg = {
@@ -147,6 +148,7 @@ static config cfg = {
     .secret_hex = NULL,
     .secret_file = NULL,
     .data_dir = "data",
+    .healthcheck = 0,
 };
 
 static void logmsg(const char *fmt, ...) {
@@ -730,6 +732,7 @@ static void honeypot_maze(conn *c, const char *id, const char *stage, const char
 typedef struct {
     char method[16];
     char path[4096];
+    char ppath[4096];       /* repeated slashes collapsed, for rule matching */
     char query[4096];
     char version[16];
     char *headers;          /* raw, NUL-terminated */
@@ -822,6 +825,32 @@ static const char *header_value(const request *req, const char *name) {
         p = eol + 2;
     }
     return NULL;
+}
+
+/* Anubis refuses a path with a "." or ".." segment outright
+ * (lib/policy/checker.go:192-215) and collapses repeated slashes before rules
+ * see it (:219-231). The first is a proxy hazard, the second is why a rule for
+ * /health should also match //health. */
+static int path_is_sane(const char *p) {
+    const char *seg = p;
+    for (;;) {
+        const char *slash = strchr(seg, '/');
+        size_t n = slash ? (size_t)(slash - seg) : strlen(seg);
+        if ((n == 1 && seg[0] == '.') || (n == 2 && seg[0] == '.' && seg[1] == '.'))
+            return 0;
+        if (!slash) break;
+        seg = slash + 1;
+    }
+    return 1;
+}
+
+static void collapse_slashes(const char *in, char *out, size_t cap) {
+    size_t o = 0;
+    for (size_t i = 0; in[i] && o + 1 < cap; i++) {
+        if (in[i] == '/' && i > 0 && in[i - 1] == '/') continue;
+        out[o++] = in[i];
+    }
+    out[o] = 0;
 }
 
 /* ------------------------------------------------------- response helpers */
@@ -3550,7 +3579,7 @@ static int ex_leaf(exctx *cx, const char *s) {
     } else if (!strncmp(s, "host", 4)) {
         have = cx->rq ? header_value(cx->rq, "Host") : "";
     } else if (!strncmp(s, "path", 4)) {
-        have = cx->rq ? cx->rq->path : "";
+        have = cx->rq ? cx->rq->ppath : "";
     } else {
         have = cx->rq ? header_value(cx->rq, hdrname) : "";
     }
@@ -3701,6 +3730,7 @@ static int yml_action_of(const char *s) {
     if (!strcasecmp(s, "DENY")) return 1;
     if (!strcasecmp(s, "CHALLENGE")) return 2;
     if (!strcasecmp(s, "WEIGH")) return 3;
+    if (!strcasecmp(s, "DEBUG_BENCHMARK")) return 4;   /* lib/config/config.go:43 */
     return -1;
 }
 
@@ -4033,7 +4063,7 @@ static int yml_rule_matches(const yrule *r, const request *rq, const char *ip,
         if (!ua || regexec(&r->ua_re, ua, 0, NULL, 0) != 0) return 0;
     }
     if (r->has_path) {
-        if (regexec(&r->path_re, rq->path, 0, NULL, 0) != 0) return 0;
+        if (regexec(&r->path_re, rq->ppath, 0, NULL, 0) != 0) return 0;
     }
     for (int i = 0; i < r->nhdr; i++) {
         const char *v = header_value(rq, r->hdr[i].name);
@@ -4066,11 +4096,12 @@ static int yml_decide(const request *rq, const char *ip, int *difficulty,
             weight += r->weight_adjust;
             continue;
         }
-        __atomic_fetch_add(&m_policy[i < MAX_RULES ? i : MAX_RULES][r->action], 1,
+        int metric_action = r->action == 4 ? 2 : r->action;   /* DEBUG_BENCHMARK */
+        __atomic_fetch_add(&m_policy[i < MAX_RULES ? i : MAX_RULES][metric_action], 1,
                            __ATOMIC_RELAXED);
         if (r->difficulty > 0) *difficulty = r->difficulty;
         if (r->algorithm[0]) *algorithm = r->algorithm;
-        return r->action;
+        return r->action == 4 ? 2 : r->action;   /* a benchmark always challenges */
     }
     for (int i = 0; i < yml_threshold_count; i++) {
         const ythreshold *t = &yml_thresholds[i];
@@ -4131,7 +4162,7 @@ static uint64_t network_key(const char *ip);
 static int rule_matches(const rule *r, const request *req, const char *client_ip) {
     const char *subject = NULL;
     if (r->selector == SEL_UA) subject = header_value(req, "User-Agent");
-    else if (r->selector == SEL_PATH) subject = req->path;
+    else if (r->selector == SEL_PATH) subject = req->ppath;
     else if (r->selector == SEL_HEADER) subject = header_value(req, r->header);
 
     if (r->selector == SEL_NET) {
@@ -4346,6 +4377,13 @@ static void handle_connection(conn *c, const char *peer_ip) {
         close(c->fd);
         return;
     }
+
+    if (!path_is_sane(req.path)) {
+        const char *msg = "betterAnusbis: that path has a . or .. segment\n";
+        respond(c, 400, "Bad Request", NULL, NULL, msg, strlen(msg));
+        goto done;
+    }
+    collapse_slashes(req.path, req.ppath, sizeof req.ppath);
 
     /* Who is really asking: the socket peer, or whatever the proxy in front of
      * us recorded. Computed before anything else looks at the address. */
@@ -4888,6 +4926,7 @@ static void usage(FILE *out) {
         "  --jwt-restriction-header NAME\n"
         "                         bind the auth cookie to the client address, the way\n"
         "                         Anubis does by default; pass \"\" to turn it off\n"
+        "  --healthcheck          GET /healthz on --metrics-bind and exit 0 or 1\n"
         "  --metrics-bind ADDR:PORT\n"
         "                         Prometheus /metrics and /healthz on a listener of\n"
         "                         their own (default: off. Anubis binds :9090 for\n"
@@ -4896,7 +4935,10 @@ static void usage(FILE *out) {
         "  -h, --help             this text\n"
         "  -V, --version          version\n"
         "\n"
-        "send SIGHUP to print the current settings.\n");
+        "send SIGHUP to print the current settings.\n"
+        "\n"
+        "every flag is also an environment variable: --cookie-same-site is\n"
+        "COOKIE_SAME_SITE, and a flag on the command line wins.\n");
 }
 
 /* The option table. Values are parsed once, so --flag=value and --flag value both
@@ -4949,9 +4991,63 @@ static const arg_spec args[] = {
     {"secret-hex", ARG_STR, &cfg.secret_hex},
     {"secret-file", ARG_STR, &cfg.secret_file},
     {"data-dir", ARG_STR, &cfg.data_dir},
+    {"healthcheck", ARG_BOOL, &cfg.healthcheck},
 };
 
+static int arg_apply(const arg_spec *spec, const char *val, int negated) {
+    switch (spec->kind) {
+    case ARG_STR:
+        if (!val) return -1;
+        *(const char **)spec->dst = val;
+        break;
+    case ARG_INT:
+        *(int *)spec->dst = atoi(val);
+        break;
+    case ARG_LONG:
+        *(long *)spec->dst = strtol(val, NULL, 10);
+        break;
+    case ARG_BOOL: {
+        int b = 1;
+        if (val) {
+            if (!strcasecmp(val, "false") || !strcmp(val, "0") ||
+                !strcasecmp(val, "no") || !strcasecmp(val, "off")) b = 0;
+            else if (!strcasecmp(val, "true") || !strcmp(val, "1") ||
+                     !strcasecmp(val, "yes") || !strcasecmp(val, "on")) b = 1;
+            else {
+                fprintf(stderr, "betterAnusbis: --%s wants true or false, got %s\n",
+                        spec->name, val);
+                return -1;
+            }
+        }
+        if (negated) b = !b;
+        *(int *)spec->dst = b;
+        break;
+    }
+    }
+    return 0;
+}
+
+/* Every flag is also an environment variable, upper case with dashes as
+ * underscores, exactly the mapping upstream's flagenv gives it. A flag on the
+ * command line wins over the environment, which is what lets docker-compose
+ * carry a whole deployment in `environment:` while still being debuggable on
+ * the command line. */
+static void apply_environment(char *const seen, size_t nseen) {
+    for (size_t k = 0; k < nseen; k++) {
+        if (seen[k]) continue;
+        char name[96];
+        size_t o = 0;
+        for (const char *q = args[k].name; *q && o + 1 < sizeof name; q++)
+            name[o++] = (*q == '-') ? '_' : (char)toupper((unsigned char)*q);
+        name[o] = 0;
+        const char *v = getenv(name);
+        if (!v || !*v) continue;
+        arg_apply(&args[k], args[k].kind == ARG_BOOL && !*v ? NULL : v, 0);
+    }
+}
+
 static int parse_args(int argc, char **argv) {
+    char seen[sizeof args / sizeof args[0]] = {0};
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(stdout); exit(0); }
@@ -4997,34 +5093,10 @@ static int parse_args(int argc, char **argv) {
             }
             val = argv[++i];
         }
-        switch (spec->kind) {
-        case ARG_STR:
-            *(const char **)spec->dst = val;
-            break;
-        case ARG_INT:
-            *(int *)spec->dst = atoi(val);
-            break;
-        case ARG_LONG:
-            *(long *)spec->dst = strtol(val, NULL, 10);
-            break;
-        case ARG_BOOL: {
-            int b = 1;
-            if (val) {
-                if (!strcasecmp(val, "false") || !strcmp(val, "0") ||
-                    !strcasecmp(val, "no") || !strcasecmp(val, "off")) b = 0;
-                else if (!strcasecmp(val, "true") || !strcmp(val, "1") ||
-                         !strcasecmp(val, "yes") || !strcasecmp(val, "on")) b = 1;
-                else {
-                    fprintf(stderr, "betterAnusbis: --%s wants true or false, got %s\n", name, val);
-                    return -1;
-                }
-            }
-            if (negated) b = !b;
-            *(int *)spec->dst = b;
-            break;
-        }
-        }
+        if (arg_apply(spec, val, negated) != 0) return -1;
+        seen[spec - args] = 1;
     }
+    apply_environment(seen, sizeof seen / sizeof seen[0]);
     if (stateless_arg >= 0) cfg.stateful = !stateless_arg;
     return 0;
 }
@@ -5074,6 +5146,35 @@ static int load_secret(const char *path, uint8_t out[32]) {
     return 0;
 }
 
+/* --healthcheck: GET /healthz on the metrics listener and exit 0 or 1. It has
+ * to be a separate process because that is how a supervisor asks "are you
+ * alive" without knowing anything about this program. */
+static int do_healthcheck(const char *addr) {
+    struct sockaddr_in6 sa;
+    if (parse_listen(addr, &sa) != 0) {
+        fprintf(stderr, "betterAnusbis: --healthcheck wants ADDR:PORT\n");
+        return 2;
+    }
+    if (IN6_IS_ADDR_UNSPECIFIED(&sa.sin6_addr)) sa.sin6_addr = in6addr_loopback;
+    int fd = socket(AF_INET6, SOCK_STREAM, 0);
+    if (fd < 0) return 1;
+    if (connect(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
+        fprintf(stderr, "betterAnusbis: healthcheck cannot reach %s: %s\n", addr, strerror(errno));
+        close(fd);
+        return 1;
+    }
+    const char *req = "GET /healthz HTTP/1.1\r\nHost: healthcheck\r\nConnection: close\r\n\r\n";
+    if (write(fd, req, strlen(req)) < 0) { close(fd); return 1; }
+    char buf[256];
+    ssize_t n = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (n <= 0) return 1;
+    buf[n] = 0;
+    const char *sp = strchr(buf, ' ');
+    int status = sp ? atoi(sp + 1) : 0;
+    return status == 200 ? 0 : 1;
+}
+
 static volatile sig_atomic_t hup_pending;
 
 static void on_reload(int sig) {
@@ -5115,6 +5216,15 @@ static void print_settings(void) {
 
 int main(int argc, char **argv) {
     if (parse_args(argc, argv) != 0) return 2;
+
+    if (cfg.healthcheck) {
+        const char *addr = cfg.metrics_bind && *cfg.metrics_bind ? cfg.metrics_bind
+                                                                 : "127.0.0.1:9090";
+        int rc = do_healthcheck(addr);
+        fprintf(stderr, "betterAnusbis: healthcheck %s %s\n", addr, rc == 0 ? "ok" : "failed");
+        return rc;
+    }
+
     if (!cfg.target) {
         fprintf(stderr, "betterAnusbis: --target is required. Try --help.\n");
         return 2;

@@ -312,7 +312,8 @@ md5 `925898fa36ea34855d0d1d1e7a6b5b7b`, 3755 lines.
 | `--metrics-bind`, SIGHUP | recorded in 1.1 | unchanged, now covered: seven checks for the metrics listener, and `print_settings` reads the counters |
 | the option parser | hand-written if chain, `--flag value` only | table driven, `--flag=value` too, `--no-flag` / `--flag=false` for every boolean, and the table is the only place a flag is declared |
 
-Still open from the audit: an arbitrary CEL engine and the store backends (bbolt, valkey, S3).
+Still open from the audit: an arbitrary CEL engine, and the bbolt/valkey/S3 store backends (only the file store
+exists, and it shares nothing between replicas).
 
 Closed since then:
 
@@ -331,6 +332,7 @@ Closed since then:
 | forwardAuth | an empty `--target` is auth-check mode: 200 for ALLOW or a valid cookie, the deny status for DENY, 401 `Authorization required`, or a 307 to `--public-url` with the encoded original URL; `X-Original-Uri` becomes the policy's path. Seven checks |
 | OpenGraph passthrough | `--og-passthrough` fetches the protected page once, keeps its `og:` and description tags for `--og-expiry-time`, and injects them into the challenge page's head; `--og-override` replaces them with no fetch at all, which is what upstream's `override` means. Three checks |
 | the css-load extension | `--challenge-extension css-load` puts a stylesheet link on the challenge page and refuses pass-challenge until that link has been fetched, keyed on the challenge ledger. `headless` has no implementation in this tree, and asking for it says so. Five checks |
+| the store, one backend of four | `--store file:PATH` snapshots the challenge ledger and the honeypot counters every five seconds, on SIGTERM, and loads them at startup, so a restart keeps unspent challenges and network reputations. A snapshot, not a journal; no coordination between processes; nothing shared between replicas, which is what bbolt/valkey/S3 are for. Two checks |
 | 8, the keep-alive half | the gate frames each response (Content-Length, chunked with trailers, or no body) and reuses the origin connection from a pool of eight, idle for a minute, with one retry when a pooled connection died quietly (`relay_response` returns -1 only before a byte reaches the client, which is what makes the retry safe). `--target-disable-keepalive` turns it off. Three checks, including a backend that counts its own accept()s |
 | 8, the WebSocket half | an `Upgrade` request is forwarded with its `Connection` and `Upgrade` headers intact, the `101` and its headers are relayed, and the two sockets are then spliced with `poll()` until either closes or five minutes pass in silence. An upgrade needs an ALLOW rule or a valid cookie, because a browser cannot solve a challenge over a socket it has not opened yet. Five checks, including a frame echoed through the tunnel |
 

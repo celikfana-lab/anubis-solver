@@ -866,7 +866,69 @@ def main():
         st, _, body = request("GET", path)
         check("preact wants the verification cookie", st == 403, st)
 
-    # ---- 23. the old flags still behave
+    # ---- 23. forwardAuth: an empty target means auth checks only
+    fwddir = tempfile.mkdtemp()
+    fwdpol = os.path.join(fwddir, "fwd.policy")
+    with open(fwdpol, "w") as f:
+        f.write("allow path prefix /public\ndeny path prefix /private\n")
+
+    def fwd_gate(*extra):
+        proc = subprocess.Popen([os.path.join(HERE, "betterAnusbis"),
+                                 "--listen", f"127.0.0.1:{GATE_PORT}", "--target", "",
+                                 "--difficulty", "6", "--policy", fwdpol, *extra],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", GATE_PORT), 0.2):
+                    return proc
+            except OSError:
+                time.sleep(0.05)
+        return proc
+
+    proc = fwd_gate()
+    try:
+        st, hdrs, body = request("GET", "/")
+        check("forwardAuth answers 401 Authorization required",
+              st == 401 and b"Authorization required" in body, f"{st} {body[:40]}")
+        st, _, body = request("GET", "/public/x")
+        check("an ALLOW rule answers 200 in forwardAuth mode", st == 200 and b"ok" in body, st)
+        st, hdrs, body = request("GET", "/private/y")
+        check("a DENY rule is still a deny", b"denied" in body, f"{st} {body[:40]}")
+        pass
+    finally:
+        proc.terminate()
+        proc.wait(3)
+
+    # a token minted by a normal gate is honoured here when the key is shared
+    secretfile = os.path.join(fwddir, "shared.key")
+    with Gate("--difficulty", "6", "--secret-file", secretfile):
+        status, hdrs, body, ch = solve_once()
+        shared_token = token_of(hdrs)
+        shared_name = AUTH_NAME
+    proc = fwd_gate("--secret-file", secretfile)
+    try:
+        st, _, body = request("GET", "/", headers={"Cookie": f"{shared_name}={shared_token}"})
+        check("a cookie from another gate with the same key answers 200",
+              st == 200 and b"ok" in body, st)
+    finally:
+        proc.terminate()
+        proc.wait(3)
+    proc = fwd_gate("--public-url", "https://gate.example")
+    try:
+        st, hdrs, body = request("GET", "/deep", headers={"X-Forwarded-Proto": "https",
+                                                          "X-Forwarded-Host": "site.example"})
+        loc = header(hdrs, "Location") or ""
+        check("--public-url sends the browser to the challenge page with 307",
+              st == 307 and loc.startswith("https://gate.example/.within.website/?redir=") and
+              "site.example" in loc, f"{st} {loc}")
+        st, _, body = request("GET", "/deep")
+        check("the redirect needs the X-Forwarded headers", st == 400, st)
+    finally:
+        proc.terminate()
+        proc.wait(3)
+
+    # ---- 24. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

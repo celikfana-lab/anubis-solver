@@ -126,6 +126,8 @@ typedef struct {
     const char *impressum_footer;/* HTML shown on every page */
     const char *impressum_title; /* the imprint page's title */
     const char *impressum_body;  /* the imprint page's body */
+    const char *public_url;      /* where this gate is reachable, for forwardAuth */
+    int subrequest;              /* no target: answer auth checks only */
     int jwt_alg;                 /* 0 HS256, 1 HS512, 2 EdDSA */
     EVP_PKEY *jwt_pkey;
     char verify_name[256];       /* the -cookie-verification name, suffix and all */
@@ -1382,17 +1384,23 @@ static void respond(conn *c, int status, const char *reason, const char *content
     if (body && body_len) send_all(c, body, body_len);
 }
 
-static void respond_redirect(conn *c, const char *location, const char *extra_headers) {
+static void respond_redirect_with(conn *c, int status, const char *location,
+                                  const char *extra_headers) {
     char head[4096];
     int n = snprintf(head, sizeof head,
-                     "HTTP/1.1 302 Found\r\n"
+                     "HTTP/1.1 %d %s\r\n"
                      "Location: %s\r\n"
                      "Content-Length: 0\r\n"
                      "Connection: close\r\n"
                      "%s"
                      "\r\n",
-                     location, extra_headers ? extra_headers : "");
+                     status, reason_for(status), location,
+                     extra_headers ? extra_headers : "");
     if (n > 0) send_all(c, head, (size_t)n);
+}
+
+static void respond_redirect(conn *c, const char *location, const char *extra_headers) {
+    respond_redirect_with(c, 302, location, extra_headers);
 }
 
 /* ---------------------------------------------------------------- metrics */
@@ -1771,6 +1779,22 @@ static void proxy_request(conn *c, const request *req, const char *client_ip, co
     close(up);
     if (used) send_all(c, reply, used);
     free(reply);
+}
+
+static void url_encode(const char *in, char *out, size_t cap) {
+    static const char *hex = "0123456789ABCDEF";
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)in; *p && o + 4 < cap; p++) {
+        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || *p == '-' || *p == '.' || *p == '_' || *p == '~') {
+            out[o++] = (char)*p;
+        } else {
+            out[o++] = '%';
+            out[o++] = hex[*p >> 4];
+            out[o++] = hex[*p & 15];
+        }
+    }
+    out[o] = 0;
 }
 
 /* ---------------------------------------------------------------- strings
@@ -5141,6 +5165,66 @@ static void handle_connection(conn *c, const char *peer_ip) {
         if (cfg.verbose) logmsg("honeypot: maze for %s (hit %d in the window)", client_ip, count);
         hp_tarpit(count);
         honeypot_maze(c, idbuf, slash ? slash + 1 : "init", client_ip, count);
+    } else if (cfg.subrequest) {
+        /* forwardAuth: nginx asks "may this request through". The policy sees
+         * the original URI when the proxy passes one along
+         * (lib/policy/checker.go:117-131). */
+        /* header_value hands back one shared buffer, so every value used below
+         * has to be copied before the next lookup */
+        char orig_buf[2048] = "";
+        const char *orig = header_value(&req, "X-Original-Uri");
+        if (!orig || !*orig) orig = header_value(&req, "X-Forwarded-Uri");
+        if (orig) snprintf(orig_buf, sizeof orig_buf, "%s", orig);
+        orig = orig_buf;
+        if (orig && *orig) {
+            snprintf(route_buf, sizeof route_buf, "%s", orig);
+            collapse_slashes(route_buf, req.ppath, sizeof req.ppath);
+            route = route_buf;
+        }
+        int difficulty = cfg.difficulty;
+        int policy_difficulty = 0;
+        const char *algorithm = cfg.algorithm;
+        const locale *loc = pick_locale(&req);
+        rule_action action = policy_decide(&req, client_ip, &policy_difficulty, &algorithm);
+        if (policy_difficulty > 0) difficulty = policy_difficulty;
+        if (action == RULE_DENY) {
+            char msg[512];
+            snprintf(msg, sizeof msg, "betterAnusbis: %s\n%s%s\n", loc->denied,
+                     cfg.webmaster_email && *cfg.webmaster_email ? "contact: " : "",
+                     cfg.webmaster_email && *cfg.webmaster_email ? cfg.webmaster_email : "");
+            __atomic_fetch_add(&m_requests[M_DENIED], 1, __ATOMIC_RELAXED);
+            respond(c, cfg.deny_status, reason_for(cfg.deny_status), NULL, NULL,
+                    msg, strlen(msg));
+        } else if (authenticated || action == RULE_ALLOW) {
+            const char *ok = "ok\n";
+            respond(c, 200, "OK", NULL, NULL, ok, strlen(ok));
+        } else if (cfg.public_url && *cfg.public_url) {
+            /* send the browser to the challenge page on the public URL,
+             * carrying where it wanted to go */
+            char proto_buf[32] = "", host_buf[256] = "";
+            const char *proto = header_value(&req, "X-Forwarded-Proto");
+            if (proto) snprintf(proto_buf, sizeof proto_buf, "%s", proto);
+            const char *host = header_value(&req, "X-Forwarded-Host");
+            if (host) snprintf(host_buf, sizeof host_buf, "%s", host);
+            proto = proto_buf;
+            host = host_buf;
+            char target[1024];
+            if (!proto || !*proto || !host || !*host) {
+                const char *bad = "Missing required X-Forwarded-Proto and X-Forwarded-Host\n";
+                respond(c, 400, "Bad Request", NULL, NULL, bad, strlen(bad));
+            } else {
+                snprintf(target, sizeof target, "%s://%s%s", proto, host,
+                         orig && *orig ? orig : req.path);
+                char encoded[2048], location[3072];
+                url_encode(target, encoded, sizeof encoded);
+                snprintf(location, sizeof location, "%s/.within.website/?redir=%s",
+                         cfg.public_url, encoded);
+                respond_redirect_with(c, 307, location, NULL);
+            }
+        } else {
+            const char *msg = "Authorization required\n";
+            respond(c, 401, "Unauthorized", NULL, NULL, msg, strlen(msg));
+        }
     } else {
         /* The policy is asked before the cookie is looked at, which is Anubis's
          * order: ALLOW forwards, DENY denies even a client that solved a
@@ -5411,7 +5495,11 @@ static void usage(FILE *out) {
         "  --bind-network NAME    tcp (default) or unix\n"
         "  --socket-mode OCTAL    permissions for a unix socket (default 0770)\n"
         "  --metrics-bind-network NAME  tcp (default) or unix, for the metrics listener\n"
-        "  --target URL           the backend to protect (required)\n"
+        "  --target URL           the backend to protect. Leave it empty for\n"
+        "                         forwardAuth mode, where this only answers\n"
+        "                         /api/check and the challenge\n"
+        "  --public-url URL       where this gate is reachable, used to build the\n"
+        "                         forwardAuth redirect\n"
         "  --target-sni NAME      TLS name to send to the target; \"auto\" reuses the\n"
         "                         Host header (default: the host we dialled)\n"
         "  --target-host NAME     Host header to send to the target\n"
@@ -5561,6 +5649,7 @@ static const arg_spec args[] = {
     {"bind-network", ARG_STR, &cfg.bind_network},
     {"socket-mode", ARG_STR, &cfg.socket_mode},
     {"metrics-bind-network", ARG_STR, &cfg.metrics_network},
+    {"public-url", ARG_STR, &cfg.public_url},
     {"forced-language", ARG_STR, &cfg.forced_language},
     {"impressum-footer", ARG_STR, &cfg.impressum_footer},
     {"impressum-page-title", ARG_STR, &cfg.impressum_title},
@@ -5878,9 +5967,13 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-    if (!cfg.target) {
-        fprintf(stderr, "betterAnusbis: --target is required. Try --help.\n");
-        return 2;
+    if (!cfg.target || !*cfg.target) {
+        /* Anubis switches to forwardAuth mode when TARGET is empty
+         * (cmd/anubis/main.go:292,309): there is nothing to proxy to, so the
+         * gate only answers auth checks. */
+        cfg.subrequest = 1;
+        cfg.target = "";
+        logmsg("no target: forwardAuth mode, answering /api/check and the challenge only");
     }
     if (cfg.difficulty < 0 || cfg.difficulty > 64) {
         fprintf(stderr, "betterAnusbis: --difficulty must be 0..64\n");
@@ -5959,7 +6052,13 @@ int main(int argc, char **argv) {
     }
 
     if (cfg.policy_file) policy_load(cfg.policy_file);
-    parse_target(cfg.target);
+    if (cfg.subrequest) {
+        snprintf(cfg.target_host, sizeof cfg.target_host, "%s", "unix");
+        cfg.target_port = 0;
+        cfg.target_tls = 0;
+    } else {
+        parse_target(cfg.target);
+    }
     build_cookie_names();
     if (cfg.hs512_secret && *cfg.hs512_secret) {
         cfg.jwt_alg = 1;

@@ -515,10 +515,34 @@ def main():
                   decide("curl/8.5.0", headers={"X-Firefox-Ai": "1"}))
             check("an empty User-Agent is denied by the rfc-violations rule",
                   decide("") == "deny", decide(""))
+            check("a headers_regex of .* wants the header present, not absent",
+                  decide("curl/8.5.0") == "allow" and
+                  decide("curl/8.5.0", headers={"CF-Worker": "yes"}).startswith("challenge"),
+                  decide("curl/8.5.0"))
+            check("the CF-Worker weight stacks with the other Cloudflare rules",
+                  decide("curl/8.5.0", headers={"CF-Worker": "yes"}) == "challenge fast 6",
+                  decide("curl/8.5.0", headers={"CF-Worker": "yes"}))
+            check("a UA deny outranks the path allows, even on /robots.txt",
+                  decide("GPTBot/1.0", path="/robots.txt") == "deny",
+                  decide("GPTBot/1.0", path="/robots.txt"))
             status, hdrs, body, ch = solve_once(headers={"User-Agent": "Mozilla/5.0 Firefox/128.0"})
             check("a challenge the YAML policy chose is solvable end to end",
                   status == 302 and ch.algorithm == "fast" and ch.difficulty == 2,
                   f"{status} {ch.algorithm} {ch.difficulty}")
+
+    # ---- 13b. a DENY rule is not bypassed by holding a cookie
+    with Gate("--difficulty", "6", "--deny-status", "403",
+              policy="deny ua matches ParityBot\n"):
+        status, hdrs, body, ch = solve_once()
+        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
+                      if "cookie-verification" not in c), "")
+        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}",
+                                                   "User-Agent": "ParityBot/1.0"})
+        check("a DENY rule still denies a client that already solved a challenge",
+              st == 403 and b"denied by policy" in body, st)
+        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        check("and that same cookie is fine for everyone else",
+              st == 200 and b"PAST THE WALL" in body, st)
 
     # ---- 14. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):

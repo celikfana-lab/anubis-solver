@@ -3031,6 +3031,25 @@ static int y_is_block_marker(const char *v) {
 
 static int y_is_literal(const char *v) { return v[0] == '|'; }
 
+/* A sequence item is a map only when it has a YAML mapping colon, which needs a
+ * space or end of line after it. Without that rule, "2001:db8::/32" looks like a
+ * key called 2001 and every IPv6 CIDR in the tree is dropped. */
+static int y_looks_like_pair(const char *s) {
+    int q = 0;
+    for (const char *p = s; *p; p++) {
+        if (q) {
+            if (*p == q) q = 0;
+            continue;
+        }
+        if (*p == '"' || *p == '\'') {
+            q = *p;
+            continue;
+        }
+        if (*p == ':' && (p[1] == ' ' || p[1] == '\t' || p[1] == 0)) return 1;
+    }
+    return 0;
+}
+
 static y_node *y_parse_block(y_file *f, int indent);
 
 /* One `key: value` pair. f->pos already points past the line it came from. */
@@ -3133,7 +3152,7 @@ static y_node *y_parse_seq_body(y_file *f, int indent) {
         if (*rest == 0) {
             int ni = y_next_indent(f);
             item = (ni > item_indent) ? y_parse_block(f, ni) : y_new(Y_SCALAR);
-        } else if (strchr(rest, ':') && rest[0] != '"' && rest[0] != '\'') {
+        } else if (y_looks_like_pair(rest) && rest[0] != '"' && rest[0] != '\'') {
             item = y_parse_map_body(f, content_indent, rest);
         } else if (rest[0] == '"' || rest[0] == '\'') {
             /* a quoted scalar may still be a key, but only if a colon follows
@@ -3555,17 +3574,16 @@ static int ex_eval(exctx *cx, const char *raw) {
     if (!*s) return (cx->ok = 0), 0;
 
     size_t at;
-    if (ex_find_top(s, "||", &at)) {
+    if (ex_find_top(s, "||", &at) || ex_find_top(s, "&&", &at)) {
+        int is_or = s[at] == '|';
         char left[1024];
         snprintf(left, sizeof left, "%.*s", (int)at, s);
         ex_rtrim(left);
-        return ex_eval(cx, left) || ex_eval(cx, s + at + 2);
-    }
-    if (ex_find_top(s, "&&", &at)) {
-        char left[1024];
-        snprintf(left, sizeof left, "%.*s", (int)at, s);
-        ex_rtrim(left);
-        return ex_eval(cx, left) && ex_eval(cx, s + at + 2);
+        /* both sides, always: short-circuiting here would hide an unsupported
+         * sub-expression from the load-time check and leave a rule inert */
+        int a = ex_eval(cx, left);
+        int b = ex_eval(cx, s + at + 2);
+        return is_or ? (a || b) : (a && b);
     }
     if (s[0] == '!' && s[1] != '=') return !ex_eval(cx, s + 1);
     return ex_leaf(cx, s);
@@ -3581,6 +3599,7 @@ typedef struct {
     struct {
         char name[64];
         regex_t re;
+        int exists_only;        /* the value was ".*": present and non-empty */
     } hdr[MAX_RULE_HEADERS];
     int nhdr;
     char expr[1024];
@@ -3626,10 +3645,10 @@ static char *re2_to_posix(const char *pat, int *case_insensitive) {
             continue;
         }
         if (!strncmp(pat + i, "(?i:", 4)) {
-            /* POSIX has no partial case folding. Folding the whole pattern is
-             * what these patterns mean in practice; say so once. */
-            if (o == 0) *case_insensitive = 1;
-            else yml_unsupported_reported = 1;
+            /* POSIX has no partial case folding, so the whole pattern is
+             * compiled case-insensitively. Every such pattern in the tree wraps
+             * the whole expression, so this is what it meant. */
+            *case_insensitive = 1;
             out[o++] = '(';
             i += 3;
             continue;
@@ -3741,7 +3760,14 @@ static void yml_load_rule(const y_node *n, const char *from) {
         for (const y_node *h = hdr->child; h && r.nhdr < MAX_RULE_HEADERS; h = h->next) {
             if (!h->key) continue;
             snprintf(r.hdr[r.nhdr].name, sizeof r.hdr[r.nhdr].name, "%s", h->key);
-            if (yml_compile(&r.hdr[r.nhdr].re, y_str(h, ""), NULL) != 0) {
+            const char *hpat = y_str(h, "");
+            if (!strcmp(hpat, ".*")) {
+                /* lib/policy/checker.go:171-174 treats .* this way */
+                r.hdr[r.nhdr].exists_only = 1;
+                r.nhdr++;
+                continue;
+            }
+            if (yml_compile(&r.hdr[r.nhdr].re, hpat, NULL) != 0) {
                 logmsg("policy: rule '%s' has a headers_regex that cannot be used, rule skipped", name);
                 goto fail;
             }
@@ -4011,7 +4037,11 @@ static int yml_rule_matches(const yrule *r, const request *rq, const char *ip,
     }
     for (int i = 0; i < r->nhdr; i++) {
         const char *v = header_value(rq, r->hdr[i].name);
-        if (!v || regexec(&r->hdr[i].re, v, 0, NULL, 0) != 0) return 0;
+        if (r->hdr[i].exists_only) {
+            if (!v || !*v) return 0;          /* present and non-empty */
+        } else if (!v || regexec(&r->hdr[i].re, v, 0, NULL, 0) != 0) {
+            return 0;
+        }
     }
     if (r->cidr_len) {
         int hit = 0;
@@ -4608,12 +4638,11 @@ static void handle_connection(conn *c, const char *peer_ip) {
         if (cfg.verbose) logmsg("honeypot: maze for %s (hit %d in the window)", client_ip, count);
         hp_tarpit(count);
         honeypot_maze(c, idbuf, slash ? slash + 1 : "init", client_ip, count);
-    } else if (authenticated) {
-        __atomic_fetch_add(&m_requests[M_PROXIED], 1, __ATOMIC_RELAXED);
-        __atomic_fetch_add(&m_proxied, 1, __ATOMIC_RELAXED);
-        proxy_request(c, &req, client_ip, upstream_path);
     } else {
-        /* issue a challenge — unless the policy says otherwise */
+        /* The policy is asked before the cookie is looked at, which is Anubis's
+         * order: ALLOW forwards, DENY denies even a client that solved a
+         * challenge earlier, and a CHALLENGE result is the only one a valid
+         * cookie satisfies. */
         int difficulty = cfg.difficulty;
         int policy_difficulty = 0;
         const char *algorithm = cfg.algorithm;
@@ -4631,6 +4660,12 @@ static void handle_connection(conn *c, const char *peer_ip) {
             __atomic_fetch_add(&m_requests[M_DENIED], 1, __ATOMIC_RELAXED);
             respond(c, cfg.deny_status, reason_for(cfg.deny_status), NULL, NULL,
                     msg, strlen(msg));
+            goto done;
+        }
+        if (authenticated) {
+            __atomic_fetch_add(&m_requests[M_PROXIED], 1, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&m_proxied, 1, __ATOMIC_RELAXED);
+            proxy_request(c, &req, client_ip, upstream_path);
             goto done;
         }
         if (policy_difficulty > 0) difficulty = policy_difficulty;

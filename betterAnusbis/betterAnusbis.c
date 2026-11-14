@@ -49,7 +49,8 @@
 
 /* ----------------------------------------------------------------- config */
 
-#define VERSION "1.15.0"
+#define VERSION "1.50.0"
+#define CODENAME "headslam"
 #define API_PREFIX "/.within.website/x/cmd/anubis/api/"
 #define DEFAULT_COOKIE_PREFIX "techaro.lol-anubis"
 #define MAX_HEADER 32768
@@ -6878,7 +6879,8 @@ static void parse_target(const char *url) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "betterAnusbis " VERSION " - an Anubis-compatible proof-of-work gate, in one C file\n"
+        "betterAnusbis " VERSION " \"" CODENAME "\" - an Anubis-compatible proof-of-work gate,\n"
+        "in one C file\n"
         "\n"
         "usage: betterAnusbis --target http://127.0.0.1:3000 [options]\n"
         "\n"
@@ -7140,7 +7142,10 @@ static int parse_args(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(stdout); exit(0); }
-        if (!strcmp(a, "-V") || !strcmp(a, "--version")) { puts(VERSION); exit(0); }
+        if (!strcmp(a, "-V") || !strcmp(a, "--version")) {
+            printf("%s \"%s\"\n", VERSION, CODENAME);
+            exit(0);
+        }
         if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) { cfg.verbose = 1; continue; }
         if (strncmp(a, "--", 2) != 0) {
             fprintf(stderr, "betterAnusbis: unknown option %s (try --help)\n", a);

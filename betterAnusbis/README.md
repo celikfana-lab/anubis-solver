@@ -1,5 +1,7 @@
 # betterAnusbis
 
+**1.50.0 "headslam"**
+
 An Anubis-compatible proof-of-work gate in **one C file**. It issues the same
 challenges, on the same routes, with the same JSON and the same cookie name — so
 every existing Anubis client, including ours, works against it unchanged — and it
@@ -15,7 +17,7 @@ solves itself and you land on your backend.
 
 ```
 $ ./betterAnusbis --target http://127.0.0.1:3000 --algorithm sha256 --difficulty 12
-[betterAnusbis] betterAnusbis 1.15.0 listening on :8080 -> http://127.0.0.1:3000 (sha256, difficulty 12)
+[betterAnusbis] betterAnusbis 1.50.0 listening on :8080 -> http://127.0.0.1:3000 (sha256, difficulty 12)
 [betterAnusbis] open http://127.0.0.1:8080/ and the challenge page solves it for you
 ```
 

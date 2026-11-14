@@ -514,7 +514,7 @@ def main():
               'anubis_challenges_issued{method="sha256"} 1' in metrics
               and 'anubis_challenges_validated{method="sha256"} 1' in metrics, metrics)
         check("/metrics carries the build identity",
-              'betteranusbis_build_info{version="1.15.0"' in metrics, metrics[:120])
+              'betteranusbis_build_info{version="1.50.0"' in metrics, metrics[:120])
     with Gate("--difficulty", "6", "--metrics-bind", f"127.0.0.1:{METRICS_PORT}",
               policy="deny ua contains ParityBot\n"):
         request("GET", "/", headers={"User-Agent": "ParityBot/1.0"})

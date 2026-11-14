@@ -38,7 +38,12 @@ slow: betterAnusbis wasm-kernels
 	./betterAnusbis --listen 127.0.0.1:4949 --target $(TARGET) \
 	    --algorithm hashx --difficulty $(DIFFICULTY)
 
+# The flags taken from cmd/anubis, checked on the wire. Starts its own backend
+# and its own gate, so it needs nothing running.
+test-parity: betterAnusbis
+	python3 test_parity.py
+
 clean:
 	rm -f betterAnusbis
 
-.PHONY: clean wasm-kernels slow
+.PHONY: clean wasm-kernels slow test-parity

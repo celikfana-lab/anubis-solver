@@ -37,6 +37,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <ctype.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
@@ -51,6 +52,9 @@
 #define MAX_BODY (8u << 20)      /* requests we are willing to buffer */
 #define MAX_REPLY (64u << 20)    /* backend responses we are willing to buffer */
 #define COOKIE_TTL 604800        /* one week, like Anubis's default */
+#define MAX_RULES 64
+#define MAX_REDIRECT_PATTERNS 32
+#define MAX_GLOB_STARS 4         /* Anubis's own limit in REDIRECT_DOMAINS */
 
 typedef struct {
     const char *listen;
@@ -74,6 +78,30 @@ typedef struct {
     int stateful;                /* keep issued challenges so they cannot be replayed */
     int target_insecure;         /* skip backend certificate verification */
     const char *web_dir;         /* where the wasm kernels are served from */
+
+    /* Deployment shape. These exist because the flags behind them exist in
+     * cmd/anubis, and a gate that cannot be dropped in behind an existing
+     * nginx config is a gate nobody deploys. */
+    const char *cookie_domain;   /* "" = host-only cookie */
+    int cookie_secure;           /* -1: auto, on when we serve TLS; 0/1: forced */
+    int cookie_http_only;        /* the page never reads the auth cookie */
+    const char *cookie_same_site;/* default, lax, strict, none */
+    int cookie_partitioned;      /* CHIPS; dropped when the cookie is not Secure */
+    long cookie_ttl;             /* seconds; 0 makes it a session cookie */
+    const char *base_prefix;     /* "" or "/prefix", anubis --base-prefix */
+    int strip_base_prefix;       /* also strip it before the target */
+    const char *real_ip_header;  /* anubis --custom-real-ip-header */
+    int use_remote_address;      /* ignore XFF and the custom header entirely */
+    int xff_strip_private;       /* anubis --xff-strip-private (default on) */
+    const char *redirect_domains;/* extra hosts redir may point at, glob, comma list */
+    int challenge_status;        /* status_codes.CHALLENGE, default 200 */
+    int deny_status;             /* status_codes.DENY, default 200 like Anubis */
+    int serve_robots_txt;        /* anubis --serve-robots-txt */
+    const char *target_sni;      /* anubis --target-sni, "auto" = the Host header */
+    const char *target_host_hdr; /* anubis --target-host, overrides the Host header */
+    int debug_benchmark_js;      /* anubis --debug-benchmark-js: always challenge */
+    const char *metrics_bind;    /* "" = no metrics listener at all */
+    const char *jwt_restrict_hdr;/* bind the cookie to the client address; "" = off */
 } config;
 
 static config cfg = {
@@ -92,6 +120,26 @@ static config cfg = {
     .stateful = 1,               /* a spent challenge stays spent, like Anubis */
     .target_insecure = 0,
     .web_dir = NULL,
+    .cookie_domain = "",
+    .cookie_secure = -1,         /* Secure when we serve TLS, not before */
+    .cookie_http_only = 1,
+    .cookie_same_site = "lax",
+    .cookie_partitioned = 1,     /* upstream's default; only emitted with Secure */
+    .cookie_ttl = COOKIE_TTL,
+    .base_prefix = "",
+    .strip_base_prefix = 0,
+    .real_ip_header = NULL,
+    .use_remote_address = 0,
+    .xff_strip_private = 1,
+    .redirect_domains = NULL,
+    .challenge_status = 200,     /* status_codes.CHALLENGE in Anubis's policy */
+    .deny_status = 200,          /* status_codes.DENY, which is also 200 there */
+    .serve_robots_txt = 0,
+    .target_sni = NULL,
+    .target_host_hdr = NULL,
+    .debug_benchmark_js = 0,
+    .metrics_bind = NULL,        /* upstream defaults to :9090, we default to off */
+    .jwt_restrict_hdr = "X-Real-IP",
 };
 
 static void logmsg(const char *fmt, ...) {
@@ -223,15 +271,24 @@ static int hmac_sha256(const uint8_t *key, size_t keylen, const uint8_t *msg, si
 /* ------------------------------------------------------------ the cookie */
 
 /* A JWT HS256 with the claims Anubis uses, so tools that expect one can read it. */
-static int sign_token(char *out, size_t cap, const char *challenge_id) {
-    char payload[512];
+static int sign_token(char *out, size_t cap, const char *challenge_id,
+                      const char *restrict_to) {
+    char payload[768];
     time_t now = time(NULL);
-    /* policyRule is Anubis's rule hash; here it stands for the algorithm+difficulty */
+    /* policyRule is Anubis's rule hash; here it stands for the algorithm+difficulty.
+     * Anubis binds the token to the client by default (--jwt-restriction-header,
+     * X-Real-IP); so do we, because a cookie that works from any address is a
+     * cookie that works from whoever steals it. */
+    char restrict_part[128] = "";
+    if (restrict_to && *restrict_to && cfg.jwt_restrict_hdr && *cfg.jwt_restrict_hdr)
+        snprintf(restrict_part, sizeof restrict_part, ",\"restrict\":\"%s\"", restrict_to);
     snprintf(payload, sizeof payload,
              "{\"challenge\":\"%s\",\"method\":\"%s\",\"policyRule\":\"rule-0\","
-             "\"action\":\"CHALLENGE\",\"iat\":%lld,\"exp\":%lld}",
+             "\"action\":\"CHALLENGE\",\"iat\":%lld,\"exp\":%lld%s}",
              challenge_id ? challenge_id : "issued", cfg.algorithm,
-             (long long)now, (long long)(now + COOKIE_TTL));
+             (long long)now,
+             (long long)(now + (cfg.cookie_ttl > 0 ? cfg.cookie_ttl : COOKIE_TTL)),
+             restrict_part);
 
     const char *header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
     char h64[256], p64[768];
@@ -249,7 +306,7 @@ static int sign_token(char *out, size_t cap, const char *challenge_id) {
     return 0;
 }
 
-static int verify_token(const char *token) {
+static int verify_token(const char *token, const char *client_ip) {
     const char *dot1 = strchr(token, '.');
     if (!dot1) return 0;
     const char *dot2 = strchr(dot1 + 1, '.');
@@ -278,9 +335,22 @@ static int verify_token(const char *token) {
     if (n < 0) return 0;
     raw[n] = 0;
     char *exp = strstr((char *)raw, "\"exp\":");
-    if (!exp) return 1;                              /* Anubis requires exp; we accept either */
-    long long when = atoll(exp + 6);
-    return when > (long long)time(NULL);
+    if (exp) {
+        long long when = atoll(exp + 6);
+        if (when <= (long long)time(NULL)) return 0;
+    }
+    /* A token minted with a restriction only works for that address. Tokens from
+     * before this check existed carry no claim and stay valid, which is what
+     * makes the change deployable. */
+    char *restrict_claim = strstr((char *)raw, "\"restrict\":\"");
+    if (restrict_claim && cfg.jwt_restrict_hdr && *cfg.jwt_restrict_hdr) {
+        const char *want = restrict_claim + strlen("\"restrict\":\"");
+        const char *end = strchr(want, '"');
+        if (!end) return 0;
+        size_t n = (size_t)(end - want);
+        if (!client_ip || strlen(client_ip) != n || strncmp(want, client_ip, n) != 0) return 0;
+    }
+    return 1;
 }
 
 static const char *find_cookie(const char *headers, const char *name, char *out, size_t cap) {
@@ -455,6 +525,32 @@ typedef struct {
 static hp_entry hp_table[HP_BUCKETS];
 static pthread_mutex_t hp_lock = PTHREAD_MUTEX_INITIALIZER;
 static long long hp_hits_total;
+
+/* ---------------------------------------------------------------- metrics
+ *
+ * Upstream serves Prometheus metrics on its own listener (--metrics-bind, :9090
+ * by default) plus /healthz. The names follow lib/anubis.go so an existing
+ * dashboard keeps working; the labels are fewer, because there is no ASN and no
+ * asn_description to fill in.
+ *
+ * The listener is off unless --metrics-bind is given. Anubis opening :9090 to
+ * the world by default is not a habit worth copying: those counters describe
+ * your traffic and nothing here authenticates the reader.
+ */
+enum {
+    M_CHALLENGED, M_ALLOWED, M_PROXIED, M_DENIED, M_API, M_STATIC, M_HONEYPOT,
+    M_RESULTS
+};
+static const char *const m_result_names[M_RESULTS] = {
+    "challenged", "allowed", "proxied", "denied", "api", "static", "honeypot"
+};
+static unsigned long long m_requests[M_RESULTS];
+static unsigned long long m_issued, m_validated, m_failed, m_proxied;
+static int rule_count;          /* defined with the rule table, far below */
+static int default_action;      /* ditto, initialised down there too */
+/* policy results, by rule index (MAX_RULES is the "default" slot) and action */
+static unsigned long long m_policy[MAX_RULES + 1][4];
+static const char *const m_policy_actions[4] = {"ALLOW", "DENY", "CHALLENGE", "WEIGH"};
 static long long hp_networks_flagged;
 
 /* IPv4 /24, IPv6 /64 as one 64-bit key (the IPv4 case leaves the top bits zero). */
@@ -695,6 +791,299 @@ static const char *header_value(const request *req, const char *name) {
     return NULL;
 }
 
+/* ------------------------------------------------------- response helpers */
+
+static void sb_app(char *buf, size_t cap, size_t *len, const char *fmt, ...) {
+    if (*len + 1 >= cap) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf + *len, cap - *len, fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+        *len += (size_t)n;
+        if (*len > cap - 1) *len = cap - 1;
+    }
+}
+
+static const char *reason_for(int status) {
+    switch (status) {
+    case 200: return "OK";
+    case 201: return "Created";
+    case 202: return "Accepted";
+    case 204: return "No Content";
+    case 301: return "Moved Permanently";
+    case 302: return "Found";
+    case 303: return "See Other";
+    case 307: return "Temporary Redirect";
+    case 308: return "Permanent Redirect";
+    case 400: return "Bad Request";
+    case 401: return "Unauthorized";
+    case 403: return "Forbidden";
+    case 404: return "Not Found";
+    case 405: return "Method Not Allowed";
+    case 408: return "Request Timeout";
+    case 418: return "I'm a teapot";
+    case 429: return "Too Many Requests";
+    case 500: return "Internal Server Error";
+    case 502: return "Bad Gateway";
+    case 503: return "Service Unavailable";
+    case 504: return "Gateway Timeout";
+    default: return status >= 400 ? "Error" : "OK";
+    }
+}
+
+/* --------------------------------------------------------------- cookies */
+
+/* One place decides the cookie attributes, because every response that sets the
+ * auth cookie has to agree on them.
+ *
+ * Two deliberate differences from Anubis's defaults: no Secure unless we are
+ * actually serving TLS (a Secure cookie handed out over plain HTTP is silently
+ * dropped by the browser, and this gate is often run on loopback behind a TLS
+ * terminator), and HttpOnly on by default (nothing in the page reads the auth
+ * cookie; the -cookie-verification marker that the page does look at never gets
+ * HttpOnly, so that is not affected).
+ */
+static int cookie_use_secure(void) {
+    if (cfg.cookie_secure >= 0) return cfg.cookie_secure;
+    return cfg.tls_cert != NULL;
+}
+
+/* max_age > 0 sets Max-Age, 0 makes it an immediate delete, < 0 a session cookie. */
+static void cookie_attrs(char *out, size_t cap, long max_age) {
+    int secure = cookie_use_secure();
+    const char *ss = cfg.cookie_same_site && *cfg.cookie_same_site ? cfg.cookie_same_site : "lax";
+    const char *same = "";
+    if (!strcasecmp(ss, "none")) same = secure ? "None" : "Lax";   /* None needs Secure */
+    else if (!strcasecmp(ss, "lax")) same = "Lax";
+    else if (!strcasecmp(ss, "strict")) same = "Strict";
+    else if (!strcasecmp(ss, "default")) same = "";
+
+    size_t len = 0;
+    out[0] = 0;
+    sb_app(out, cap, &len, "; Path=/");
+    if (cfg.cookie_domain && *cfg.cookie_domain)
+        sb_app(out, cap, &len, "; Domain=%s", cfg.cookie_domain);
+    if (max_age >= 0) sb_app(out, cap, &len, "; Max-Age=%ld", max_age);
+    if (*same) sb_app(out, cap, &len, "; SameSite=%s", same);
+    if (secure) sb_app(out, cap, &len, "; Secure");
+    if (cfg.cookie_http_only) sb_app(out, cap, &len, "; HttpOnly");
+    /* CHIPS: Partitioned is only honoured on a Secure cookie */
+    if (cfg.cookie_partitioned && secure) sb_app(out, cap, &len, "; Partitioned");
+}
+
+/* ---------------------------------------------------------------- the client IP
+ *
+ * Anubis reads X-Forwarded-For and flattens it: from right to left, the first
+ * address that is not one of its own hops is the client. CGNAT and link-local
+ * hops are always skipped, RFC1918 ones are skipped unless --xff-strip-private
+ * is off.
+ *
+ * One deliberate difference: we only believe the header when the peer is itself
+ * loopback or private, which is what a proxy on the same host or LAN looks like.
+ * Anubis believes it from anyone, which turns a directly exposed gate into a
+ * client-IP forgery machine. A proxy on a public address needs
+ * --custom-real-ip-header, exactly as the upstream docs advise.
+ */
+#define ADDR_PRIVATE 1
+#define ADDR_CGNAT 2
+#define ADDR_LOOPBACK 4
+#define ADDR_LINKLOCAL 8
+
+static int addr_class(const char *ip) {
+    struct in_addr v4;
+    struct in6_addr v6;
+    if (!strchr(ip, ':')) {
+        if (inet_pton(AF_INET, ip, &v4) != 1) return 0;
+        uint32_t a = ntohl(v4.s_addr);
+        if ((a >> 24) == 127) return ADDR_LOOPBACK | ADDR_PRIVATE;
+        if ((a >> 24) == 10) return ADDR_PRIVATE;        /* 10.0.0.0/8 */
+        if ((a >> 20) == 0xAC1) return ADDR_PRIVATE;     /* 172.16.0.0/12 */
+        if ((a >> 16) == 0xC0A8) return ADDR_PRIVATE;    /* 192.168.0.0/16 */
+        if ((a >> 22) == 0x191) return ADDR_CGNAT;       /* 100.64.0.0/10 */
+        if ((a >> 16) == 0xA9FE) return ADDR_LINKLOCAL;  /* 169.254.0.0/16 */
+        return 0;
+    }
+    if (inet_pton(AF_INET6, ip, &v6) != 1) return 0;
+    static const uint8_t loop[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1};
+    static const uint8_t mapped[12] = {0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+    if (!memcmp(&v6, loop, 16)) return ADDR_LOOPBACK | ADDR_PRIVATE;
+    if ((v6.s6_addr[0] & 0xfe) == 0xfc) return ADDR_PRIVATE;              /* fc00::/7 */
+    if (v6.s6_addr[0] == 0xfe && (v6.s6_addr[1] & 0xc0) == 0x80) return ADDR_LINKLOCAL;
+    if (!memcmp(v6.s6_addr, mapped, 12)) {
+        char v4s[32];
+        snprintf(v4s, sizeof v4s, "%u.%u.%u.%u", v6.s6_addr[12], v6.s6_addr[13],
+                 v6.s6_addr[14], v6.s6_addr[15]);
+        return addr_class(v4s);
+    }
+    return 0;
+}
+
+/* One list element to a bare address: trims spaces, drops "[..]" and an IPv4 port. */
+static void addr_token(char *out, size_t cap, const char *s, size_t n) {
+    while (n && (*s == ' ' || *s == '\t')) { s++; n--; }
+    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t' || s[n - 1] == '\r')) n--;
+    if (n && s[0] == '[') {
+        const char *close = memchr(s, ']', n);
+        if (close) { n = (size_t)(close - s) - 1; s++; }
+    } else {
+        const char *colon = memchr(s, ':', n);
+        if (colon && !memchr(colon + 1, ':', n - (size_t)(colon - s) - 1))
+            n = (size_t)(colon - s);       /* exactly one colon: it is a port */
+    }
+    if (n >= cap) n = cap - 1;
+    memcpy(out, s, n);
+    out[n] = 0;
+}
+
+/* A dual-stack listener reports an IPv4 client as ::ffff:a.b.c.d. Left alone it
+ * breaks every CIDR rule and the honeypot's /24 bucketing, so it is folded back
+ * to the dotted form before anyone looks at it. */
+static void normalize_ip(char *ip, size_t cap) {
+    struct in6_addr v6;
+    static const uint8_t mapped[12] = {0,0,0,0,0,0,0,0,0,0,0xff,0xff};
+    if (!strchr(ip, ':')) return;
+    if (inet_pton(AF_INET6, ip, &v6) != 1) return;
+    if (memcmp(v6.s6_addr, mapped, 12) != 0) return;
+    char v4[32];
+    snprintf(v4, sizeof v4, "%u.%u.%u.%u", v6.s6_addr[12], v6.s6_addr[13],
+             v6.s6_addr[14], v6.s6_addr[15]);
+    snprintf(ip, cap, "%s", v4);
+}
+
+static const char *client_address(const request *req, const char *peer, char *out, size_t cap) {
+    out[0] = 0;
+    if (!cfg.use_remote_address) {
+        if (cfg.real_ip_header && *cfg.real_ip_header) {
+            const char *v = header_value(req, cfg.real_ip_header);
+            if (v && *v) {
+                char tok[64];
+                addr_token(tok, sizeof tok, v, strlen(v));
+                if (tok[0]) { snprintf(out, cap, "%s", tok); normalize_ip(out, cap); return out; }
+            }
+        }
+        const char *xff = header_value(req, "X-Forwarded-For");
+        if (xff && *xff && (addr_class(peer) & ADDR_PRIVATE)) {
+            char copy[512];
+            snprintf(copy, sizeof copy, "%s", xff);
+            char *tokens[16];
+            int ntok = 0;
+            for (char *p = copy; p && *p && ntok < 16; ) {
+                tokens[ntok++] = p;
+                char *comma = strchr(p, ',');
+                if (!comma) break;
+                *comma = 0;
+                p = comma + 1;
+            }
+            for (int i = ntok - 1; i >= 0; i--) {
+                char tok[64];
+                addr_token(tok, sizeof tok, tokens[i], strlen(tokens[i]));
+                if (!tok[0]) continue;
+                snprintf(out, cap, "%s", tok);
+                normalize_ip(out, cap);
+                int cls = addr_class(tok);
+                if (cls == 0) return out;                        /* public: this is the client */
+                if (cls & ADDR_CGNAT) continue;
+                if (cls & ADDR_LINKLOCAL) continue;
+                if ((cls & ADDR_PRIVATE) && cfg.xff_strip_private) continue;
+                return out;
+            }
+            if (out[0]) return out;      /* every hop was ours: keep the leftmost */
+        }
+    }
+    snprintf(out, cap, "%s", peer);
+    normalize_ip(out, cap);
+    return out;
+}
+
+/* ------------------------------------------------------------- the redirect
+ *
+ * Anubis allows its post-challenge redirect to point anywhere unless
+ * REDIRECT_DOMAINS is set, which makes the challenge endpoint a redirector for
+ * anyone who can hand you a pre-solved link. Here the default is the strict
+ * one: a path on this host, or a host the operator named with
+ * --redirect-domains (comma list, glob, at most four stars each, same limit as
+ * Anubis).
+ */
+static int glob_match(const char *pat, const char *text, int stars) {
+    while (*pat) {
+        if (*pat == '*') {
+            if (stars <= 0) return 0;
+            while (*pat == '*') pat++;
+            if (!*pat) return 1;
+            for (const char *t = text;; t++) {
+                if (glob_match(pat, t, stars - 1)) return 1;
+                if (!*t) return 0;
+            }
+        }
+        if (!*text) return 0;
+        if (tolower((unsigned char)*pat) != tolower((unsigned char)*text)) return 0;
+        pat++;
+        text++;
+    }
+    return *text == 0;
+}
+
+static int host_in_redirect_list(const char *authority) {
+    if (!cfg.redirect_domains || !*cfg.redirect_domains || !*authority) return 0;
+    char copy[1024];
+    snprintf(copy, sizeof copy, "%s", cfg.redirect_domains);
+    int hits = 0;
+    for (char *p = copy; p && *p && hits < MAX_REDIRECT_PATTERNS;) {
+        char *comma = strchr(p, ',');
+        if (comma) *comma = 0;
+        char *pat = p;
+        while (*pat == ' ' || *pat == '\t') pat++;
+        size_t n = strlen(pat);
+        while (n && (pat[n - 1] == ' ' || pat[n - 1] == '\t')) pat[--n] = 0;
+        if (*pat) {
+            int stars = 0;
+            for (const char *q = pat; *q; q++) if (*q == '*') stars++;
+            hits++;
+            if (stars <= MAX_GLOB_STARS && glob_match(pat, authority, stars)) return 1;
+        }
+        p = comma ? comma + 1 : NULL;
+    }
+    return 0;
+}
+
+static const char *safe_redirect(const request *req, const char *redir, char *out, size_t cap) {
+    if (!redir || !*redir) return "/";
+    /* anything that could split the response header is not a redirect */
+    for (const char *p = redir; *p; p++)
+        if ((unsigned char)*p < 0x20 || *p == 0x7f || *p == ' ') return "/";
+    if (redir[0] == '/') {
+        if (redir[1] != '/' && redir[1] != '\\') {
+            snprintf(out, cap, "%s", redir);
+            return out;
+        }
+        /* scheme-relative: "//host/path", the authority is in the path */
+        char authority[256];
+        size_t i = 0;
+        for (const char *p = redir + 2; *p && *p != '/' && *p != '?' && i < sizeof authority - 1; p++)
+            authority[i++] = *p;
+        authority[i] = 0;
+        if (host_in_redirect_list(authority)) { snprintf(out, cap, "%s", redir); return out; }
+        return "/";
+    }
+    const char *sep = strstr(redir, "://");
+    if (!sep) return "/";
+    const char *auth = sep + 3;
+    const char *end = strpbrk(auth, "/?#");
+    size_t alen = end ? (size_t)(end - auth) : strlen(auth);
+    char authority[512];
+    if (alen >= sizeof authority) return "/";
+    memcpy(authority, auth, alen);
+    authority[alen] = 0;
+    char *at = strrchr(authority, '@');
+    if (at) memmove(authority, at + 1, strlen(at + 1) + 1);   /* drop userinfo */
+    if (!*authority) return "/";
+    const char *host = header_value(req, "Host");
+    if (host && *host && !strcasecmp(authority, host)) { snprintf(out, cap, "%s", redir); return out; }
+    if (host_in_redirect_list(authority)) { snprintf(out, cap, "%s", redir); return out; }
+    return "/";
+}
+
 static const char *query_param(const char *query, const char *name, char *out, size_t cap) {
     size_t namelen = strlen(name);
     const char *p = query;
@@ -760,6 +1149,121 @@ static void respond_redirect(conn *c, const char *location, const char *extra_he
     if (n > 0) send_all(c, head, (size_t)n);
 }
 
+/* ---------------------------------------------------------------- metrics */
+
+static size_t render_metrics(char *buf, size_t cap) {
+    size_t o = 0;
+    sb_app(buf, cap, &o,
+           "# HELP anubis_challenges_issued The total number of challenges issued\n"
+           "# TYPE anubis_challenges_issued counter\n"
+           "anubis_challenges_issued{method=\"%s\"} %llu\n"
+           "# HELP anubis_challenges_validated The total number of challenges validated\n"
+           "# TYPE anubis_challenges_validated counter\n"
+           "anubis_challenges_validated{method=\"%s\"} %llu\n"
+           "# HELP anubis_failed_validations The total number of failed validations\n"
+           "# TYPE anubis_failed_validations counter\n"
+           "anubis_failed_validations{method=\"%s\"} %llu\n"
+           "# HELP anubis_proxied_requests_total Number of requests proxied to the upstream\n"
+           "# TYPE anubis_proxied_requests_total counter\n"
+           "anubis_proxied_requests_total{host=\"%s\"} %llu\n",
+           cfg.algorithm, m_issued, cfg.algorithm, m_validated, cfg.algorithm, m_failed,
+           cfg.target_host, m_proxied);
+
+    /* One line per rule index, which is the closest thing the flat policy file
+     * has to Anubis's rule names. */
+    sb_app(buf, cap, &o,
+           "# HELP anubis_policy_results The results of each policy rule\n"
+           "# TYPE anubis_policy_results counter\n");
+    for (int r = 0; r <= rule_count; r++) {
+        const char *label = r == rule_count ? "default" : "rule";
+        for (int a = 0; a < 4; a++) {
+            if (!m_policy[r][a]) continue;
+            if (r == rule_count)
+                sb_app(buf, cap, &o, "anubis_policy_results{rule=\"%s\",action=\"%s\"} %llu\n",
+                       label, m_policy_actions[a], m_policy[r][a]);
+            else
+                sb_app(buf, cap, &o,
+                       "anubis_policy_results{rule=\"%s %d\",action=\"%s\"} %llu\n",
+                       label, r, m_policy_actions[a], m_policy[r][a]);
+        }
+    }
+    /* give the family one sample even before the first request, so a scrape
+     * right after start is not an empty series */
+    if (m_policy[rule_count][(int)default_action] == 0)
+        sb_app(buf, cap, &o, "anubis_policy_results{rule=\"default\",action=\"%s\"} 0\n",
+               m_policy_actions[(int)default_action]);
+
+    sb_app(buf, cap, &o, "# HELP anubis_requests_total Requests by outcome\n"
+                         "# TYPE anubis_requests_total counter\n");
+    for (int i = 0; i < M_RESULTS; i++)
+        sb_app(buf, cap, &o, "anubis_requests_total{result=\"%s\"} %llu\n",
+               m_result_names[i], m_requests[i]);
+
+    sb_app(buf, cap, &o,
+           "# HELP anubis_honeypot_hits_total Trap links followed\n"
+           "# TYPE anubis_honeypot_hits_total counter\n"
+           "anubis_honeypot_hits_total %lld\n"
+           "# HELP anubis_honeypot_networks_flagged Networks that crossed the threshold\n"
+           "# TYPE anubis_honeypot_networks_flagged gauge\n"
+           "anubis_honeypot_networks_flagged %lld\n"
+           "# HELP anubis_challenges_replayed_total Challenges submitted twice\n"
+           "# TYPE anubis_challenges_replayed_total counter\n"
+           "anubis_challenges_replayed_total %lld\n"
+           "# HELP anubis_challenges_expired_total Challenges older than the window\n"
+           "# TYPE anubis_challenges_expired_total counter\n"
+           "anubis_challenges_expired_total %lld\n"
+           "# HELP betteranusbis_build_info The build serving these metrics\n"
+           "# TYPE betteranusbis_build_info gauge\n"
+           "betteranusbis_build_info{version=\"%s\",algorithm=\"%s\"} 1\n",
+           hp_hits_total, hp_networks_flagged, ch_replayed, ch_expired,
+           VERSION, cfg.algorithm);
+    return o;
+}
+
+static void *metrics_thread(void *arg) {
+    int fd = *(int *)arg;
+    free(arg);
+    for (;;) {
+        int client = accept(fd, NULL, NULL);
+        if (client < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        conn k = {.fd = client, .ssl = NULL};
+        char *raw = malloc(MAX_HEADER + 1);
+        if (raw) {
+            int n = read_headers(&k, raw, MAX_HEADER + 1);
+            if (n > 0) {
+                raw[n] = 0;
+                request rq;
+                if (parse_request(raw, &rq) == 0 && !strcmp(rq.method, "GET")) {
+                    if (!strcmp(rq.path, "/metrics")) {
+                        char *body = malloc(65536);
+                        if (body) {
+                            size_t len = render_metrics(body, 65536);
+                            respond(&k, 200, "OK", "text/plain; version=0.0.4; charset=utf-8",
+                                    NULL, body, len);
+                            free(body);
+                        } else {
+                            respond(&k, 500, "Internal Server Error", NULL, NULL, "oom\n", 4);
+                        }
+                    } else if (!strcmp(rq.path, "/healthz")) {
+                        respond(&k, 200, "OK", NULL, NULL, "OK\n", 3);
+                    } else {
+                        respond(&k, 404, "Not Found", NULL, NULL,
+                                "GET /metrics or /healthz\n", 25);
+                    }
+                } else {
+                    respond(&k, 400, "Bad Request", NULL, NULL, "bad request\n", 12);
+                }
+            }
+            free(raw);
+        }
+        close(client);
+    }
+    return NULL;
+}
+
 /* ------------------------------------------------------------ the proxy */
 
 static int connect_target(void) {
@@ -805,7 +1309,11 @@ static int target_connect(conn *up) {
     SSL *ssl = SSL_new(client_ctx);
     if (!ssl) { close(fd); return -1; }
     SSL_set_fd(ssl, fd);
-    SSL_set_tlsext_host_name(ssl, cfg.target_host);
+    /* --target-sni NAME, or "auto" to reuse the Host header, exactly as Anubis
+     * spells it; otherwise the SNI is the host we dialled. */
+    const char *sni = cfg.target_sni && *cfg.target_sni ? cfg.target_sni : cfg.target_host;
+    if (!strcasecmp(sni, "auto")) sni = cfg.target_host;
+    if (strcmp(sni, "0.0.0.0") != 0) SSL_set_tlsext_host_name(ssl, sni);
     if (SSL_connect(ssl) != 1) {
         logmsg("TLS to the target %s failed", cfg.target_host);
         SSL_free(ssl);
@@ -823,7 +1331,7 @@ static int target_connect(conn *up) {
     return fd;
 }
 
-static void proxy_request(conn *c, const request *req, const char *client_ip) {
+static void proxy_request(conn *c, const request *req, const char *client_ip, const char *path) {
     conn up_c = {.fd = -1, .ssl = NULL};
     int up = target_connect(&up_c);
     if (up < 0) {
@@ -833,8 +1341,10 @@ static void proxy_request(conn *c, const request *req, const char *client_ip) {
     }
 
     char head[8192];
+    const char *host_hdr = cfg.target_host_hdr && *cfg.target_host_hdr
+                               ? cfg.target_host_hdr : cfg.target_host;
     size_t off = (size_t)snprintf(head, sizeof head, "%s %s HTTP/1.1\r\nHost: %s\r\n",
-                                 req->method, req->path, cfg.target_host);
+                                 req->method, path, host_hdr);
     /* forward the client's headers except the ones that must not cross */
     const char *p = req->headers;
     while (p && *p) {
@@ -2077,6 +2587,40 @@ function buildModule(challenge) {
 })();
 )JS";
 
+/* Rewrite the API paths in the page for --base-prefix. Every link the page
+ * builds is rooted at API_PREFIX (the C format arguments and the JS literals
+ * alike), so one pass over the finished body is enough and the JS needs no
+ * template variable. Frees the input on success. */
+static char *prefix_api_paths(char *body) {
+    size_t plen = strlen(cfg.base_prefix);
+    if (plen == 0 || !body) return body;
+    size_t nlen = strlen(API_PREFIX);
+    size_t count = 0;
+    for (const char *p = body; (p = strstr(p, API_PREFIX)) != NULL; p += nlen) count++;
+    if (!count) return body;
+    size_t blen = strlen(body);
+    char *out = malloc(blen + count * plen + 1);
+    if (!out) return body;
+    size_t o = 0;
+    const char *p = body, *hit;
+    while ((hit = strstr(p, API_PREFIX)) != NULL) {
+        size_t seg = (size_t)(hit - p);
+        memcpy(out + o, p, seg);
+        o += seg;
+        memcpy(out + o, cfg.base_prefix, plen);
+        o += plen;
+        memcpy(out + o, API_PREFIX, nlen);
+        o += nlen;
+        p = hit + nlen;
+    }
+    size_t rest = strlen(p);
+    memcpy(out + o, p, rest);
+    o += rest;
+    out[o] = 0;
+    free(body);
+    return out;
+}
+
 static void challenge_page(conn *c, const char *id, const char *random_data,
                            const char *metadata_json, const char *test_cookie, int difficulty) {
     char payload[2048];
@@ -2103,7 +2647,7 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
              "margin:0 0 .3rem;color:#f78166;letter-spacing:-.02em}"
              "#work p{font-family:ui-monospace,monospace;font-size:.85rem;color:#98a0b3;margin:.5rem 0 0}"
              ".bar{height:16px;border:1px solid #2b3040;border-radius:8px;background:#1a1d26;"
-             "overflow:hidden;margin-top:.9rem}#fill{height:100%;width:0;"
+             "overflow:hidden;margin-top:.9rem}#fill{height:100%%;width:0;"
              "background:linear-gradient(90deg,#1f6feb,#3fb950);transition:width .18s linear}"
              ".bar.busy #fill{background-image:repeating-linear-gradient(115deg,"
              "rgba(255,255,255,.16) 0 10px,transparent 10px 22px);background-size:22px 22px}"
@@ -2140,11 +2684,14 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
                  "Don't click me</a></script>", trap);
     }
 
+    body = prefix_api_paths(body);
+
     char extra[512];
     snprintf(extra, sizeof extra,
              "Set-Cookie: %s-cookie-verification=%s; Path=/; SameSite=Lax\r\n",
              cfg.cookie_prefix, test_cookie ? test_cookie : id);
-    respond(c, 200, "OK", "text/html; charset=utf-8", extra, body, strlen(body));
+    respond(c, cfg.challenge_status, reason_for(cfg.challenge_status),
+            "text/html; charset=utf-8", extra, body, strlen(body));
     free(body);
 }
 
@@ -2163,7 +2710,6 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
  * a header, or an IPv4/IPv6 CIDR. No regular expressions - a policy language is
  * the thing this project is avoiding.
  */
-#define MAX_RULES 64
 typedef enum { RULE_ALLOW, RULE_DENY, RULE_CHALLENGE } rule_action;
 typedef enum { SEL_UA, SEL_PATH, SEL_HEADER, SEL_NET } rule_selector;
 
@@ -2174,7 +2720,8 @@ typedef struct {
     char value[128];
     char header[64];
     int difficulty;             /* 0 = the global default */
-    int v4;                     /* for SEL_NET */
+    int v4;                     /* for SEL_NET: IPv4 CIDR */
+    int v6;                     /* for SEL_NET: IPv6 CIDR */
     uint32_t net_v4, mask_v4;
     uint8_t net_v6[16], mask_v6[16];
 } rule;
@@ -2193,9 +2740,26 @@ static int rule_matches(const rule *r, const request *req, const char *client_ip
     else if (r->selector == SEL_HEADER) subject = header_value(req, r->header);
 
     if (r->selector == SEL_NET) {
-        uint64_t key = network_key(client_ip);
-        if (r->v4) return ((uint32_t)key & r->mask_v4) == r->net_v4;
-        return 0;               /* IPv6 CIDR matching is deliberately not claimed */
+        if (r->v4) {
+            uint64_t key = network_key(client_ip);
+            return ((uint32_t)key & r->mask_v4) == r->net_v4;
+        }
+        if (r->v6) {
+            struct in6_addr addr;
+            struct in_addr v4a;
+            if (!strchr(client_ip, ':')) {
+                if (inet_pton(AF_INET, client_ip, &v4a) != 1) return 0;
+                memset(&addr, 0, sizeof addr);
+                addr.s6_addr[10] = addr.s6_addr[11] = 0xff;   /* ::ffff:a.b.c.d */
+                memcpy(addr.s6_addr + 12, &v4a, 4);
+            } else if (inet_pton(AF_INET6, client_ip, &addr) != 1) {
+                return 0;
+            }
+            for (int i = 0; i < 16; i++)
+                if ((addr.s6_addr[i] & r->mask_v6[i]) != r->net_v6[i]) return 0;
+            return 1;
+        }
+        return 0;
     }
     if (!subject) return 0;
     if (r->match == 1) return strstr(subject, r->value) != NULL;
@@ -2208,9 +2772,11 @@ static rule_action policy_decide(const request *req, const char *client_ip, int 
     *difficulty = default_difficulty ? default_difficulty : cfg.difficulty;
     for (int i = 0; i < rule_count; i++) {
         if (!rule_matches(&rules[i], req, client_ip)) continue;
+        __atomic_fetch_add(&m_policy[i][(int)rules[i].action], 1, __ATOMIC_RELAXED);
         if (rules[i].difficulty > 0) *difficulty = rules[i].difficulty;
         return rules[i].action;
     }
+    __atomic_fetch_add(&m_policy[rule_count][(int)default_action], 1, __ATOMIC_RELAXED);
     return (rule_action)default_action;
 }
 
@@ -2251,19 +2817,31 @@ static void policy_load(const char *path) {
             char netstr[128];
             snprintf(netstr, sizeof netstr, "%s", how);
             char *slash = strchr(netstr, '/');
-            struct in_addr a;
-            if (slash && inet_pton(AF_INET, netstr, &a) == 0) {
-                struct in_addr b;
-                *slash = 0;
-                if (inet_pton(AF_INET, netstr, &b) == 1) {
-                    int bits = atoi(slash + 1);
-                    if (bits < 0) bits = 0;
-                    if (bits > 32) bits = 32;
-                    r.v4 = 1;
-                    r.mask_v4 = bits == 0 ? 0 : 0xFFFFFFFFu << (32 - bits);
-                    r.net_v4 = ntohl(b.s_addr) & r.mask_v4;
-                    rules[rule_count++] = r;
+            int bits = slash ? atoi(slash + 1) : -1;
+            if (slash) *slash = 0;
+            struct in_addr b4;
+            struct in6_addr b6;
+            if (inet_pton(AF_INET, netstr, &b4) == 1) {
+                if (bits < 0) bits = 32;
+                if (bits > 32) bits = 32;
+                r.v4 = 1;
+                r.mask_v4 = bits == 0 ? 0 : 0xFFFFFFFFu << (32 - bits);
+                r.net_v4 = ntohl(b4.s_addr) & r.mask_v4;
+                rules[rule_count++] = r;
+            } else if (inet_pton(AF_INET6, netstr, &b6) == 1) {
+                if (bits < 0) bits = 128;
+                if (bits > 128) bits = 128;
+                r.v6 = 1;
+                for (int i = 0; i < 16; i++) {
+                    int keep = bits - i * 8;
+                    uint8_t m = keep >= 8 ? 0xff : keep <= 0 ? 0 : (uint8_t)(0xffu << (8 - keep));
+                    r.mask_v6[i] = m;
+                    r.net_v6[i] = b6.s6_addr[i] & m;
                 }
+                rules[rule_count++] = r;
+            } else {
+                logmsg("policy: %s is not an IPv4 or IPv6 address with an optional /prefix, "
+                       "that rule is ignored", how);
             }
             continue;
         }
@@ -2284,7 +2862,7 @@ static void policy_load(const char *path) {
 
 /* ------------------------------------------------------------ the routes */
 
-static void handle_connection(conn *c, const char *client_ip) {
+static void handle_connection(conn *c, const char *peer_ip) {
     char *raw = malloc(MAX_HEADER + 1);
     if (!raw) { close(c->fd); return; }
     int n = read_headers(c, raw, MAX_HEADER + 1);
@@ -2297,6 +2875,31 @@ static void handle_connection(conn *c, const char *client_ip) {
         free(raw);
         close(c->fd);
         return;
+    }
+
+    /* Who is really asking: the socket peer, or whatever the proxy in front of
+     * us recorded. Computed before anything else looks at the address. */
+    char client_ip[64];
+    client_address(&req, peer_ip, client_ip, sizeof client_ip);
+
+    /* --jwt-restriction-header names a header; if the proxy set it, that value
+     * is what the token is bound to, because that is what upstream binds to. It
+     * is sanitised first: it ends up inside a JSON string. */
+    char bind_buf[128];
+    const char *bind_to = client_ip;
+    if (cfg.jwt_restrict_hdr && *cfg.jwt_restrict_hdr) {
+        const char *hv = header_value(&req, cfg.jwt_restrict_hdr);
+        if (hv && *hv) {
+            size_t o = 0;
+            for (const char *q = hv; *q && o + 1 < sizeof bind_buf; q++) {
+                unsigned char ch = (unsigned char)*q;
+                if (isalnum(ch) || ch == ':' || ch == '.' || ch == '-' ||
+                    ch == '[' || ch == ']' || ch == '_')
+                    bind_buf[o++] = (char)ch;
+            }
+            bind_buf[o] = 0;
+            if (o) bind_to = bind_buf;
+        }
     }
 
     /* body, if the client sent one */
@@ -2318,22 +2921,45 @@ static void handle_connection(conn *c, const char *client_ip) {
         }
     }
 
-    if (cfg.verbose) logmsg("%s %s%s%s from %s", req.method, req.path,
-                            req.query[0] ? "?" : "", req.query[0] ? req.query : "", client_ip);
+    /* --base-prefix: route as if the gate were mounted at the root. The request
+     * keeps its own path for the policy and for the log; what goes upstream is
+     * the stripped path only when --strip-base-prefix asks for it. */
+    char route_buf[4096];
+    const char *route = req.path;
+    size_t prelen = strlen(cfg.base_prefix);
+    if (prelen && !strncmp(route, cfg.base_prefix, prelen) &&
+        (route[prelen] == '/' || route[prelen] == 0)) {
+        snprintf(route_buf, sizeof route_buf, "%s", route + prelen);
+        if (!route_buf[0]) snprintf(route_buf, sizeof route_buf, "/");
+        route = route_buf;
+    }
+    const char *upstream_path = (cfg.strip_base_prefix && route != req.path) ? route : req.path;
+
+    if (cfg.verbose) logmsg("%s %s%s%s from %s%s%s", req.method, req.path,
+                            req.query[0] ? "?" : "", req.query[0] ? req.query : "",
+                            client_ip, client_ip[0] && strcmp(client_ip, peer_ip) ? " via " : "",
+                            client_ip[0] && strcmp(client_ip, peer_ip) ? peer_ip : "");
 
     char cookie_value[2048];
     int authenticated = 0;
     if (find_cookie(req.headers, cfg.cookie_name, cookie_value, sizeof cookie_value))
-        authenticated = verify_token(cookie_value);
+        authenticated = verify_token(cookie_value, bind_to);
+    if (cfg.debug_benchmark_js) authenticated = 0;   /* --debug-benchmark-js: always challenge */
 
-    if (!strcmp(req.path, API_PREFIX "ping")) {
+    if (cfg.serve_robots_txt && !strcmp(route, "/robots.txt")) {
+        const char *robots = "User-agent: *\nDisallow: /\n";
+        respond(c, 200, "OK", "text/plain; charset=utf-8", NULL, robots, strlen(robots));
+    } else if (!strcmp(route, API_PREFIX "ping")) {
+        __atomic_fetch_add(&m_requests[M_API], 1, __ATOMIC_RELAXED);
         respond(c, 200, "OK", NULL, NULL, "pong\n", 5);
-    } else if (!strcmp(req.path, API_PREFIX "check")) {
+    } else if (!strcmp(route, API_PREFIX "check")) {
+        __atomic_fetch_add(&m_requests[M_API], 1, __ATOMIC_RELAXED);
         if (authenticated) respond(c, 200, "OK", NULL, NULL, "ok\n", 3);
         else respond(c, 401, "Unauthorized", NULL, NULL, "challenge required\n", 19);
-    } else if (!strncmp(req.path, API_PREFIX "static/anubis/", strlen(API_PREFIX) + 14)) {
+    } else if (!strncmp(route, API_PREFIX "static/anubis/", strlen(API_PREFIX) + 14)) {
+        __atomic_fetch_add(&m_requests[M_STATIC], 1, __ATOMIC_RELAXED);
         /* the browser's kernels: our own builds, dropped in --web */
-        const char *name = req.path + strlen(API_PREFIX) + 14;
+        const char *name = route + strlen(API_PREFIX) + 14;
         if (strchr(name, '/') || strstr(name, "..")) {
             respond(c, 404, "Not Found", NULL, NULL, "no\n", 3);
         } else {
@@ -2359,7 +2985,8 @@ static void handle_connection(conn *c, const char *client_ip) {
                 }
             }
         }
-    } else if (!strcmp(req.path, API_PREFIX "state")) {
+    } else if (!strcmp(route, API_PREFIX "state")) {
+        __atomic_fetch_add(&m_requests[M_API], 1, __ATOMIC_RELAXED);
         char body[512];
         int n = snprintf(body, sizeof body,
                          "{\"stateful\":%s,\"issued\":%lld,\"accepted\":%lld,"
@@ -2367,13 +2994,16 @@ static void handle_connection(conn *c, const char *client_ip) {
                          cfg.stateful ? "true" : "false", ch_issued, ch_accepted,
                          ch_replayed, ch_expired);
         respond(c, 200, "OK", "application/json", NULL, body, (size_t)n);
-    } else if (!strcmp(req.path, API_PREFIX "pass-challenge")) {
+    } else if (!strcmp(route, API_PREFIX "pass-challenge")) {
+        __atomic_fetch_add(&m_requests[M_API], 1, __ATOMIC_RELAXED);
         char id_buf[1024], response_buf[1024], nonce_buf[64], redir_buf[2048], elapsed_buf[64];
         const char *id = query_param(req.query, "id", id_buf, sizeof id_buf);
         const char *response = query_param(req.query, "response", response_buf, sizeof response_buf);
         const char *nonce_s = query_param(req.query, "nonce", nonce_buf, sizeof nonce_buf);
         const char *redir = query_param(req.query, "redir", redir_buf, sizeof redir_buf);
         (void)query_param(req.query, "elapsedTime", elapsed_buf, sizeof elapsed_buf);
+        char redir_safe[2048];
+        const char *go = safe_redirect(&req, redir, redir_safe, sizeof redir_safe);
 
         /* The id carries the challenge, so the server keeps no state:
          *   id = <hex randomData>.<unix time it was issued>
@@ -2425,17 +3055,20 @@ static void handle_connection(conn *c, const char *client_ip) {
                 }
                 if (valid) {
                     char token[2048];
-                    if (sign_token(token, sizeof token, id) == 0) {
-                        char extra[2300];
-                        snprintf(extra, sizeof extra,
-                                 "Set-Cookie: %s=%s; Path=/; Max-Age=%d; SameSite=Lax\r\n",
-                                 cfg.cookie_name, token, COOKIE_TTL);
-                        respond_redirect(c, redir && *redir ? (redir[0] == '/' ? redir : "/") : "/", extra);
+                    if (sign_token(token, sizeof token, id, bind_to) == 0) {
+                        char attrs[512];
+                        cookie_attrs(attrs, sizeof attrs, cfg.cookie_ttl > 0 ? cfg.cookie_ttl : -1);
+                        char extra[4096];
+                        snprintf(extra, sizeof extra, "Set-Cookie: %s=%s%s\r\n",
+                                 cfg.cookie_name, token, attrs);
+                        respond_redirect(c, go, extra);
+                        __atomic_fetch_add(&m_validated, 1, __ATOMIC_RELAXED);
                         logmsg("metarefresh passed (waited %lld ms)", waited);
                     } else {
                         respond(c, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
                     }
                 } else {
+                    __atomic_fetch_add(&m_failed, 1, __ATOMIC_RELAXED);
                     char msg[512];
                     snprintf(msg, sizeof msg,
                              "betterAnusbis: metarefresh wants a %lld ms wait and the challenge "
@@ -2482,31 +3115,35 @@ static void handle_connection(conn *c, const char *client_ip) {
             }
 
             if (!valid) {
+                __atomic_fetch_add(&m_failed, 1, __ATOMIC_RELAXED);
                 const char *msg =
                     "betterAnusbis: that answer did not verify\n"
                     "  the challenge id, the response and the nonce have to match\n";
                 respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
             } else {
                 char token[2048];
-                if (sign_token(token, sizeof token, id) != 0) {
+                if (sign_token(token, sizeof token, id, bind_to) != 0) {
                     respond(c, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
                 } else {
-                    char extra[2300];
+                    char attrs[512];
+                    cookie_attrs(attrs, sizeof attrs, cfg.cookie_ttl > 0 ? cfg.cookie_ttl : -1);
+                    char extra[4096];
                     snprintf(extra, sizeof extra,
-                             "Set-Cookie: %s=%s; Path=/; Max-Age=%d; SameSite=Lax\r\n"
+                             "Set-Cookie: %s=%s%s\r\n"
                              "Set-Cookie: %s-cookie-verification=; Path=/; Max-Age=0\r\n",
-                             cfg.cookie_name, token, COOKIE_TTL, cfg.cookie_prefix);
-                    respond_redirect(c, redir && *redir ? (redir[0] == '/' ? redir : "/") : "/", extra);
+                             cfg.cookie_name, token, attrs, cfg.cookie_prefix);
+                    respond_redirect(c, go, extra);
+                    __atomic_fetch_add(&m_validated, 1, __ATOMIC_RELAXED);
                     logmsg("challenge passed (nonce %llu, %s, difficulty %d)", nonce,
                            cfg.algorithm, cfg.difficulty);
                 }
             }
         }
-    } else if (!strncmp(req.path, API_PREFIX "honeypot/",
+    } else if (!strncmp(route, API_PREFIX "honeypot/",
                         strlen(API_PREFIX) + strlen("honeypot/"))) {
         /* a request to a path only the trap link points at. Count it, make the
          * crawler wait, and hand it a page full of more trap links. */
-        const char *rest = req.path + strlen(API_PREFIX) + strlen("honeypot/");
+        const char *rest = route + strlen(API_PREFIX) + strlen("honeypot/");
         char idbuf[64] = "trap";
         const char *slash = strchr(rest, '/');
         if (slash) {
@@ -2515,25 +3152,34 @@ static void handle_connection(conn *c, const char *client_ip) {
             memcpy(idbuf, rest, n);
             idbuf[n] = 0;
         }
+        __atomic_fetch_add(&m_requests[M_HONEYPOT], 1, __ATOMIC_RELAXED);
         hp_record(client_ip);
         int count = hp_count(client_ip);
         if (cfg.verbose) logmsg("honeypot: maze for %s (hit %d in the window)", client_ip, count);
         hp_tarpit(count);
         honeypot_maze(c, idbuf, slash ? slash + 1 : "init", client_ip, count);
     } else if (authenticated) {
-        proxy_request(c, &req, client_ip);
+        __atomic_fetch_add(&m_requests[M_PROXIED], 1, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&m_proxied, 1, __ATOMIC_RELAXED);
+        proxy_request(c, &req, client_ip, upstream_path);
     } else {
         /* issue a challenge — unless the policy says otherwise */
         int difficulty = cfg.difficulty;
         int policy_difficulty = 0;
         rule_action action = policy_decide(&req, client_ip, &policy_difficulty);
         if (action == RULE_ALLOW) {
-            proxy_request(c, &req, client_ip);
+            __atomic_fetch_add(&m_requests[M_ALLOWED], 1, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&m_proxied, 1, __ATOMIC_RELAXED);
+            proxy_request(c, &req, client_ip, upstream_path);
             goto done;
         }
         if (action == RULE_DENY) {
+            /* Anubis DENYs with a 200 on purpose, so the scraper thinks it got
+             * the page; --deny-status 403 is the honest answer. */
             const char *msg = "betterAnusbis: denied by policy\n";
-            respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
+            __atomic_fetch_add(&m_requests[M_DENIED], 1, __ATOMIC_RELAXED);
+            respond(c, cfg.deny_status, reason_for(cfg.deny_status), NULL, NULL,
+                    msg, strlen(msg));
             goto done;
         }
         if (policy_difficulty > 0) difficulty = policy_difficulty;
@@ -2561,6 +3207,8 @@ static void handle_connection(conn *c, const char *client_ip) {
                      ua ? ua : "", client_ip);
 
             ch_issue(id, rd_hex, difficulty);
+            __atomic_fetch_add(&m_requests[M_CHALLENGED], 1, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&m_issued, 1, __ATOMIC_RELAXED);
             challenge_page(c, id, rd_hex, metadata, id, difficulty);
         }
     }
@@ -2677,22 +3325,72 @@ static void usage(FILE *out) {
         "\n"
         "usage: betterAnusbis --target http://127.0.0.1:3000 [options]\n"
         "\n"
+        "where to listen, what to protect\n"
         "  --listen ADDR:PORT     where to listen; omit the address for every\n"
         "                         interface (default :8080)\n"
         "  --target URL           the backend to protect (required)\n"
+        "  --target-sni NAME      TLS name to send to the target; \"auto\" reuses the\n"
+        "                         Host header (default: the host we dialled)\n"
+        "  --target-host NAME     Host header to send to the target\n"
+        "  --target-insecure      do not verify the backend certificate (testing only)\n"
+        "  --base-prefix PATH     serve under this path, e.g. /anubis\n"
+        "  --strip-base-prefix    strip it again before the target sees the request\n"
+        "\n"
+        "the challenge\n"
         "  --algorithm NAME       fast, slow, sha256, argon2id, hashx or metarefresh\n"
         "                         (default sha256)\n"
         "  --difficulty N         difficulty; bits for sha256/argon2id/hashx,\n"
         "                         nibbles for fast/slow (default 4)\n"
+        "  --challenge-status N   status for the challenge page (default 200)\n"
+        "  --deny-status N        status for a policy deny (default 200, as Anubis\n"
+        "                         ships it; 403 is what a human would choose)\n"
+        "  --serve-robots-txt     answer /robots.txt with a disallow-all file\n"
+        "  --debug-benchmark-js   challenge every request, for measuring a client\n"
+        "\n"
+        "cookies\n"
         "  --cookie-prefix NAME   cookie prefix (default " DEFAULT_COOKIE_PREFIX ")\n"
+        "  --cookie-domain DNS    Domain= on the auth cookie\n"
+        "  --cookie-expiration-time SECONDS\n"
+        "                         Max-Age and JWT exp; 0 makes it a session cookie\n"
+        "                         (default 604800)\n"
+        "  --cookie-secure[=B]    Secure flag; default is on exactly when we serve TLS\n"
+        "  --cookie-http-only[=B] HttpOnly on the auth cookie (default on)\n"
+        "  --cookie-same-site S   default, lax, strict or none (default lax; none falls\n"
+        "                         back to lax without Secure, like Anubis)\n"
+        "  --cookie-partitioned[=B]\n"
+        "                         CHIPS Partitioned, only emitted with Secure (default on)\n"
+        "\n"
+        "who the client is\n"
+        "  --custom-real-ip-header NAME\n"
+        "                         read the client address from this header, e.g.\n"
+        "                         CF-Connecting-IP (Anubis: --custom-real-ip-header)\n"
+        "  --use-remote-address   ignore X-Forwarded-For and the custom header\n"
+        "  --no-xff-strip-private keep RFC1918 hops from X-Forwarded-For\n"
+        "\n"
+        "where a solved client may be sent\n"
+        "  --redirect-domains LIST\n"
+        "                         comma list of hosts the post-challenge redirect may\n"
+        "                         use, glob supported (*.example.org), four stars max.\n"
+        "                         Default: this host only, which is stricter than\n"
+        "                         Anubis, whose default is any domain at all\n"
+        "\n"
+        "policy, honeypot, assets\n"
+        "  --policy FILE          rule file (allow/deny/challenge), see README\n"
         "  --no-honeypot          disable the trap link and the tarpit\n"
         "  --honeypot-log FILE    append one line per trap hit\n"
-        "  --tls-cert FILE        serve HTTPS with this PEM certificate chain\n"
-        "  --tls-key FILE         ...and this PEM private key\n"
-        "  --policy FILE          rule file (allow/deny/challenge), see README\n"
         "  --stateless            do not keep issued challenges (they can be replayed)\n"
         "  --web DIR              serve the wasm kernels from here\n"
-        "  --target-insecure      do not verify the backend certificate (testing only)\n"
+        "\n"
+        "TLS, metrics, noise\n"
+        "  --tls-cert FILE        serve HTTPS with this PEM certificate chain\n"
+        "  --tls-key FILE         ...and this PEM private key\n"
+        "  --jwt-restriction-header NAME\n"
+        "                         bind the auth cookie to the client address, the way\n"
+        "                         Anubis does by default; pass \"\" to turn it off\n"
+        "  --metrics-bind ADDR:PORT\n"
+        "                         Prometheus /metrics and /healthz on a listener of\n"
+        "                         their own (default: off. Anubis binds :9090 for\n"
+        "                         you, which hands your traffic numbers to anyone)\n"
         "  -v, --verbose          log every request\n"
         "  -h, --help             this text\n"
         "  -V, --version          version\n"
@@ -2700,29 +3398,172 @@ static void usage(FILE *out) {
         "send SIGHUP to print the current settings; the secret is generated at start.\n");
 }
 
-int main(int argc, char **argv) {
+/* The option table. Values are parsed once, so --flag=value and --flag value both
+ * work, and every boolean can be inverted with --no-<flag> or set with
+ * --flag=false. --stateless is the inverse of a field, so it gets its own slot. */
+static int stateless_arg = -1;
+
+typedef enum { ARG_STR, ARG_INT, ARG_LONG, ARG_BOOL } arg_kind;
+
+typedef struct {
+    const char *name;
+    arg_kind kind;
+    void *dst;
+} arg_spec;
+
+static const arg_spec args[] = {
+    {"listen", ARG_STR, &cfg.listen},
+    {"target", ARG_STR, &cfg.target},
+    {"algorithm", ARG_STR, &cfg.algorithm},
+    {"difficulty", ARG_INT, &cfg.difficulty},
+    {"challenge-status", ARG_INT, &cfg.challenge_status},
+    {"deny-status", ARG_INT, &cfg.deny_status},
+    {"cookie-prefix", ARG_STR, &cfg.cookie_prefix},
+    {"cookie-domain", ARG_STR, &cfg.cookie_domain},
+    {"cookie-expiration-time", ARG_LONG, &cfg.cookie_ttl},
+    {"cookie-secure", ARG_BOOL, &cfg.cookie_secure},
+    {"cookie-http-only", ARG_BOOL, &cfg.cookie_http_only},
+    {"cookie-same-site", ARG_STR, &cfg.cookie_same_site},
+    {"cookie-partitioned", ARG_BOOL, &cfg.cookie_partitioned},
+    {"base-prefix", ARG_STR, &cfg.base_prefix},
+    {"strip-base-prefix", ARG_BOOL, &cfg.strip_base_prefix},
+    {"custom-real-ip-header", ARG_STR, &cfg.real_ip_header},
+    {"use-remote-address", ARG_BOOL, &cfg.use_remote_address},
+    {"xff-strip-private", ARG_BOOL, &cfg.xff_strip_private},
+    {"redirect-domains", ARG_STR, &cfg.redirect_domains},
+    {"serve-robots-txt", ARG_BOOL, &cfg.serve_robots_txt},
+    {"debug-benchmark-js", ARG_BOOL, &cfg.debug_benchmark_js},
+    {"target-sni", ARG_STR, &cfg.target_sni},
+    {"target-host", ARG_STR, &cfg.target_host_hdr},
+    {"target-insecure", ARG_BOOL, &cfg.target_insecure},
+    {"honeypot", ARG_BOOL, &cfg.honeypot},
+    {"honeypot-log", ARG_STR, &cfg.honeypot_log},
+    {"stateless", ARG_BOOL, &stateless_arg},
+    {"web", ARG_STR, &cfg.web_dir},
+    {"policy", ARG_STR, &cfg.policy_file},
+    {"tls-cert", ARG_STR, &cfg.tls_cert},
+    {"tls-key", ARG_STR, &cfg.tls_key},
+    {"metrics-bind", ARG_STR, &cfg.metrics_bind},
+    {"jwt-restriction-header", ARG_STR, &cfg.jwt_restrict_hdr},
+};
+
+static int parse_args(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
-        const char *next = i + 1 < argc ? argv[i + 1] : NULL;
-        if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(stdout); return 0; }
-        if (!strcmp(a, "-V") || !strcmp(a, "--version")) { puts(VERSION); return 0; }
+        if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(stdout); exit(0); }
+        if (!strcmp(a, "-V") || !strcmp(a, "--version")) { puts(VERSION); exit(0); }
         if (!strcmp(a, "-v") || !strcmp(a, "--verbose")) { cfg.verbose = 1; continue; }
-        if (!strcmp(a, "--listen") && next) { cfg.listen = next; i++; continue; }
-        if (!strcmp(a, "--target") && next) { cfg.target = next; i++; continue; }
-        if (!strcmp(a, "--algorithm") && next) { cfg.algorithm = next; i++; continue; }
-        if (!strcmp(a, "--difficulty") && next) { cfg.difficulty = atoi(next); i++; continue; }
-        if (!strcmp(a, "--cookie-prefix") && next) { cfg.cookie_prefix = next; i++; continue; }
-        if (!strcmp(a, "--no-honeypot")) { cfg.honeypot = 0; continue; }
-        if (!strcmp(a, "--tls-cert") && next) { cfg.tls_cert = next; i++; continue; }
-        if (!strcmp(a, "--tls-key") && next) { cfg.tls_key = next; i++; continue; }
-        if (!strcmp(a, "--policy") && next) { cfg.policy_file = next; i++; continue; }
-        if (!strcmp(a, "--stateless")) { cfg.stateful = 0; continue; }
-        if (!strcmp(a, "--web") && next) { cfg.web_dir = next; i++; continue; }
-        if (!strcmp(a, "--target-insecure")) { cfg.target_insecure = 1; continue; }
-        if (!strcmp(a, "--honeypot-log") && next) { cfg.honeypot_log = next; i++; continue; }
-        fprintf(stderr, "betterAnusbis: unknown option %s (try --help)\n", a);
-        return 2;
+        if (strncmp(a, "--", 2) != 0) {
+            fprintf(stderr, "betterAnusbis: unknown option %s (try --help)\n", a);
+            return -1;
+        }
+
+        char name[64];
+        const char *inline_val = NULL;
+        const char *eq = strchr(a + 2, '=');
+        size_t nlen = eq ? (size_t)(eq - (a + 2)) : strlen(a + 2);
+        if (nlen >= sizeof name) nlen = sizeof name - 1;
+        memcpy(name, a + 2, nlen);
+        name[nlen] = 0;
+        if (eq) inline_val = eq + 1;
+
+        int negated = 0;
+        if (!strncmp(name, "no-", 3)) {
+            negated = 1;
+            memmove(name, name + 3, strlen(name + 3) + 1);
+        }
+
+        const arg_spec *spec = NULL;
+        for (size_t k = 0; k < sizeof args / sizeof args[0]; k++)
+            if (!strcmp(args[k].name, name)) { spec = &args[k]; break; }
+        if (!spec) {
+            fprintf(stderr, "betterAnusbis: unknown option %s (try --help)\n", a);
+            return -1;
+        }
+        if (negated && spec->kind != ARG_BOOL) {
+            fprintf(stderr, "betterAnusbis: --no-%s makes no sense, it wants a value\n", name);
+            return -1;
+        }
+
+        const char *val = inline_val;
+        if (!val && spec->kind != ARG_BOOL) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "betterAnusbis: --%s wants a value\n", name);
+                return -1;
+            }
+            val = argv[++i];
+        }
+        switch (spec->kind) {
+        case ARG_STR:
+            *(const char **)spec->dst = val;
+            break;
+        case ARG_INT:
+            *(int *)spec->dst = atoi(val);
+            break;
+        case ARG_LONG:
+            *(long *)spec->dst = strtol(val, NULL, 10);
+            break;
+        case ARG_BOOL: {
+            int b = 1;
+            if (val) {
+                if (!strcasecmp(val, "false") || !strcmp(val, "0") ||
+                    !strcasecmp(val, "no") || !strcasecmp(val, "off")) b = 0;
+                else if (!strcasecmp(val, "true") || !strcmp(val, "1") ||
+                         !strcasecmp(val, "yes") || !strcasecmp(val, "on")) b = 1;
+                else {
+                    fprintf(stderr, "betterAnusbis: --%s wants true or false, got %s\n", name, val);
+                    return -1;
+                }
+            }
+            if (negated) b = !b;
+            *(int *)spec->dst = b;
+            break;
+        }
+        }
     }
+    if (stateless_arg >= 0) cfg.stateful = !stateless_arg;
+    return 0;
+}
+
+static volatile sig_atomic_t hup_pending;
+
+static void on_reload(int sig) {
+    (void)sig;
+    hup_pending = 1;
+}
+
+/* What SIGHUP prints: the settings as they actually ended up, after defaults and
+ * validation, not as they were typed. */
+static void print_settings(void) {
+    logmsg("settings: listen=%s target=%s algorithm=%s difficulty=%d",
+           cfg.listen, cfg.target, cfg.algorithm, cfg.difficulty);
+    logmsg("settings: cookie name=%s domain=%s secure=%s http_only=%s same_site=%s "
+           "partitioned=%s ttl=%ld",
+           cfg.cookie_name, *cfg.cookie_domain ? cfg.cookie_domain : "(host only)",
+           cookie_use_secure() ? "yes" : "no", cfg.cookie_http_only ? "yes" : "no",
+           cfg.cookie_same_site, cfg.cookie_partitioned ? "yes" : "no", cfg.cookie_ttl);
+    logmsg("settings: base_prefix=%s strip_base_prefix=%s redirect_domains=%s",
+           *cfg.base_prefix ? cfg.base_prefix : "/", cfg.strip_base_prefix ? "yes" : "no",
+           cfg.redirect_domains ? cfg.redirect_domains : "(this host only)");
+    logmsg("settings: real_ip_header=%s use_remote_address=%s xff_strip_private=%s",
+           cfg.real_ip_header ? cfg.real_ip_header : "(none)",
+           cfg.use_remote_address ? "yes" : "no", cfg.xff_strip_private ? "yes" : "no");
+    logmsg("settings: statuses challenge=%d deny=%d robots_txt=%s benchmark_js=%s",
+           cfg.challenge_status, cfg.deny_status, cfg.serve_robots_txt ? "yes" : "no",
+           cfg.debug_benchmark_js ? "yes" : "no");
+    logmsg("settings: honeypot=%s threshold=%d log=%s stateful=%s policy=%s web=%s tls=%s",
+           cfg.honeypot ? "yes" : "no", cfg.flag_threshold,
+           cfg.honeypot_log ? cfg.honeypot_log : "(none)", cfg.stateful ? "yes" : "no",
+           cfg.policy_file ? cfg.policy_file : "(none)",
+           cfg.web_dir ? cfg.web_dir : "web", cfg.tls_cert ? "yes" : "no");
+    logmsg("settings: issued=%lld accepted=%lld replayed=%lld expired=%lld "
+           "trap_hits=%lld networks_flagged=%lld",
+           ch_issued, ch_accepted, ch_replayed, ch_expired, hp_hits_total,
+           hp_networks_flagged);
+}
+
+int main(int argc, char **argv) {
+    if (parse_args(argc, argv) != 0) return 2;
     if (!cfg.target) {
         fprintf(stderr, "betterAnusbis: --target is required. Try --help.\n");
         return 2;
@@ -2742,6 +3583,61 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (cfg.challenge_status < 100 || cfg.challenge_status > 599) {
+        fprintf(stderr, "betterAnusbis: --challenge-status must be 100..599\n");
+        return 2;
+    }
+    if (cfg.deny_status < 100 || cfg.deny_status > 599) {
+        fprintf(stderr, "betterAnusbis: --deny-status must be 100..599\n");
+        return 2;
+    }
+    static const char *samesite_ok[] = {"default", "lax", "strict", "none", NULL};
+    ok = 0;
+    for (int i = 0; samesite_ok[i]; i++)
+        if (!strcasecmp(cfg.cookie_same_site, samesite_ok[i])) ok = 1;
+    if (!ok) {
+        fprintf(stderr, "betterAnusbis: --cookie-same-site must be default, lax, strict or none\n");
+        return 2;
+    }
+    if (cfg.cookie_ttl < 0) cfg.cookie_ttl = 0;      /* 0: a session cookie */
+    /* the base prefix has to look like a path, and must not end in a slash */
+    if (cfg.base_prefix && *cfg.base_prefix) {
+        static char prefix_buf[256];
+        if (cfg.base_prefix[0] != '/') {
+            fprintf(stderr, "betterAnusbis: --base-prefix must start with /\n");
+            return 2;
+        }
+        snprintf(prefix_buf, sizeof prefix_buf, "%s", cfg.base_prefix);
+        size_t pn = strlen(prefix_buf);
+        while (pn > 1 && prefix_buf[pn - 1] == '/') prefix_buf[--pn] = 0;
+        if (!strcmp(prefix_buf, "/")) prefix_buf[0] = 0;   /* "/" is the root */
+        cfg.base_prefix = prefix_buf;
+    }
+    /* A pattern with more than four stars is one nobody meant to write; say so
+     * rather than let it silently never match. */
+    if (cfg.redirect_domains && *cfg.redirect_domains) {
+        char copy[1024];
+        snprintf(copy, sizeof copy, "%s", cfg.redirect_domains);
+        int patterns = 0;
+        for (char *q = copy; q && *q; ) {
+            char *comma = strchr(q, ',');
+            if (comma) *comma = 0;
+            while (*q == ' ' || *q == '\t') q++;
+            int stars = 0;
+            for (const char *r = q; *r; r++) if (*r == '*') stars++;
+            if (*q) {
+                patterns++;
+                if (stars > MAX_GLOB_STARS)
+                    logmsg("--redirect-domains: %s has %d stars, the limit is %d; "
+                           "that pattern will never match", q, stars, MAX_GLOB_STARS);
+            }
+            q = comma ? comma + 1 : NULL;
+        }
+        if (patterns > MAX_REDIRECT_PATTERNS)
+            logmsg("--redirect-domains: %d patterns, only the first %d are read",
+                   patterns, MAX_REDIRECT_PATTERNS);
+    }
+
     if (cfg.policy_file) policy_load(cfg.policy_file);
     parse_target(cfg.target);
     snprintf(cfg.cookie_name, sizeof cfg.cookie_name, "%s-auth", cfg.cookie_prefix);
@@ -2751,6 +3647,11 @@ int main(int argc, char **argv) {
     }
 
     signal(SIGPIPE, SIG_IGN);
+    /* no SA_RESTART: accept() has to come back so the dump can happen */
+    struct sigaction hup = {0};
+    hup.sa_handler = on_reload;
+    sigemptyset(&hup.sa_mask);
+    sigaction(SIGHUP, &hup, NULL);
 
     struct sockaddr_in6 addr;
     if (parse_listen(cfg.listen, &addr) != 0) {
@@ -2796,10 +3697,44 @@ int main(int argc, char **argv) {
     logmsg("open %s://127.0.0.1:%d/ and the challenge page solves it for you",
            use_tls ? "https" : "http", ntohs(addr.sin6_port));
 
+    if (cfg.metrics_bind && *cfg.metrics_bind) {
+        struct sockaddr_in6 maddr;
+        if (parse_listen(cfg.metrics_bind, &maddr) != 0) {
+            fprintf(stderr, "betterAnusbis: --metrics-bind wants ADDR:PORT\n");
+            return 2;
+        }
+        int mfd = socket(AF_INET6, SOCK_STREAM, 0);
+        if (mfd < 0) { perror("socket"); return 1; }
+        setsockopt(mfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        setsockopt(mfd, IPPROTO_IPV6, IPV6_V6ONLY, &(int){0}, sizeof(int));
+        if (bind(mfd, (struct sockaddr *)&maddr, sizeof maddr) != 0) {
+            fprintf(stderr, "betterAnusbis: cannot bind metrics to %s: %s\n",
+                    cfg.metrics_bind, strerror(errno));
+            return 1;
+        }
+        if (listen(mfd, 64) != 0) { perror("listen"); return 1; }
+        int *mp = malloc(sizeof *mp);
+        if (!mp) return 1;
+        *mp = mfd;
+        pthread_t mt;
+        if (pthread_create(&mt, NULL, metrics_thread, mp) != 0) {
+            fprintf(stderr, "betterAnusbis: cannot start the metrics thread\n");
+            return 1;
+        }
+        pthread_detach(mt);
+        logmsg("metrics on %s (GET /metrics, GET /healthz)", cfg.metrics_bind);
+    }
+
     for (;;) {
         int fd = accept(srv, NULL, NULL);
         if (fd < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                if (hup_pending) {
+                    hup_pending = 0;
+                    print_settings();
+                }
+                continue;
+            }
             perror("accept");
             break;
         }

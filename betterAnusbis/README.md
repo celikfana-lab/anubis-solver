@@ -69,34 +69,89 @@ And it actually rejects things:
 | cookie | `techaro.lol-anubis-auth`, a JWT HS256 with Anubis's claims (`challenge`, `method`, `policyRule`, `action`, `iat`, `exp`) |
 | test cookie | `techaro.lol-anubis-cookie-verification` |
 | metarefresh | no hashing: wait `difficulty × 800 ms`, echo `?challenge=<randomData>` — the same two checks as `lib/challenge/metarefresh/metarefresh.go` |
+| client IP | `X-Forwarded-For` flattened right-to-left, CGNAT and link-local hops always dropped, RFC1918 unless `--no-xff-strip-private`; `--custom-real-ip-header` reads a proxy-specific header, `--use-remote-address` ignores them all |
+| redirect | `redir=` restricted to this host or `--redirect-domains`, with the same four-wildcard glob limit as `REDIRECT_DOMAINS` |
+| subpath | `--base-prefix` / `--strip-base-prefix`, same pair as `cmd/anubis` |
+| metrics | `anubis_challenges_issued`, `anubis_challenges_validated`, `anubis_failed_validations`, `anubis_proxied_requests_total`, `anubis_policy_results` with upstream's names and fewer labels (no ASN), plus `/healthz`; `--metrics-bind` puts them on their own listener |
+| token binding | the JWT carries a `restrict` claim holding the client address, the way `--jwt-restriction-header` does; a stolen cookie is useless from another address. Tokens minted before this existed carry no claim and keep working |
 
 ## Two design decisions worth knowing
 
-**No server-side state.** The challenge id *is* the challenge:
-`<hex randomData>.<unix time issued>`. Verification becomes a pure function, memory
-is bounded by nothing, and there is no ledger to reap. The cost: a *solved*
-challenge can be replayed inside the cookie window, because there is no "spent"
-flag. Anubis keeps state and refuses replays; this trades that for simplicity, and
-if you need the ledger the id scheme is where to add it.
+**The id carries the challenge.** `<hex randomData>.<unix time issued>` means
+verification is a pure function of the request, so a challenge can be checked
+without a lookup. On top of that there is a fixed-size spent-challenge table
+(4096 slots, one hour) that makes a second submission fail, which is Anubis's
+`spent` flag with a bounded amount of memory. `--stateless` turns the table off
+and accepts that a solved challenge can be replayed inside its window.
 
-**No policy engine.** Anubis's bot rules, weighting, GeoIP, honeypot and bench
-machinery are what make it a general gatekeeper; they are also what makes it need
-a YAML file. Here there is one rule, set on the command line. If you need per-path
-or per-user-agent rules, use Anubis — this is the "just put a wall here" tool.
+**Policy is a small rule file, not a language.** One `allow`/`deny`/`challenge`
+per line on user agent, path, header or IPv4 network, first match wins, optional
+`difficulty` per rule. No CEL, no weights, no thresholds, no GeoIP, no regex.
+Anubis's policy engine is what makes it a general gatekeeper; if you need
+`expression:` with `all`/`any` over headers, use Anubis. This is the "just put a
+wall here" tool that still knows your `.well-known` and your RSS reader.
 
 ## Options
 
+`--help` is the authority; this is the map. Values are parsed once, so
+`--flag=value` and `--flag value` both work, and every boolean takes
+`--no-flag` or `--flag=false` (`--cookie-secure=false`, `--no-cookie-secure`).
+
 ```
---listen ADDR:PORT     where to listen (default :8080)
---target URL           the backend to protect (required)
---algorithm NAME       fast, slow, sha256, argon2id, hashx or metarefresh (default sha256)
---difficulty N         bits for sha256/argon2id/hashx, nibbles for fast/slow (default 4)
---cookie-prefix NAME   cookie prefix (default techaro.lol-anubis)
--v, --verbose          log every request
+where to listen, what to protect
+  --listen ADDR:PORT         default :8080
+  --target URL               required
+  --target-sni NAME          TLS name for the backend, "auto" = the Host header
+  --target-host NAME         Host header for the backend
+  --target-insecure          do not verify the backend certificate
+  --base-prefix PATH         serve under a subpath, e.g. /anubis
+  --strip-base-prefix        strip that prefix before the backend sees it
+
+the challenge
+  --algorithm NAME           fast, slow, sha256, argon2id, hashx, metarefresh
+  --difficulty N             bits for sha256/argon2id/hashx, nibbles for fast/slow
+  --challenge-status N       status for the challenge page (default 200)
+  --deny-status N            status for a policy deny (default 200, see below)
+  --serve-robots-txt         answer /robots.txt with Disallow: /
+  --debug-benchmark-js       challenge every request, for measuring a client
+
+cookies
+  --cookie-prefix NAME       default techaro.lol-anubis
+  --cookie-domain DNS        Domain=
+  --cookie-expiration-time S Max-Age and JWT exp, 0 = session cookie (604800)
+  --cookie-secure[=B]        default: on exactly when we serve TLS
+  --cookie-http-only[=B]     default on
+  --cookie-same-site S       default, lax, strict, none (default lax)
+  --cookie-partitioned[=B]   CHIPS, only emitted with Secure (default on)
+
+who the client is
+  --custom-real-ip-header H  e.g. CF-Connecting-IP
+  --use-remote-address       ignore X-Forwarded-For and the custom header
+  --no-xff-strip-private     keep RFC1918 hops from X-Forwarded-For
+
+where a solved client may be sent
+  --redirect-domains LIST    comma list of hosts, glob, four stars max
+
+the token
+  --jwt-restriction-header H  bind the cookie to the client address (default
+                              X-Real-IP); pass "" to turn the binding off
+
+policy, honeypot, assets, TLS, metrics
+  --policy FILE  --honeypot-log FILE  --web DIR  --tls-cert/--tls-key
+  --no-honeypot  --stateless  --metrics-bind ADDR:PORT
 ```
 
 Difficulty 4 is a good default for a human-facing site (a few milliseconds of
 work); 12–16 is a wall worth having against a script.
+
+### Three places the defaults differ from Anubis, on purpose
+
+| | Anubis | here | why |
+|---|---|---|---|
+| cookie attributes | `Secure` and `SameSite=None` by default | `Secure` only when we serve TLS, `SameSite=Lax` | a Secure cookie handed out over plain HTTP is dropped, and this gate is usually on loopback behind a TLS terminator. `--cookie-secure --cookie-same-site none` gives the upstream behaviour verbatim |
+| `redir=` | any domain unless `REDIRECT_DOMAINS` is set | this host only unless `--redirect-domains` says otherwise | the challenge endpoint is otherwise a redirector for anyone who can hand you a pre-solved link |
+| deny | 200 with a page | 200 with a page, `--deny-status 403` for the honest answer | 200 is what Anubis ships, and what makes a scraper think it won |
+| metrics | binds `:9090` for you | off unless `--metrics-bind` is given | those counters describe your traffic and nothing authenticates the reader. Anubis opens the port for you; that is a convenience, and it is not free |
 
 ## The honeypot, ported from Anubis
 
@@ -226,6 +281,13 @@ window) and **retired on use**, so a solved challenge cannot be replayed:
 `expired`). `--stateless` restores the old stateless id encoding — the trade is in
 the design notes above.
 
+## Inspecting a running gate
+
+`kill -HUP <pid>` prints the effective settings, as parsed and validated, plus
+the counters: challenge issued/accepted/replayed/expired, trap hits, flagged
+networks. `--metrics-bind 127.0.0.1:9090` exposes the same numbers in Prometheus
+form, and `GET /healthz` on that port answers `OK`.
+
 ## HTTPS
 
 ```bash
@@ -259,11 +321,15 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
   which is fine behind a reverse proxy and keeps the listener readable. TLS itself
   is there (`--tls-cert`/`--tls-key`, and `--target https://` with
   `--target-insecure` for a self-signed backend).
-- **No imprint page and no `make-challenge` API.** `pass-challenge`, `check`,
-  `ping`, the state endpoint and the honeypot are implemented.
+- **No imprint page, no OpenGraph rewriting, no localization.** `pass-challenge`,
+  `check`, `ping`, the state endpoint, the honeypot, `robots.txt` and the
+  Prometheus `/metrics` are implemented. The store backends (bbolt, valkey, S3),
+  OpenGraph passthrough and CEL `expression:` rules are the next things worth
+  porting; `PARITY.md` is the full gap list with file references.
 - **Policy is a flat file, not a language.** `allow`/`deny`/`challenge` on user
-  agent, path, header or network, first match wins. No weights, no expressions,
-  no per-rule difficulty beyond what the line says.
+  agent, path, header or IPv4 network, first match wins, one optional
+  `difficulty` per line. No regex, no weights, no thresholds, no CEL, no GeoIP,
+  no DNSBL, no imports, and no per-rule algorithm: the algorithm is a global.
 - **`--stateless` gives up replay protection.** By default an issued challenge is
   consumed once; that table is what makes a second submission fail.
 
@@ -284,10 +350,15 @@ a site owner actually configures. That is the point: `--target` and you are done
 
 ```bash
 ./test-all-algorithms.sh      # all six algorithms, needs a backend on :8002
+python3 test_parity.py        # the flags taken from cmd/anubis, checked on the wire
 ```
 
-It starts a backend itself if one is not running and kills/restarts betterAnusbis
-per algorithm. `wasm/live-server.md` in the parent repository has a policy file for
+`test-all-algorithms.sh` starts a backend itself if one is not running and
+kills/restarts betterAnusbis per algorithm. `test_parity.py` starts both sides
+itself and asserts what the HTTP response says: status lines, every Set-Cookie
+attribute, the Location header after a blocked redirect, the counters a scrape
+returns, and the headers the backend received after XFF flattening. 54 checks, no
+logs read. `wasm/live-server.md` in the parent repository has a policy file for
 the real Anubis if you want to compare side by side.
 
 ---

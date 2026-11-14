@@ -151,6 +151,7 @@ policy, honeypot, assets, TLS, metrics
   --bind-network tcp|unix  --socket-mode 0770  --metrics-bind-network tcp|unix
   --difficulty-in-jwt  --webmaster-email ADDR  --preserve-referer-query-param
   --target-disable-keepalive (accepted; this gate always closes)
+  --geoip-country PATH  --geoip-asn PATH  --geoip-lookup IP  --dnsbl
 ```
 
 Every flag is also an environment variable, upper case with dashes as
@@ -328,9 +329,15 @@ accumulation, `thresholds` with the arithmetic subset of CEL (`weight <= 0`,
 `path.startsWith`, `headers["H"].matches`, `host`, `load_1m`/`load_15m`),
 `status_codes`, `honeypot.enabled`, and `import:` including `(data)/`.
 
-What is reported and skipped, by name, at load: `geoip` and `asns` matchers,
-`verifyFCrDNS`, the `openGraph`, `store`, `metrics`, `logging` and `impressum`
-blocks, and `dnsbl: true`. Nothing is silently reinterpreted: a rule that
+`geoip.countries` and `asns.match` work when `--geoip-country` and `--geoip-asn`
+point at MaxMind databases: the reader is this project's own, validated against
+MaxMind's test files checked in under `tools/geoip-testdata`, and
+`--geoip-lookup IP` prints what it thinks about an address. `dnsbl: true` is
+honoured too, through DroneBL, cached for a day.
+
+What is reported and skipped, by name, at load: `geoip` and `asns` matchers when
+no database is configured, `verifyFCrDNS` in shapes the evaluator cannot read,
+the `openGraph`, `store`, `metrics`, `logging` and `impressum` blocks. Nothing is silently reinterpreted: a rule that
 cannot be evaluated logs "will never match" rather than quietly matching
 everything or nothing.
 

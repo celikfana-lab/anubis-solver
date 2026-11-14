@@ -497,7 +497,7 @@ static int verify_answer(const char *algorithm, const char *random_data, unsigne
         rc = anubis_verify_argon2id(random_data, (uint32_t)nonce, difficulty, out);
     } else if (!strcasecmp(algorithm, "hashx")) {
         rc = anubis_verify_hashx(random_data, (uint32_t)nonce, difficulty, out);
-    } else if (!strcasecmp(algorithm, "metarefresh")) {
+    } else if (!strcasecmp(algorithm, "metarefresh") || !strcasecmp(algorithm, "preact")) {
         char hex[65];
         if (anubis_sha256_hex(random_data, strlen(random_data), hex) != ANUBIS_OK) return -1;
         rc = ANUBIS_OK;                     /* the client's `response` is that digest */
@@ -536,6 +536,7 @@ typedef struct {
     char rd[65];
     char algorithm[24];
     char referer[256];
+    long long issued_ms;
     int difficulty;
     time_t issued;
     int spent;
@@ -562,6 +563,11 @@ static void ch_issue(const char *id, const char *rd, int difficulty, const char 
             snprintf(e->referer, sizeof e->referer, "%s", referer ? referer : "");
             e->difficulty = difficulty;
             e->issued = now;
+            {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                e->issued_ms = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+            }
             e->spent = 0;
             e->used = 1;
             ch_issued++;
@@ -574,6 +580,11 @@ static void ch_issue(const char *id, const char *rd, int difficulty, const char 
             snprintf(e->referer, sizeof e->referer, "%s", referer ? referer : "");
             e->difficulty = difficulty;
             e->issued = now;
+            {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                e->issued_ms = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+            }
             e->spent = 0;
             pthread_mutex_unlock(&ch_lock);
             return;
@@ -621,6 +632,26 @@ static int ch_peek_algorithm(const char *id, char *out, size_t cap) {
         if (!e->used) break;
         if (strcmp(e->id, id) != 0) continue;
         snprintf(out, cap, "%s", e->algorithm);
+        found = 1;
+        break;
+    }
+    pthread_mutex_unlock(&ch_lock);
+    return found;
+}
+
+/* When it was issued, in milliseconds, so a preact wait of a few hundred is not
+ * rounded to a whole second. */
+static int ch_peek_issued_ms(const char *id, long long *out) {
+    if (!cfg.stateful || !id) return 0;
+    uint32_t h = 2166136261u;
+    for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    int found = 0;
+    pthread_mutex_lock(&ch_lock);
+    for (int probe = 0; probe < 32; probe++) {
+        ch_entry *e = &ch_table[(h + (uint32_t)probe) % CH_BUCKETS];
+        if (!e->used) break;
+        if (strcmp(e->id, id) != 0) continue;
+        *out = e->issued_ms;
         found = 1;
         break;
     }
@@ -2916,6 +2947,27 @@ function buildModule(challenge) {
     }, wait+50);
     return;
   }
+  if(algo==="preact"){
+    // preact's proof is patience plus the digest of the random data, and the
+    // server also wants the verification cookie from this page
+    // (lib/challenge/preact/preact.go:74-85). Anubis's own client waits 125 ms
+    // per point; the server only insists on 80.
+    const wait=diff*125;
+    say("waiting "+(wait/1000).toFixed(1)+" s");
+    const t0=performance.now();
+    setTimeout(async ()=>{
+      const bytes=new TextEncoder().encode(ch.randomData);
+      const h=await crypto.subtle.digest("SHA-256",bytes);
+      const result=Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,"0")).join("");
+      const u=new URL("/.within.website/x/cmd/anubis/api/pass-challenge",location.origin);
+      u.searchParams.set("id",ch.id);
+      u.searchParams.set("result",result);
+      u.searchParams.set("redir",location.pathname+location.search);
+      u.searchParams.set("elapsedTime",String(Math.round(performance.now()-t0)));
+      location.replace(u.toString());
+    }, wait+50);
+    return;
+  }
   // Our own kernels, served next to the page. Same ABI as the modules Anubis
   // ships: data_ptr / set_data_length / anubis_work / result_hash_*.
   const KERNELS={sha256:"sha256_pow_batch.wasm","wasm-sha256":"sha256_pow_batch.wasm",
@@ -3135,7 +3187,8 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
  * the thing this project is avoiding.
  */
 static const char *const known_algorithms[] = {"fast", "slow", "sha256", "wasm-sha256",
-                                              "argon2id", "hashx", "metarefresh", NULL};
+                                              "argon2id", "hashx", "metarefresh", "preact",
+                                              NULL};
 
 static int algorithm_known(const char *name) {
     for (int i = 0; known_algorithms[i]; i++)
@@ -4932,7 +4985,8 @@ static void handle_connection(conn *c, const char *peer_ip) {
         if (ch_peek_algorithm(id, peeked_algo, sizeof peeked_algo) && peeked_algo[0])
             algorithm = peeked_algo;
         int used_difficulty = cfg.difficulty;
-        int need_work = strcasecmp(algorithm, "metarefresh") != 0;
+        int need_work = strcasecmp(algorithm, "metarefresh") != 0 &&
+                        strcasecmp(algorithm, "preact") != 0;
 
         if (!id || (need_work && (!response || !nonce_s))) {
             const char *msg = "betterAnusbis: pass-challenge needs id, response and nonce\n";
@@ -4941,15 +4995,37 @@ static void handle_connection(conn *c, const char *peer_ip) {
 
             /* metarefresh: no hashing, just elapsed time and the challenge echoed
              * back, exactly as lib/challenge/metarefresh/metarefresh.go checks */
-            if (!strcasecmp(algorithm, "metarefresh")) {
+            if (!strcasecmp(algorithm, "metarefresh") || !strcasecmp(algorithm, "preact")) {
+                int is_preact = !strcasecmp(algorithm, "preact");
                 char gbuf[512];
-                const char *got = query_param(req.query, "challenge", gbuf, sizeof gbuf);
-                long long wait_ms = (long long)cfg.difficulty * 800;
-                long long waited = issued_at ? (long long)time(NULL) * 1000 - issued_at * 1000
-                                             : wait_ms;
+                const char *got = query_param(req.query, is_preact ? "result" : "challenge",
+                                              gbuf, sizeof gbuf);
+                /* preact: 80 ms per point (lib/challenge/preact/preact.go:74);
+                 * metarefresh: 800 ms per point */
+                long long wait_ms = (long long)cfg.difficulty * (is_preact ? 80 : 800);
+                long long issued_ms = 0, now_ms;
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                now_ms = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+                long long waited = ch_peek_issued_ms(id, &issued_ms) && issued_ms
+                                       ? now_ms - issued_ms
+                                       : (issued_at ? now_ms - issued_at * 1000 : wait_ms);
                 int time_ok = waited >= wait_ms;
-                int data_ok = have_challenge && got && strlen(got) == strlen(rd_hex) &&
+                int data_ok = 0;
+                if (is_preact) {
+                    /* result is the hex digest of the hex random data, not the
+                     * random data itself (:80-85) */
+                    char expect[65], cookie_id[128];
+                    if (have_challenge &&
+                        anubis_sha256_hex(rd_hex, strlen(rd_hex), expect) == ANUBIS_OK &&
+                        got && strlen(got) == 64 && !strcasecmp(got, expect) &&
+                        find_cookie(req.headers, cfg.verify_name, cookie_id, sizeof cookie_id) &&
+                        !strcmp(cookie_id, id))
+                        data_ok = 1;
+                } else {
+                    data_ok = have_challenge && got && strlen(got) == strlen(rd_hex) &&
                               memcmp(got, rd_hex, strlen(rd_hex)) == 0;
+                }
                 valid = time_ok && data_ok;
                 if (!valid) {
                     logmsg("metarefresh rejected: waited %lld of %lld ms, challenge %s",
@@ -4965,7 +5041,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
                                  cfg.cookie_name, token, attrs);
                         respond_redirect(c, go, extra);
                         __atomic_fetch_add(&m_validated, 1, __ATOMIC_RELAXED);
-                        logmsg("metarefresh passed (waited %lld ms)", waited);
+                        logmsg("%s passed (waited %lld ms)", algorithm, waited);
                     } else {
                         respond(c, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
                     }
@@ -4973,8 +5049,10 @@ static void handle_connection(conn *c, const char *peer_ip) {
                     __atomic_fetch_add(&m_failed, 1, __ATOMIC_RELAXED);
                     char msg[512];
                     snprintf(msg, sizeof msg,
-                             "betterAnusbis: metarefresh wants a %lld ms wait and the challenge "
-                             "echoed as ?challenge=<randomData>\n", wait_ms);
+                             "betterAnusbis: %s wants a %lld ms wait and %s\n", algorithm,
+                             wait_ms,
+                             is_preact ? "?result=<sha256 of the random data plus a cookie>"
+                                       : "the challenge echoed as ?challenge=<randomData>");
                     respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
                 }
                 goto done;
@@ -5342,7 +5420,7 @@ static void usage(FILE *out) {
         "  --strip-base-prefix    strip it again before the target sees the request\n"
         "\n"
         "the challenge\n"
-        "  --algorithm NAME       fast, slow, sha256, argon2id, hashx or metarefresh\n"
+        "  --algorithm NAME       fast, slow, sha256, argon2id, hashx, metarefresh or preact\n"
         "                         (default sha256)\n"
         "  --difficulty N         difficulty; bits for sha256/argon2id/hashx,\n"
         "                         nibbles for fast/slow (default 4)\n"

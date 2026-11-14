@@ -58,8 +58,8 @@ Control flow, exactly (`internal/dnsbl/dnsbl.go:76-88`):
 - Any other lookup error (timeout, SERVFAIL, refusal) -> `Unknown` **and** an error is returned.
 - Lookup succeeds -> `responseFromIPs`.
 - `responseFromIPs` (`internal/dnsbl/dnsbl.go:91-101`): if the answer list is non-empty but contains no IPv4 answer, the verdict is
-  `UnknownSpambotOrDrone` (6), i.e. a hit. Only an empty answer list returns 6 as a fallback too; both branches produce
-  6, so "name exists, no A record" is a hit upstream, not a clean result.
+  `UnknownSpambotOrDrone` (6), i.e. a hit. An empty answer list also returns 6 (`responseFromIPs` falls through), so "name exists, no A record" is a
+  hit upstream, not a clean result.
 
 Note the asymmetry a C port must decide on: upstream treats NXDOMAIN and "no records" as clean only when Go's DNS
 resolver reports `IsNotFound`; a NOERROR response with ANCOUNT=0 is reported by Go as a not-found error (**unverified**
@@ -83,12 +83,12 @@ Order in the request path (`lib/anubis.go:337-359`): the policy check runs first
 
 On a non-zero verdict (`lib/anubis.go:511-520`):
 
-- `respondWithStatus` with the HTML error page and status `status_codes.DENY` (`lib/anubis.go:519`), which defaults to
+- `respondWithStatus` with the HTML error page and status `status_codes.DENY` (`lib/anubis.go:518`), which defaults to
   200 (`lib/config/config.go:388-392`) and is configurable (`lib/config/config.go:285-306`).
 - Message: `"<dronebl_entry>: <class name>, <see_dronebl_lookup> https://dronebl.org/lookup?ip=<ip>"`, using locale keys
   `dronebl_entry` and `see_dronebl_lookup` (`lib/localization/locales/en.json:30-31`).
 - Log line `"DNSBL hit"` with the class name (`lib/anubis.go:512`).
-- Metric `anubis_dronebl_hits{status,asn,asn_description}` incremented on the lookup path only (`lib/anubis.go:82-85`,
+- Metric `anubis_dronebl_hits{status,asn,asn_description}` incremented on the lookup path only (`lib/anubis.go:80-85`,
   `:508`).
 - On a lookup error: status 503 with the internal-error page and the request is stopped (`lib/anubis.go:501-504`). That
   is fail-closed, not fail-open.
@@ -209,10 +209,10 @@ service" (`docs/docs/admin/configuration/open-graph.mdx:23-24`).
 
 1. If `override` is non-empty, return it immediately: no fetch, no cache (`internal/ogtags/cache.go:17-19`). So `override` is a complete
    replacement, not a per-tag overlay.
-2. Build the target: configured target scheme and host plus the **request path and query** (`internal/ogtags/ogtags.go:141-170`).
+2. Build the target: configured target scheme and host plus the **request path and query** (`internal/ogtags/ogtags.go:137-170`).
 3. Cache key: that target string, or `target + "|" + originalHost` when `considerHost` is set (`internal/ogtags/cache.go:54-65`).
 4. Cache lookup in `store.JSON[map[string]string]` prefix `ogtags:` (`internal/ogtags/ogtags.go:115`), TTL `openGraph.ttl`.
-5. Fetch (`internal/ogtags/fetch.go:20-130`): `GET`, 5 s client timeout (`internal/ogtags/ogtags.go:20`), `Host` header from
+5. Fetch (`internal/ogtags/fetch.go:23-130`): `GET`, 5 s client timeout (`internal/ogtags/ogtags.go:20`), `Host` header from
    `--target-host` or the visitor's host (`internal/ogtags/fetch.go:35-47`), `X-Forwarded-Proto: https`, `X-Forwarded-Host: <host>`,
    `User-Agent: Anubis-OGTag-Fetcher/1.0` (`internal/ogtags/fetch.go:42-47`), same-origin redirects only and at most 10
    (`internal/ogtags/fetch.go:115-125`), body capped at 8 MiB (`internal/ogtags/ogtags.go:19`, `internal/ogtags/fetch.go:99`), response must be 200 with
@@ -259,8 +259,8 @@ where the edge cases live (attributes in any order, single quotes, unquoted valu
 1. `--forced-language` / `FORCED_LANGUAGE`, if set (`cmd/anubis/main.go:56`, `anubis.go:64`, `lib/localization/localization.go:133-140`).
 2. Otherwise `Accept-Language`, parsed with quality factors; for each tag the full tag and its base language are tried,
    and `en` is appended as the final fallback (`lib/localization/localization.go:82-116`).
-3. `<html lang>` is set by localizing the `loading` key with a tag (`lib/localization/localization.go:125-131`, `web/index.templ:14`), so
-   `loading` must exist in every catalog.
+3. `<html lang>` is set by localizing the `loading` key with a tag (`lib/localization/localization.go:125-131`,
+   `web/index.templ:14`); `GetLang` returns `en` if that fails, so `loading` must exist in the English fallback.
 
 `T()` uses `MustLocalize` (`lib/localization/localization.go:120-123`): a key missing from the chosen locale falls back to English; a key
 missing from English too is a panic at render time. English is therefore the contract.
@@ -276,31 +276,32 @@ fall back to English.
 
 ### 4.3 Minimum keys for a challenge page
 
-A challenge page is `web/index.templ`'s `base` plus one algorithm body, with the title passed in. The required keys and
-their `en.json` lines:
+A challenge page is `web/index.templ`'s `base` plus one algorithm body, with the title passed in. The keys it needs, and
+their lines in `lib/localization/locales/en.json` (referred to as `en.json` below):
 
-| key | en.json | used by |
+| key | en.json | where it is used |
 |---|---|---|
 | `making_sure_not_bot` | `en.json:43` | page title (`lib/http.go:381`) |
-| `loading` | `en.json:2` | `<html lang>` probe (`lib/localization/localization.go:125`) and status line (`web/index.templ:151`) |
+| `loading` | `en.json:2` | `<html lang>` probe (`lib/localization/localization.go:125`, `web/index.templ:14`) and the PoW status line (`web/index.templ:151`) |
 | `protected_by` | `en.json:4` | footer (`web/index.templ:76`) |
 | `protected_from` | `en.json:5` | footer (`web/index.templ:76`) |
 | `made_with` | `en.json:6` | footer (`web/index.templ:78`) |
 | `mascot_design` | `en.json:7` | footer (`web/index.templ:80`) |
 | `celphase` | `en.json:44` | footer (`web/index.templ:80`) |
 | `version_info` | `en.json:10` | footer (`web/index.templ:87`) |
-| `go_home` | `en.json:12` | error body (`web/index.templ:104`, `:110`) |
-| `contact_webmaster` | `en.json:13` | error body (`web/index.templ:104`) |
-| `javascript_required` | `en.json:15` | PoW/wasm body (`lib/challenge/proofofwork/proofofwork_templ.go:124`, `wasm_templ.go`) |
-| `script_load_error` | `en.json:63` | PoW/wasm body (`lib/challenge/proofofwork/proofofwork_templ.go:82`) |
-| `connection_security` | `en.json:14` | metarefresh/preact body (`metarefresh_templ.go`) |
+| `javascript_required` | `en.json:15` | PoW and wasm bodies (`lib/challenge/proofofwork/proofofwork_templ.go:124`, `wasm_templ.go`) |
+| `script_load_error` | `en.json:63` | PoW and wasm bodies (`lib/challenge/proofofwork/proofofwork_templ.go:82`) |
+| `connection_security` | `en.json:14` | metarefresh and preact bodies (`metarefresh_templ.go`) |
 
-That is 13 keys for the cheapest complete page (base + PoW body). `errorPage` adds `oh_noes`
-(`en.json:40`) and the error message itself; `authorization_required`, `cookies_disabled`, `access_denied`,
-`internal_server_error` and the redirect errors are needed only for those paths (`lib/http.go:291`, `lib/anubis.go:648`,
+Counts: 10 keys for a complete PoW page (base plus `javascript_required` and `script_load_error`), 9 for metarefresh
+(base plus `connection_security` instead of the two JavaScript ones). The two bodies are alternatives, not additive.
+
+Separate from the challenge page, the error/deny pages need `oh_noes` (`en.json:40`), `go_home` (`en.json:12`),
+`contact_webmaster` (`en.json:13`), plus `authorization_required`, `cookies_disabled`, `access_denied`,
+`internal_server_error` and the redirect errors for specific paths (`lib/http.go:291`, `lib/anubis.go:648`,
 `lib/http.go:107`). A C port that hardcodes English needs no i18n library at all: the strings are plain UTF-8 and the
-only dynamic part is `<html lang>` and the `Accept-Language` negotiation. Full 30-locale parity is a larger, separate
-job (translation data, quality-factor parsing, fallback).
+only dynamic parts are `<html lang>` and `Accept-Language` negotiation. Full 30-locale parity is a larger, separate job
+(translation data, quality-factor parsing, fallback).
 
 ---
 
@@ -396,7 +397,7 @@ if available (not checked here).
 | 2 | verifyFCrDNS | moderate (PTR plus A/AAAA, name compression, optional regex) | high for crawler-friendly sites | it is what makes the shipped Yandex, VK and Telegram preview allow rules honest; without it, spoofing the UA is enough. Approximating with CIDR lists is possible but is a different trust model and still needs maintenance |
 | 3 | OpenGraph passthrough | moderate (bounded GET to the target plus a meta scanner plus cache) | medium-high | visible, user-facing: shared links stop rendering blank previews. Reuses the proxy path already present, and the override short-circuit makes a static version nearly free |
 | 4 | GeoIP | big (mmdb reader: metadata, 24/28/32-bit tree, tagged data section, then a download/refresh story) | high if ASN rules are used, otherwise zero | the technology is mechanical but sizeable, and it only pays off when an existing policy has `asns` or `geoip` conditions; for a fresh deployment, DNSBL and CIDR rules cover most of the same ground with far less code |
-| 5 | Localization | trivial for English-only, very big for 30 locales done properly | low to medium | the page renders fine with hardcoded English; the cost only appears when the audience is non-English and the operator expects translated pages. The contract is small (13 keys for a complete page), so a single-locale port is cheap and a faithful 30-locale port is a data problem, not a code problem |
+| 5 | Localization | trivial for English-only, very big for 30 locales done properly | low to medium | the page renders fine with hardcoded English; the cost only appears when the audience is non-English and the operator expects translated pages. The contract is small (10 keys for a complete page), so a single-locale port is cheap and a faithful 30-locale port is a data problem, not a code problem |
 
 Suggested order if only one can be done: DNSBL, because it is the smallest complete feature with the largest behavioural
 change, and it validates the DNS code that verifyFCrDNS then reuses.

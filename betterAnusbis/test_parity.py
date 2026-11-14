@@ -9,9 +9,11 @@ received. Nothing here is asserted from the log.
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -20,7 +22,6 @@ import tempfile
 import threading
 import time
 import base64
-import hashlib
 import stat as statmod
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlencode
@@ -848,7 +849,24 @@ def main():
         check("the imprint page is served", st == 200 and b"no cookies" in body and
               b"hosted by the cat" in body, body[:200])
 
-    # ---- 22. the old flags still behave
+    # ---- 22. preact: patience plus a digest, no proof of work
+    with Gate("--difficulty", "2", "--algorithm", "preact"):
+        st, hdrs, body = request("GET", "/")
+        text = body.decode(errors="replace")
+        rd = re.search(r'"randomData":"([0-9a-f]+)"', text).group(1)
+        vid = re.search(r'"id":"([^"]+)"', text).group(1)
+        vc = next((v.split(";")[0] for k, v in hdrs if k.lower() == "set-cookie"), "")
+        result = hashlib.sha256(rd.encode()).hexdigest()
+        path = API + f"pass-challenge?id={vid}&result={result}&redir=/"
+        st, _, body = request("GET", path, headers={"Cookie": vc})
+        check("preact refuses before difficulty x 80 ms", st == 403, st)
+        time.sleep(0.25)
+        st, hdrs, body = request("GET", path, headers={"Cookie": vc})
+        check("preact passes after the wait", st == 302, st)
+        st, _, body = request("GET", path)
+        check("preact wants the verification cookie", st == 403, st)
+
+    # ---- 23. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

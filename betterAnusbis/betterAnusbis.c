@@ -393,6 +393,17 @@ static int sign_token(char *out, size_t cap, const char *challenge_id,
     return 0;
 }
 
+/* Comparing a MAC with strcmp leaks where the first differing byte is, which is
+ * the one comparison in this program that must not do that (upstream uses
+ * hmac.Equal for the same reason). */
+static int ct_equal(const char *a, const char *b) {
+    size_t la = strlen(a), lb = strlen(b);
+    if (la != lb) return 0;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < la; i++) diff |= (unsigned char)(a[i] ^ b[i]);
+    return diff == 0;
+}
+
 static int verify_token(const char *token, const char *client_ip) {
     const char *dot1 = strchr(token, '.');
     if (!dot1) return 0;
@@ -427,7 +438,7 @@ static int verify_token(const char *token, const char *client_ip) {
         if (rc != 0) return 0;
         char want[128];
         if (!b64url_encode(mac, mac_len, want, sizeof want)) return 0;
-        if (strcmp(want, dot2 + 1) != 0) return 0;  /* signature */
+        if (!ct_equal(want, dot2 + 1)) return 0;     /* signature */
     }
 
     /* expiry, without a JSON parser: find "exp":<number> */
@@ -454,7 +465,12 @@ static int verify_token(const char *token, const char *client_ip) {
         const char *end = strchr(want, '"');
         if (!end) return 0;
         size_t n = (size_t)(end - want);
-        if (!client_ip || strlen(client_ip) != n || strncmp(want, client_ip, n) != 0) return 0;
+        if (!client_ip || strlen(client_ip) != n) return 0;
+        {
+            char have[128];
+            snprintf(have, sizeof have, "%.*s", (int)n, want);
+            if (!ct_equal(have, client_ip)) return 0;
+        }
     }
     return 1;
 }

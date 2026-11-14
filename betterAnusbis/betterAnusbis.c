@@ -38,6 +38,7 @@
 #include <unistd.h>
 
 #include <ctype.h>
+#include <regex.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
@@ -102,6 +103,8 @@ typedef struct {
     int debug_benchmark_js;      /* anubis --debug-benchmark-js: always challenge */
     const char *metrics_bind;    /* "" = no metrics listener at all */
     const char *jwt_restrict_hdr;/* bind the cookie to the client address; "" = off */
+    const char *secret_hex;      /* 64 hex chars: the HMAC key, so restarts keep cookies */
+    const char *secret_file;     /* read it from here, or create it here with 0600 */
 } config;
 
 static config cfg = {
@@ -140,6 +143,8 @@ static config cfg = {
     .debug_benchmark_js = 0,
     .metrics_bind = NULL,        /* upstream defaults to :9090, we default to off */
     .jwt_restrict_hdr = "X-Real-IP",
+    .secret_hex = NULL,
+    .secret_file = NULL,
 };
 
 static void logmsg(const char *fmt, ...) {
@@ -272,7 +277,7 @@ static int hmac_sha256(const uint8_t *key, size_t keylen, const uint8_t *msg, si
 
 /* A JWT HS256 with the claims Anubis uses, so tools that expect one can read it. */
 static int sign_token(char *out, size_t cap, const char *challenge_id,
-                      const char *restrict_to) {
+                      const char *restrict_to, const char *algorithm) {
     char payload[768];
     time_t now = time(NULL);
     /* policyRule is Anubis's rule hash; here it stands for the algorithm+difficulty.
@@ -285,7 +290,8 @@ static int sign_token(char *out, size_t cap, const char *challenge_id,
     snprintf(payload, sizeof payload,
              "{\"challenge\":\"%s\",\"method\":\"%s\",\"policyRule\":\"rule-0\","
              "\"action\":\"CHALLENGE\",\"iat\":%lld,\"exp\":%lld%s}",
-             challenge_id ? challenge_id : "issued", cfg.algorithm,
+             challenge_id ? challenge_id : "issued",
+             algorithm && *algorithm ? algorithm : cfg.algorithm,
              (long long)now,
              (long long)(now + (cfg.cookie_ttl > 0 ? cfg.cookie_ttl : COOKIE_TTL)),
              restrict_part);
@@ -431,6 +437,7 @@ static void respond_redirect(conn *c, const char *location, const char *extra_he
 typedef struct {
     char id[80];
     char rd[65];
+    char algorithm[24];
     int difficulty;
     time_t issued;
     int spent;
@@ -441,7 +448,7 @@ static ch_entry ch_table[CH_BUCKETS];
 static pthread_mutex_t ch_lock = PTHREAD_MUTEX_INITIALIZER;
 static long long ch_issued, ch_accepted, ch_replayed, ch_expired;
 
-static void ch_issue(const char *id, const char *rd, int difficulty) {
+static void ch_issue(const char *id, const char *rd, int difficulty, const char *algorithm) {
     if (!cfg.stateful) return;
     time_t now = time(NULL);
     uint32_t h = 2166136261u;
@@ -452,6 +459,7 @@ static void ch_issue(const char *id, const char *rd, int difficulty) {
         if (!e->used || now - e->issued > COOKIE_TTL) {
             snprintf(e->id, sizeof e->id, "%s", id);
             snprintf(e->rd, sizeof e->rd, "%s", rd);
+            snprintf(e->algorithm, sizeof e->algorithm, "%s", algorithm);
             e->difficulty = difficulty;
             e->issued = now;
             e->spent = 0;
@@ -462,6 +470,7 @@ static void ch_issue(const char *id, const char *rd, int difficulty) {
         }
         if (!strcmp(e->id, id)) {          /* re-issued: refresh it */
             snprintf(e->rd, sizeof e->rd, "%s", rd);
+            snprintf(e->algorithm, sizeof e->algorithm, "%s", algorithm);
             e->difficulty = difficulty;
             e->issued = now;
             e->spent = 0;
@@ -473,7 +482,8 @@ static void ch_issue(const char *id, const char *rd, int difficulty) {
 }
 
 /* 1 accepted (and retired), 0 unknown, -1 expired, -2 already spent */
-static int ch_take(const char *id, char *rd_out, size_t rd_cap, int *difficulty_out) {
+static int ch_take(const char *id, char *rd_out, size_t rd_cap, int *difficulty_out,
+                   char *algo_out, size_t algo_cap) {
     time_t now = time(NULL);
     uint32_t h = 2166136261u;
     for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
@@ -488,12 +498,33 @@ static int ch_take(const char *id, char *rd_out, size_t rd_cap, int *difficulty_
         e->spent = 1;
         snprintf(rd_out, rd_cap, "%s", e->rd);
         if (difficulty_out) *difficulty_out = e->difficulty;
+        if (algo_out) snprintf(algo_out, algo_cap, "%s", e->algorithm);
         ch_accepted++;
         rc = 1;
         break;
     }
     pthread_mutex_unlock(&ch_lock);
     return rc;
+}
+
+/* Which algorithm was this id issued for, without spending it? The metarefresh
+ * path has to know before it decides whether any work is involved. */
+static int ch_peek_algorithm(const char *id, char *out, size_t cap) {
+    if (!cfg.stateful || !id) return 0;
+    uint32_t h = 2166136261u;
+    for (const char *q = id; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    int found = 0;
+    pthread_mutex_lock(&ch_lock);
+    for (int probe = 0; probe < 32; probe++) {
+        ch_entry *e = &ch_table[(h + (uint32_t)probe) % CH_BUCKETS];
+        if (!e->used) break;
+        if (strcmp(e->id, id) != 0) continue;
+        snprintf(out, cap, "%s", e->algorithm);
+        found = 1;
+        break;
+    }
+    pthread_mutex_unlock(&ch_lock);
+    return found;
 }
 
 /* ------------------------------------------------------------ honeypot */
@@ -2622,15 +2653,16 @@ static char *prefix_api_paths(char *body) {
 }
 
 static void challenge_page(conn *c, const char *id, const char *random_data,
-                           const char *metadata_json, const char *test_cookie, int difficulty) {
+                           const char *metadata_json, const char *test_cookie,
+                           const char *algorithm, int difficulty) {
     char payload[2048];
     snprintf(payload, sizeof payload,
              "{\"rules\":{\"algorithm\":\"%s\",\"difficulty\":%d},"
              "\"challenge\":{\"issuedAt\":\"%lld\",\"metadata\":%s,\"id\":\"%s\","
              "\"method\":\"%s\",\"randomData\":\"%s\",\"policyRuleHash\":\"rule-0\","
              "\"difficulty\":%d,\"spent\":false,\"extensions\":null}}",
-             cfg.algorithm, difficulty, (long long)time(NULL), metadata_json, id,
-             cfg.algorithm, random_data, difficulty);
+             algorithm, difficulty, (long long)time(NULL), metadata_json, id,
+             algorithm, random_data, difficulty);
 
     size_t cap = strlen(payload) + strlen(CHALLENGE_JS) + 4096;
     char *body = malloc(cap);
@@ -2668,7 +2700,7 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
              "u.searchParams.set(\"id\",\"%s\");u.searchParams.set(\"response\",\"\");u.searchParams.set(\"nonce\",\"0\");"
              "u.searchParams.set(\"redir\",location.pathname);document.getElementById(\"manual\").href=u.toString();})();</script>"
              "</body></html>",
-             cfg.algorithm, difficulty, API_PREFIX, id, payload, CHALLENGE_JS, API_PREFIX, id);
+             algorithm, difficulty, API_PREFIX, id, payload, CHALLENGE_JS, API_PREFIX, id);
 
     /* the honeypot link: inside <script type="ignore">, so no browser renders it
      * but a crawler that parses HTML for hrefs finds it. Same markup Anubis uses,
@@ -2710,26 +2742,39 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
  * a header, or an IPv4/IPv6 CIDR. No regular expressions - a policy language is
  * the thing this project is avoiding.
  */
+static const char *const known_algorithms[] = {"fast", "slow", "sha256", "wasm-sha256",
+                                              "argon2id", "hashx", "metarefresh", NULL};
+
+static int algorithm_known(const char *name) {
+    for (int i = 0; known_algorithms[i]; i++)
+        if (!strcasecmp(name, known_algorithms[i])) return 1;
+    return 0;
+}
+
 typedef enum { RULE_ALLOW, RULE_DENY, RULE_CHALLENGE } rule_action;
 typedef enum { SEL_UA, SEL_PATH, SEL_HEADER, SEL_NET } rule_selector;
 
 typedef struct {
     rule_action action;
     rule_selector selector;
-    int match;                  /* 1 = contains, 2 = prefix, 3 = is */
-    char value[128];
+    int match;                  /* 1 = contains, 2 = prefix, 3 = is, 4 = regex */
+    char value[256];
+    char algorithm[24];         /* "" = the global --algorithm */
     char header[64];
     int difficulty;             /* 0 = the global default */
     int v4;                     /* for SEL_NET: IPv4 CIDR */
     int v6;                     /* for SEL_NET: IPv6 CIDR */
     uint32_t net_v4, mask_v4;
     uint8_t net_v6[16], mask_v6[16];
+    regex_t re;                 /* compiled when match == 4 */
+    int has_re;
 } rule;
 
 static rule rules[MAX_RULES];
 static int rule_count;
 static int default_action = RULE_CHALLENGE;
 static int default_difficulty;
+static char default_algorithm[24];
 
 static uint64_t network_key(const char *ip);
 
@@ -2762,18 +2807,33 @@ static int rule_matches(const rule *r, const request *req, const char *client_ip
         return 0;
     }
     if (!subject) return 0;
+    if (r->match == 4) return r->has_re && regexec(&r->re, subject, 0, NULL, 0) == 0;
     if (r->match == 1) return strstr(subject, r->value) != NULL;
     if (r->match == 2) return strncmp(subject, r->value, strlen(r->value)) == 0;
     return strcmp(subject, r->value) == 0;
 }
 
+/* Where the per-rule options start: the token after the match value. Searching
+ * the whole line for "algorithm" would find it inside a regex. */
+static const char *policy_tail(const char *line) {
+    const char *p = line;
+    for (int t = 0; t < 4; t++) {
+        while (*p == ' ' || *p == '\t') p++;
+        while (*p && *p != ' ' && *p != '\t') p++;
+    }
+    return p;
+}
+
 /* Returns the action to take, and sets *difficulty to the rule's own or the global. */
-static rule_action policy_decide(const request *req, const char *client_ip, int *difficulty) {
+static rule_action policy_decide(const request *req, const char *client_ip, int *difficulty,
+                                 const char **algorithm) {
     *difficulty = default_difficulty ? default_difficulty : cfg.difficulty;
+    *algorithm = default_algorithm[0] ? default_algorithm : cfg.algorithm;
     for (int i = 0; i < rule_count; i++) {
         if (!rule_matches(&rules[i], req, client_ip)) continue;
         __atomic_fetch_add(&m_policy[i][(int)rules[i].action], 1, __ATOMIC_RELAXED);
         if (rules[i].difficulty > 0) *difficulty = rules[i].difficulty;
+        if (rules[i].algorithm[0]) *algorithm = rules[i].algorithm;
         return rules[i].action;
     }
     __atomic_fetch_add(&m_policy[rule_count][(int)default_action], 1, __ATOMIC_RELAXED);
@@ -2789,13 +2849,20 @@ static void policy_load(const char *path) {
         if (hash) *hash = 0;
         char action[32] = "", sel[64] = "", how[32] = "", value[128] = "";
         int difficulty = 0;
-        int n = sscanf(line, "%31s %63s %31s %127s", action, sel, how, value);
+        int n = sscanf(line, "%31s %63s %31s %255s", action, sel, how, value);
         if (n < 2) continue;
         if (!strcmp(action, "default")) {
             default_action = (!strcmp(sel, "allow")) ? RULE_ALLOW
                              : (!strcmp(sel, "deny")) ? RULE_DENY : RULE_CHALLENGE;
             char *d = strstr(line, "difficulty");
             if (d && sscanf(d, "difficulty %d", &difficulty) == 1) default_difficulty = difficulty;
+            char *a = strstr(line, "algorithm");
+            if (a && sscanf(a, "algorithm %23s", default_algorithm) == 1 &&
+                !algorithm_known(default_algorithm)) {
+                logmsg("policy: %s is not a known algorithm; the default stays %s",
+                       default_algorithm, cfg.algorithm);
+                default_algorithm[0] = 0;
+            }
             continue;
         }
         if (rule_count >= MAX_RULES) { logmsg("policy: more than %d rules, ignoring the rest", MAX_RULES); break; }
@@ -2849,10 +2916,33 @@ static void policy_load(const char *path) {
         if (!strcmp(how, "contains")) r.match = 1;
         else if (!strcmp(how, "prefix")) r.match = 2;
         else if (!strcmp(how, "is")) r.match = 3;
-        else continue;
+        else if (!strcmp(how, "matches")) r.match = 4;
+        else {
+            logmsg("policy: %s is not contains, prefix, is or matches; that rule is ignored", how);
+            continue;
+        }
         snprintf(r.value, sizeof r.value, "%s", value);
-        char *d = strstr(line, "difficulty");
+        if (r.match == 4) {
+            int rc = regcomp(&r.re, r.value, REG_EXTENDED);
+            if (rc != 0) {
+                char why[256];
+                regerror(rc, &r.re, why, sizeof why);
+                logmsg("policy: /%s/ does not compile (%s); that rule is ignored", r.value, why);
+                continue;
+            }
+            r.has_re = 1;
+        }
+        const char *tail = policy_tail(line);
+        const char *d = strstr(tail, "difficulty");
         if (d && sscanf(d, "difficulty %d", &r.difficulty) == 1) { /* per-rule */ }
+        const char *a = strstr(tail, "algorithm");
+        if (a && sscanf(a, "algorithm %23s", r.algorithm) == 1) {
+            if (!algorithm_known(r.algorithm)) {
+                logmsg("policy: %s is not a known algorithm; rule %d keeps the global one",
+                       r.algorithm, rule_count);
+                r.algorithm[0] = 0;
+            }
+        }
         rules[rule_count++] = r;
     }
     fclose(f);
@@ -3030,7 +3120,14 @@ static void handle_connection(conn *c, const char *peer_ip) {
         unsigned long long nonce = nonce_s ? strtoull(nonce_s, NULL, 10) : 0;
         char digest[65];
         int valid = 0;
-        int need_work = strcasecmp(cfg.algorithm, "metarefresh") != 0;
+        /* Which algorithm this id was issued for. Peeked, not taken, because the
+         * metarefresh path answers before it would consume anything. */
+        char peeked_algo[24];
+        const char *algorithm = cfg.algorithm;
+        if (ch_peek_algorithm(id, peeked_algo, sizeof peeked_algo) && peeked_algo[0])
+            algorithm = peeked_algo;
+        int used_difficulty = cfg.difficulty;
+        int need_work = strcasecmp(algorithm, "metarefresh") != 0;
 
         if (!id || (need_work && (!response || !nonce_s))) {
             const char *msg = "betterAnusbis: pass-challenge needs id, response and nonce\n";
@@ -3039,7 +3136,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
 
             /* metarefresh: no hashing, just elapsed time and the challenge echoed
              * back, exactly as lib/challenge/metarefresh/metarefresh.go checks */
-            if (!strcasecmp(cfg.algorithm, "metarefresh")) {
+            if (!strcasecmp(algorithm, "metarefresh")) {
                 char gbuf[512];
                 const char *got = query_param(req.query, "challenge", gbuf, sizeof gbuf);
                 long long wait_ms = (long long)cfg.difficulty * 800;
@@ -3055,7 +3152,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
                 }
                 if (valid) {
                     char token[2048];
-                    if (sign_token(token, sizeof token, id, bind_to) == 0) {
+                    if (sign_token(token, sizeof token, id, bind_to, algorithm) == 0) {
                         char attrs[512];
                         cookie_attrs(attrs, sizeof attrs, cfg.cookie_ttl > 0 ? cfg.cookie_ttl : -1);
                         char extra[4096];
@@ -3079,11 +3176,14 @@ static void handle_connection(conn *c, const char *peer_ip) {
             }
 
             if (cfg.stateful) {
-                char stored[65];
+                char stored[65], taken_algo[24] = "";
                 int stored_difficulty = 0;
-                int rc = ch_take(id, stored, sizeof stored, &stored_difficulty);
+                int rc = ch_take(id, stored, sizeof stored, &stored_difficulty,
+                                 taken_algo, sizeof taken_algo);
                 if (rc == 1) {
-                    valid = verify_answer(cfg.algorithm, stored, nonce, stored_difficulty,
+                    if (taken_algo[0]) algorithm = taken_algo;
+                    used_difficulty = stored_difficulty;
+                    valid = verify_answer(algorithm, stored, nonce, stored_difficulty,
                                           digest, sizeof digest);
                     if (valid && strcasecmp(response, digest) != 0) {
                         logmsg("rejecting: response %s is not the digest %s for nonce %llu",
@@ -3105,7 +3205,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
             } else if (issued_at && time(NULL) - issued_at > COOKIE_TTL) {
                 logmsg("rejecting: challenge %s expired", id);
             } else {
-                valid = verify_answer(cfg.algorithm, rd_hex, nonce, cfg.difficulty,
+                valid = verify_answer(algorithm, rd_hex, nonce, cfg.difficulty,
                                       digest, sizeof digest);
                 if (valid && strcasecmp(response, digest) != 0) {
                     logmsg("rejecting: response %s is not the digest %s for nonce %llu",
@@ -3122,7 +3222,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
                 respond(c, 403, "Forbidden", NULL, NULL, msg, strlen(msg));
             } else {
                 char token[2048];
-                if (sign_token(token, sizeof token, id, bind_to) != 0) {
+                if (sign_token(token, sizeof token, id, bind_to, algorithm) != 0) {
                     respond(c, 500, "Internal Server Error", NULL, NULL, "cannot sign\n", 13);
                 } else {
                     char attrs[512];
@@ -3135,7 +3235,7 @@ static void handle_connection(conn *c, const char *peer_ip) {
                     respond_redirect(c, go, extra);
                     __atomic_fetch_add(&m_validated, 1, __ATOMIC_RELAXED);
                     logmsg("challenge passed (nonce %llu, %s, difficulty %d)", nonce,
-                           cfg.algorithm, cfg.difficulty);
+                           algorithm, used_difficulty);
                 }
             }
         }
@@ -3166,7 +3266,8 @@ static void handle_connection(conn *c, const char *peer_ip) {
         /* issue a challenge — unless the policy says otherwise */
         int difficulty = cfg.difficulty;
         int policy_difficulty = 0;
-        rule_action action = policy_decide(&req, client_ip, &policy_difficulty);
+        const char *algorithm = cfg.algorithm;
+        rule_action action = policy_decide(&req, client_ip, &policy_difficulty, &algorithm);
         if (action == RULE_ALLOW) {
             __atomic_fetch_add(&m_requests[M_ALLOWED], 1, __ATOMIC_RELAXED);
             __atomic_fetch_add(&m_proxied, 1, __ATOMIC_RELAXED);
@@ -3183,6 +3284,14 @@ static void handle_connection(conn *c, const char *peer_ip) {
             goto done;
         }
         if (policy_difficulty > 0) difficulty = policy_difficulty;
+        if (!cfg.stateful && strcmp(algorithm, cfg.algorithm) != 0) {
+            /* The id has no room for an algorithm, so a per-rule algorithm needs
+             * the ledger. Say so rather than hand out a challenge nobody can
+             * verify. */
+            logmsg("policy: rule wanted %s but --stateless cannot remember that; "
+                   "issuing %s", algorithm, cfg.algorithm);
+            algorithm = cfg.algorithm;
+        }
         /* A network the honeypot has caught gets a harder challenge. Anubis adds
          * weight 30 to its policy rule and lets the thresholds decide; with one
          * rule here, +8 bits is the equivalent wall. */
@@ -3206,10 +3315,10 @@ static void handle_connection(conn *c, const char *peer_ip) {
                      "{\"Referer\":\"\",\"User-Agent\":\"%.200s\",\"X-Real-IP\":\"%s\"}",
                      ua ? ua : "", client_ip);
 
-            ch_issue(id, rd_hex, difficulty);
+            ch_issue(id, rd_hex, difficulty, algorithm);
             __atomic_fetch_add(&m_requests[M_CHALLENGED], 1, __ATOMIC_RELAXED);
             __atomic_fetch_add(&m_issued, 1, __ATOMIC_RELAXED);
-            challenge_page(c, id, rd_hex, metadata, id, difficulty);
+            challenge_page(c, id, rd_hex, metadata, id, algorithm, difficulty);
         }
     }
 
@@ -3384,6 +3493,10 @@ static void usage(FILE *out) {
         "TLS, metrics, noise\n"
         "  --tls-cert FILE        serve HTTPS with this PEM certificate chain\n"
         "  --tls-key FILE         ...and this PEM private key\n"
+        "  --secret-file PATH     keep the signing key here, creating it 0600 if it\n"
+        "                         is missing; without this the key is random per run\n"
+        "                         and every restart logs everyone out\n"
+        "  --secret-hex HEX       the same key, given inline (64 hex characters)\n"
         "  --jwt-restriction-header NAME\n"
         "                         bind the auth cookie to the client address, the way\n"
         "                         Anubis does by default; pass \"\" to turn it off\n"
@@ -3395,7 +3508,7 @@ static void usage(FILE *out) {
         "  -h, --help             this text\n"
         "  -V, --version          version\n"
         "\n"
-        "send SIGHUP to print the current settings; the secret is generated at start.\n");
+        "send SIGHUP to print the current settings.\n");
 }
 
 /* The option table. Values are parsed once, so --flag=value and --flag value both
@@ -3445,6 +3558,8 @@ static const arg_spec args[] = {
     {"tls-key", ARG_STR, &cfg.tls_key},
     {"metrics-bind", ARG_STR, &cfg.metrics_bind},
     {"jwt-restriction-header", ARG_STR, &cfg.jwt_restrict_hdr},
+    {"secret-hex", ARG_STR, &cfg.secret_hex},
+    {"secret-file", ARG_STR, &cfg.secret_file},
 };
 
 static int parse_args(int argc, char **argv) {
@@ -3525,6 +3640,51 @@ static int parse_args(int argc, char **argv) {
     return 0;
 }
 
+/* The signing key. A fresh random key per process is the one thing an operator
+ * notices immediately: every restart logs every client out. So a key can be
+ * given on the command line, or read from a file that is created on first start. */
+static int load_secret(const char *path, uint8_t out[32]) {
+    char buf[128];
+    FILE *f = fopen(path, "r");
+    if (f) {
+        size_t n = fread(buf, 1, sizeof buf - 1, f);
+        fclose(f);
+        buf[n] = 0;
+        while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r' || buf[n - 1] == ' '))
+            buf[--n] = 0;
+        if (hex_decode(buf, out, 32) != 32) {
+            fprintf(stderr, "betterAnusbis: %s does not hold 32 bytes of hex. Refusing to "
+                            "replace a key that may already be in use\n", path);
+            return -1;
+        }
+        return 0;
+    }
+    if (errno != ENOENT) {
+        fprintf(stderr, "betterAnusbis: cannot read %s: %s\n", path, strerror(errno));
+        return -1;
+    }
+    if (random_bytes(out, 32) != 0) {
+        fprintf(stderr, "betterAnusbis: cannot read /dev/urandom\n");
+        return -1;
+    }
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) {
+        fprintf(stderr, "betterAnusbis: cannot create %s: %s\n", path, strerror(errno));
+        return -1;
+    }
+    char hex[65];
+    hex_encode(out, 32, hex);
+    ssize_t w = write(fd, hex, 64);
+    close(fd);
+    if (w != 64) {
+        fprintf(stderr, "betterAnusbis: short write to %s\n", path);
+        return -1;
+    }
+    logmsg("wrote a new signing key to %s (0600); keep that file, or every restart "
+           "logs everyone out", path);
+    return 0;
+}
+
 static volatile sig_atomic_t hup_pending;
 
 static void on_reload(int sig) {
@@ -3551,6 +3711,8 @@ static void print_settings(void) {
     logmsg("settings: statuses challenge=%d deny=%d robots_txt=%s benchmark_js=%s",
            cfg.challenge_status, cfg.deny_status, cfg.serve_robots_txt ? "yes" : "no",
            cfg.debug_benchmark_js ? "yes" : "no");
+    logmsg("settings: signing key=%s", cfg.secret_hex && *cfg.secret_hex ? "--secret-hex"
+           : cfg.secret_file && *cfg.secret_file ? cfg.secret_file : "(random per process)");
     logmsg("settings: honeypot=%s threshold=%d log=%s stateful=%s policy=%s web=%s tls=%s",
            cfg.honeypot ? "yes" : "no", cfg.flag_threshold,
            cfg.honeypot_log ? cfg.honeypot_log : "(none)", cfg.stateful ? "yes" : "no",
@@ -3572,13 +3734,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "betterAnusbis: --difficulty must be 0..64\n");
         return 2;
     }
-    static const char *known[] = {"fast", "slow", "sha256", "wasm-sha256", "argon2id",
-                                  "hashx", "metarefresh", NULL};
-    int ok = 0;
-    for (int i = 0; known[i]; i++) if (!strcasecmp(cfg.algorithm, known[i])) ok = 1;
+    int ok = algorithm_known(cfg.algorithm);
     if (!ok) {
         fprintf(stderr, "betterAnusbis: unknown algorithm %s\n  known:", cfg.algorithm);
-        for (int i = 0; known[i]; i++) fprintf(stderr, " %s", known[i]);
+        for (int i = 0; known_algorithms[i]; i++) fprintf(stderr, " %s", known_algorithms[i]);
         fputc('\n', stderr);
         return 2;
     }
@@ -3641,7 +3800,14 @@ int main(int argc, char **argv) {
     if (cfg.policy_file) policy_load(cfg.policy_file);
     parse_target(cfg.target);
     snprintf(cfg.cookie_name, sizeof cfg.cookie_name, "%s-auth", cfg.cookie_prefix);
-    if (random_bytes(cfg.secret, sizeof cfg.secret) != 0) {
+    if (cfg.secret_hex && *cfg.secret_hex) {
+        if (hex_decode(cfg.secret_hex, cfg.secret, sizeof cfg.secret) != (int)sizeof cfg.secret) {
+            fprintf(stderr, "betterAnusbis: --secret-hex wants exactly 64 hex characters\n");
+            return 2;
+        }
+    } else if (cfg.secret_file && *cfg.secret_file) {
+        if (load_secret(cfg.secret_file, cfg.secret) != 0) return 1;
+    } else if (random_bytes(cfg.secret, sizeof cfg.secret) != 0) {
         fprintf(stderr, "betterAnusbis: cannot read /dev/urandom\n");
         return 1;
     }

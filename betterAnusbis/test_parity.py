@@ -413,7 +413,63 @@ def main():
         check("with no such header at all, the computed address is the binding",
               st == 200 and b"PAST THE WALL" in body, st)
 
-    # ---- 11. the old flags still behave
+    # ---- 11. the signing key outlives the process
+    secret = os.path.join(tempfile.mkdtemp(), "signing.key")
+    with Gate("--difficulty", "6", "--secret-file", secret):
+        status, hdrs, body, ch = solve_once()
+        token = next((c.split("=", 1)[1].split(";")[0] for c in set_cookies(hdrs)
+                      if "cookie-verification" not in c), "")
+        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        check("a token works while the gate that minted it is up",
+              st == 200 and b"PAST THE WALL" in body, st)
+    check("--secret-file created the key", os.path.exists(secret), secret)
+    mode = os.stat(secret).st_mode & 0o777 if os.path.exists(secret) else 0
+    check("the key file is 0600", mode == 0o600, oct(mode))
+    with Gate("--difficulty", "6", "--secret-file", secret):
+        st, _, body = request("GET", "/", headers={"Cookie": f"techaro.lol-anubis-auth={token}"})
+        check("the same token still works after a restart",
+              st == 200 and b"PAST THE WALL" in body, st)
+    junk = os.path.join(tempfile.mkdtemp(), "junk.key")
+    with open(junk, "w") as f:
+        f.write("this is not a key\n")
+    dead = subprocess.run(
+        [os.path.join(HERE, "betterAnusbis"), "--listen", f"127.0.0.1:{GATE_PORT}",
+         "--target", f"http://127.0.0.1:{BACKEND_PORT}", "--secret-file", junk],
+        capture_output=True, timeout=10)
+    check("a key file with the wrong contents is refused, not overwritten",
+          dead.returncode != 0 and b"Refusing" in dead.stderr,
+          f"{dead.returncode} {dead.stderr[:120]!r}")
+    with open(junk) as f:
+        check("...and the bad file was left alone", "not a key" in f.read())
+
+    # ---- 12. regex rules, and the per-rule algorithm
+    policy = ("deny ua matches (ParityBot|Scraper)[0-9]+\n"
+              "challenge path matches ^/private/ difficulty 8\n")
+    with Gate("--difficulty", "6", policy=policy):
+        st, _, body = request("GET", "/", headers={"User-Agent": "ParityBot42"})
+        check("ua matches a regex and denies", st == 200 and b"denied by policy" in body,
+              f"{st} {body[:60]!r}")
+        st, _, body = request("GET", "/", headers={"User-Agent": "ParityBot"})
+        check("the regex does not match what it should not",
+              b"anubis_challenge" in body, body[:60])
+        st, _, body = request("GET", "/private/x")
+        ch = anubis_solver.parse_challenge(body.decode(errors="replace"))
+        check("path matches a regex and sets the difficulty",
+              ch is not None and ch.difficulty == 8, ch and ch.difficulty)
+    with Gate("--difficulty", "6", policy="deny ua matches [unclosed\n"):
+        st, _, body = request("GET", "/")
+        check("a regex that does not compile does not take the gate down",
+              st == 200 and b"anubis_challenge" in body, st)
+
+    pol = "challenge ua contains RuleBot algorithm fast difficulty 3\n"
+    with Gate("--difficulty", "6", policy=pol):
+        status, hdrs, body, ch = solve_once(headers={"User-Agent": "RuleBot/1.0"})
+        check("a rule can name its own algorithm", ch.algorithm == "fast", ch.algorithm)
+        check("and the challenge it issued is solved as that algorithm", status == 302, status)
+        status, hdrs, body, ch = solve_once(headers={"User-Agent": "Mozilla/5.0"})
+        check("everyone else keeps the global algorithm", ch.algorithm == "sha256", ch.algorithm)
+
+    # ---- 13. the old flags still behave
     with Gate("--difficulty", "6", "--stateless"):
         status, hdrs, body, ch = solve_once()
         check("--stateless still solves", status == 302, status)

@@ -135,6 +135,9 @@ where a solved client may be sent
 the token
   --jwt-restriction-header H  bind the cookie to the client address (default
                               X-Real-IP); pass "" to turn the binding off
+  --secret-file PATH          keep the signing key here (0600, created on first
+                              run); without it the key is random per process
+  --secret-hex HEX            the same key inline, 64 hex characters
 
 policy, honeypot, assets, TLS, metrics
   --policy FILE  --honeypot-log FILE  --web DIR  --tls-cert/--tls-key
@@ -250,22 +253,32 @@ measurements, including the flag variants that did not work.
 `--policy FILE`, one rule per line, first match wins:
 
 ```
-allow     path prefix /health          # never challenge this
-allow     net 10.0.0.0/8               # the office is trusted
-deny      ua contains AhrefsBot        # well-known bad crawler
+allow     path prefix /health                    # never challenge this
+allow     net 10.0.0.0/8                         # the office is trusted
+allow     net 2001:db8::/32                      # both address families
+deny      ua matches (AhrefsBot|SemrushBot)      # POSIX extended regex
 challenge ua contains curl difficulty 16
+challenge ua matches ^python-requests algorithm argon2id difficulty 4
 default   challenge difficulty 4
 ```
 
-Selectors: `ua`, `path`, `header:<name>`, `net` (IPv4 CIDR). Matches: `contains`,
-`prefix`, `is`. Actions: `allow` (proxy straight through), `deny` (403),
-`challenge` (with an optional per-rule `difficulty`).
+Selectors: `ua`, `path`, `header:<name>`, `net` (IPv4 or IPv6 CIDR). Matches:
+`contains`, `prefix`, `is` (literal, case sensitive) and `matches` (POSIX
+extended regular expression, compiled at load; a pattern that does not compile
+is logged and the rule ignored rather than taking the gate down). Actions:
+`allow` (proxy straight through), `deny` (status from `--deny-status`),
+`challenge` (with an optional per-rule `difficulty` and `algorithm`).
 
-Measured on the running server: `AhrefsBot` → 403, `curl` UA → difficulty 16,
-anyone else → difficulty 4, `/health` → proxied with no challenge at all.
+A per-rule `algorithm` needs the spent-challenge table to remember it, so it is
+ignored with a warning under `--stateless`.
 
-**No regular expressions.** A policy *language* is the thing this project exists to
-avoid; literal matching covers what a site owner actually writes.
+**Regex is opt-in per rule.** The literal matchers stay the default because a
+pattern nobody can read is a policy nobody can audit, and because `matches`
+cannot express a reviewable "allow the office" the way `net` can. Patterns
+cannot contain spaces, since a rule line is whitespace separated.
+
+Measured on the running server: `AhrefsBot` → denied, `curl` UA → difficulty
+16, anyone else → difficulty 4, `/health` → proxied with no challenge at all.
 
 ## State verification
 
@@ -327,9 +340,10 @@ difference — Anubis re-checks through its wasm module via wazero, this calls
   OpenGraph passthrough and CEL `expression:` rules are the next things worth
   porting; `PARITY.md` is the full gap list with file references.
 - **Policy is a flat file, not a language.** `allow`/`deny`/`challenge` on user
-  agent, path, header or IPv4 network, first match wins, one optional
-  `difficulty` per line. No regex, no weights, no thresholds, no CEL, no GeoIP,
-  no DNSBL, no imports, and no per-rule algorithm: the algorithm is a global.
+  agent, path, header or CIDR, first match wins, optional `difficulty` and
+  `algorithm` per line, literal matchers plus POSIX extended regex. No weights,
+  no thresholds, no CEL expressions, no GeoIP, no ASN, no DNSBL, no imports, no
+  rule names in the metrics.
 - **`--stateless` gives up replay protection.** By default an issued challenge is
   consumed once; that table is what makes a second submission fail.
 
@@ -357,8 +371,8 @@ python3 test_parity.py        # the flags taken from cmd/anubis, checked on the 
 kills/restarts betterAnusbis per algorithm. `test_parity.py` starts both sides
 itself and asserts what the HTTP response says: status lines, every Set-Cookie
 attribute, the Location header after a blocked redirect, the counters a scrape
-returns, and the headers the backend received after XFF flattening. 54 checks, no
-logs read. `wasm/live-server.md` in the parent repository has a policy file for
+returns, and the headers the backend received after XFF flattening. 74 checks,
+no logs read. `wasm/live-server.md` in the parent repository has a policy file for
 the real Anubis if you want to compare side by side.
 
 ---

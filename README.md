@@ -86,6 +86,53 @@ assembly and optional GPU backends.
 > mitigation its operator deliberately installed. Use it on systems you own or
 > have explicit permission to test. See [SECURITY.md](SECURITY.md).
 
+## SHA-256 in Scratch blocks
+
+A Scratch 3 project is a graph of blocks; one of them in [`scratch/`](scratch/) is
+SHA-256, written in blocks, with no JavaScript, no extension and no compiled-mode
+trick. It is the "scraps" theme taken literally — a children's block language
+running a real proof of work — and it forced two workarounds worth knowing:
+
+- **No bitwise operators.** Scratch has `+ - * / mod floor` and nothing else: no
+  `xor`, no `and`, no shifts. A 32-bit word fits a double exactly, so add, rotate,
+  shift and not are plain exact arithmetic; the bitwise three have no arithmetic
+  form and become 16x16 limb tables, eight list lookups per 32-bit xor.
+- **No return values.** A custom block is a *statement*; a call in an input slot
+  runs and evaluates to nothing (verified against the real VM: the callee ran, its
+  global held the result, the receiver was `undefined`). So the port has no
+  functions, only a global, and every expression containing a call is flattened
+  into statements with temporaries.
+
+On a 64-byte Anubis challenge (68-byte input, two blocks):
+
+| runtime | hashes/s | difficulty 21 (2,097,152 hashes) |
+|---|---|---|
+| `scratch-vm`, the reference interpreter | **25** | ~23 h |
+| TurboWarp in a browser (compiles blocks to JS) | **1,653** | ~21 min |
+| the same blocks compiled to WebAssembly | 2,100-2,600 | ~14 min |
+
+The last row is a companion compiler that lives outside this repository, so it is
+not reproducible from a command here; the first two are.
+
+It is not a toy hash. The project asks for a challenge, searches the nonce space,
+and reports rate and ETA while it works, and Anubis *accepts* the proof: at
+difficulty 12 it found nonce 7581 after 7,582 hashes, `pass-challenge` answered
+`302` with the auth cookie, and the server logged `challenge accepted`. Twenty
+test vectors match `hashlib`, including the lengths that break padding
+(55/56/57/63/64/65/119/120), multi-block input and all 256 byte values.
+
+```bash
+cd scratch && make && make test           # 20 vectors against hashlib
+cd scratch && make bench                  # where the microseconds go
+python3 scratch/tools/scratch_pow.py --port 8080   # fetch, solve, submit, re-fetch
+```
+
+[`scratch/README.md`](scratch/README.md) has the whole cost model: one block
+statement costs about a microsecond, which is what decided the design (constants
+folded into reporters, the limb loop unrolled). The project itself is
+[`scratch/build/sha256.sb3`](scratch/build/sha256.sb3) — 30 KiB, opens in
+TurboWarp, green flag, paste a challenge.
+
 ## The C services (since 2.0.1)
 
 Two binaries, one shared C client, no scripting runtime:
@@ -200,6 +247,7 @@ results that came out negative.
 | Browser, native library | **10x** the in-page wasm at difficulty 20 | `python3 firefox-extension/test-native.py` |
 | Gate server footprint | **~21x less RAM** (2.1 vs 44-46 MB), ~1.9x less CPU per request | `python3 tools/bench-server-resources.py` |
 | Client memory | wasm kernel 0.13 MiB vs Anubis's 1.06 MiB | `node tools/bench-client-resources.mjs` |
+| SHA-256 in pure Scratch blocks | **25 H/s** interpreted, **1,653 H/s** in TurboWarp — a difficulty-21 challenge in ~21 min | `cd scratch && make test` |
 | `tensor-v` server audit | **3.6 ms** at difficulty 16, against 538 ms of client wasm commit (~1:150) | `python3 tools/bench_tensor_v.py` |
 | The wall, end to end | six server x client combinations | `node tools/bench-endtoend.mjs` |
 

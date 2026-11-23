@@ -7,8 +7,8 @@
 
 PY      ?= python3
 NODE    ?= node
-# where scratch-vm and jszip are installed (npm i scratch-vm jszip)
-NODE_PATH ?= /tmp/node_modules
+# scratch-vm and jszip are installed into tools/ on demand by `make deps`
+NODE_PATH ?= $(CURDIR)/tools/node_modules
 export NODE_PATH
 
 all: build/sha256.sb3
@@ -27,10 +27,18 @@ run: build/sha256.sb3
 profile: build/sha256.sb3
 	$(NODE) tools/profile_sb3.mjs build/sha256.sb3
 
+# the interpreter the tests run against, fetched from npm (not committed)
+deps:
+	cd tools && npm init -y >/dev/null 2>&1 || true
+	cd tools && npm i --silent scratch-vm jszip
+	@echo "deps: scratch-vm and jszip are in tools/node_modules"
+
 test: build/sha256.sb3
+	@test -d tools/node_modules || $(MAKE) deps
 	$(PY) tools/verify_sha256.py
 
 test-byte: build/sha256_b8.sb3
+	@test -d tools/node_modules || $(MAKE) deps
 	$(PY) tools/verify_sha256.py --sb3 build/sha256_b8.sb3
 
 test-all: test test-byte
@@ -47,4 +55,4 @@ clean:
 
 PORT ?= 8084
 
-.PHONY: all byte run profile test test-byte test-all bench solve clean
+.PHONY: all byte run profile test test-byte test-all bench solve deps clean

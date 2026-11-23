@@ -174,11 +174,12 @@ python3 tools/verify_sha256.py --sb3 build/sha256_b8.sb3
 python3 tools/bench_ops.py                  # where the microseconds go
 ```
 
-`run_sb3.mjs` needs `scratch-vm` and `jszip`:
+`run_sb3.mjs` needs the reference interpreter, `scratch-vm`, plus `jszip`.
+`make deps` fetches them from npm into `tools/node_modules` (they are not
+committed), and `make test` runs it for you when it is missing:
 
 ```bash
-cd /tmp && npm i scratch-vm jszip
-NODE_PATH=/tmp/node_modules node scratch/tools/verify_sha256.py
+cd scratch && make deps && make test
 ```
 
 ## Honest limits

@@ -1,3 +1,6 @@
 build/bench/
 build/sha256_b8.sb3
 __pycache__/
+tools/node_modules/
+tools/package.json
+tools/package-lock.json

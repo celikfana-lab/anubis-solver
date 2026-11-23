@@ -45,6 +45,25 @@ the package, at sizes nobody has to squint at.
 </tr>
 </table>
 
+## Max speed, on scraps
+
+No datasets, no clusters, no megawatts. The whole project runs on what was lying
+around: one laptop, a borrowed TPU, a free T4 on Kaggle, 69 scraped pages, 77
+probed hosts, one solved challenge at a time.
+
+That constraint is the design. Every kernel here is sized to what fits in L1 and
+in a register file, not to what fills a rack: hand-written AVX-512 and SHA-NI, a
+wasm module four nonces wide, a `.so` 22x smaller than the server it talks to and
+half the CPU per request. "Max speed" means **throughput per joule, per euro and
+per byte of footprint** — never throughput per dollar of capital expenditure.
+
+The rule for every number in this repository: reproducible from a command in this
+file, on hardware you can borrow, and published even when it loses.
+[`SPEED.md`](SPEED.md) carries the negative results next to the 700 MHash/s one —
+Argon2id on a TPU is 3.8x *slower* than a single CPU core, and it is in there with
+the same prominence, because a benchmark suite that only publishes wins is a
+press release.
+
 A summary of what this repository demonstrates, with the measured numbers and how
 to reproduce each one, is in [`SHOWCASE.md`](SHOWCASE.md).
 

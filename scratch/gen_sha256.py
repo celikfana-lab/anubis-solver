@@ -445,7 +445,8 @@ def gen(limb=4, out_path=None):
     inner.do(st.if_else(ok,
                         st.setv("FOUND", 1),
                         st.changev("NONCE", 1)))
-    # every 256 tries: rate, progress and ETA into the cat's speech bubble
+    # every 1024 tries: rate, progress and ETA into the cat's speech bubble
+    # (256 spams the renderer once TurboWarp is doing thousands per second)
     prog = Fn(st)
     prog.set("HPS", op("div", op("round", op("mul",
                                                 op("div", var("NONCE"), raw(st.timer())),
@@ -457,7 +458,7 @@ def gen(limb=4, out_path=None):
         op("round", var("HPS")), lit(" H/s  "),
         var("NONCE"), lit("/"), item("POW2", op("add", var("DIFF"), lit(1))),
         lit("  ETA "), op("round", var("ETA")), lit(" s")))
-    inner.do(st.if_(st.and_(st.eq(st.mod(st.getv("NONCE"), 256), 0),
+    inner.do(st.if_(st.and_(st.eq(st.mod(st.getv("NONCE"), 1024), 0),
                             st.gt(st.getv("NONCE"), 0)),
                     st.chain(*prog.out)))
     f.do(st.repeat_until(st.eq(st.getv("FOUND"), 1), st.chain(*inner.out)))

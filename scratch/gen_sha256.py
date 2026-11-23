@@ -281,7 +281,8 @@ def gen(limb=4, out_path=None):
                  "S1", "S2", "CH", "MJ", "T1", "T2",
                  "MSGLEN", "NBLK", "BLK", "R", "I",
                  "OUT_HEX", "DONE", "IRES",
-                 "NONCE", "DIFF", "FOUND", "Z", "HPS", "ETA", "ANS", "TMP2"):
+                 "NONCE", "DIFF", "FOUND", "Z", "HPS", "ETA", "ANS", "TMP2",
+                 "DIG0", "DIG1"):
         st.var(name, 0)
     for i in range(1, TEMP_SLOTS + 1):
         st.var("E%d" % i, 0)
@@ -490,14 +491,16 @@ def gen(limb=4, out_path=None):
     sol.do(st.setv("I", 1))
     parse = Fn(st)
     # one nibble: lower-case table first, then upper-case (people paste both)
-    for slot, offset in (("TMP2", 0), ("Z", 1)):
+    # separate variables per nibble: reusing TMP2 here would make it both a
+    # number and (later) the hash prefix, which no static type can survive
+    for slot, offset in (("DIG0", 0), ("DIG1", 1)):
         idx = st.add(st.getv("I"), offset) if offset else st.getv("I")
         parse.do(st.setv(slot, st.itemnum("HEXD", st.letter(idx, st.getv("ANS")))))
         parse.do(st.if_(st.eq(st.getv(slot), 0),
                         st.setv(slot, st.itemnum("HEXDU", st.letter(idx, st.getv("ANS"))))))
     parse.addto("CHAL", op("add",
-                           op("mul", op("sub", var("TMP2"), lit(1)), lit(16)),
-                           op("sub", var("Z"), lit(1))))
+                           op("mul", op("sub", var("DIG0"), lit(1)), lit(16)),
+                           op("sub", var("DIG1"), lit(1))))
     parse.change("I", lit(2))
     sol.do(st.repeat(st.div(st.length(st.getv("ANS")), 2), st.chain(*parse.out)))
     sol.do(st.ask("difficulty in bits? (Anubis usually 21)"))

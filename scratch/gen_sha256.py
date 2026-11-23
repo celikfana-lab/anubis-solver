@@ -282,7 +282,7 @@ def gen(limb=4, out_path=None):
                  "MSGLEN", "NBLK", "BLK", "R", "I",
                  "OUT_HEX", "DONE", "IRES",
                  "NONCE", "DIFF", "FOUND", "Z", "HPS", "ETA", "ANS", "TMP2",
-                 "DIG0", "DIG1"):
+                 "DIG0", "DIG1", "ELAPSED"):
         st.var(name, 0)
     for i in range(1, TEMP_SLOTS + 1):
         st.var("E%d" % i, 0)
@@ -449,8 +449,12 @@ def gen(limb=4, out_path=None):
     # every 1024 tries: rate, progress and ETA into the cat's speech bubble
     # (256 spams the renderer once TurboWarp is doing thousands per second)
     prog = Fn(st)
+    # floor the elapsed time at 10 ms: a difficulty-0 solve finishes inside one
+    # timer tick, and nonce/0 is Infinity in Scratch and a trap in wasm
+    prog.set("ELAPSED", raw(st.timer()))
+    prog.do(st.if_(st.lt(st.getv("ELAPSED"), 0.01), st.setv("ELAPSED", 0.01)))
     prog.set("HPS", op("div", op("round", op("mul",
-                                                op("div", var("NONCE"), raw(st.timer())),
+                                                op("div", var("NONCE"), var("ELAPSED")),
                                                 lit(100))), lit(100)))
     prog.set("ETA", op("div",
                        op("sub", item("POW2", op("add", var("DIFF"), lit(1))), var("NONCE")),
@@ -463,8 +467,10 @@ def gen(limb=4, out_path=None):
                             st.gt(st.getv("NONCE"), 0)),
                     st.chain(*prog.out)))
     f.do(st.repeat_until(st.eq(st.getv("FOUND"), 1), st.chain(*inner.out)))
+    f.set("ELAPSED", raw(st.timer()))
+    f.do(st.if_(st.lt(st.getv("ELAPSED"), 0.01), st.setv("ELAPSED", 0.01)))
     f.set("HPS", op("div", op("round", op("mul",
-                                          op("div", op("add", var("NONCE"), lit(1)), raw(st.timer())),
+                                          op("div", op("add", var("NONCE"), lit(1)), var("ELAPSED")),
                                           lit(100))), lit(100)))
     st.chain(d, *f.out)
     st.script(d)
@@ -520,7 +526,7 @@ def gen(limb=4, out_path=None):
     sol.do(st.repeat(16, st.chain(*pref.out)))
     sol.say(joined(
         lit("solved! nonce "), var("NONCE"), lit(" in "),
-        op("div", op("round", op("mul", raw(st.timer()), lit(10))), lit(10)),
+        op("div", op("round", op("mul", var("ELAPSED"), lit(10))), lit(10)),
         lit(" s at "), op("round", var("HPS")), lit(" H/s"),
         lit(".  hash "), var("TMP2"), lit("...")))
     sol.do(st.setv("DONE", 1))

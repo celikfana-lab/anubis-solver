@@ -108,18 +108,21 @@ On a 64-byte Anubis challenge (68-byte input, two blocks):
 | runtime | hashes/s | difficulty 21 (2,097,152 hashes) |
 |---|---|---|
 | `scratch-vm`, the reference interpreter | **25** | ~23 h |
-| TurboWarp in a browser (compiles blocks to JS) | **1,653** | ~21 min |
+| TurboWarp in a browser (compiles blocks to JS) | **1,708** | ~20.5 min |
 | the same blocks compiled to WebAssembly | 2,100-2,600 | ~14 min |
 
 The last row is a companion compiler that lives outside this repository, so it is
 not reproducible from a command here; the first two are.
 
 It is not a toy hash. The project asks for a challenge, searches the nonce space,
-and reports rate and ETA while it works, and Anubis *accepts* the proof: at
+and reports rate and ETA while it works, and Anubis *accepts* the proof. At
 difficulty 12 it found nonce 7581 after 7,582 hashes, `pass-challenge` answered
-`302` with the auth cookie, and the server logged `challenge accepted`. Twenty
-test vectors match `hashlib`, including the lengths that break padding
-(55/56/57/63/64/65/119/120), multi-block input and all 256 byte values.
+`302` with the auth cookie, and the server logged `challenge accepted`. At
+difficulty 20 — five leading zero nibbles — a TurboWarp tab found
+**nonce 1,016,595 in 595.7 s at 1,708 H/s**: 97% of the 2^20 expected hashes, so
+an ordinary draw rather than a lucky one. Twenty test vectors match `hashlib`,
+including the lengths that break padding (55/56/57/63/64/65/119/120), multi-block
+input and all 256 byte values.
 
 ```bash
 cd scratch && make && make test           # 20 vectors against hashlib
@@ -127,7 +130,10 @@ cd scratch && make bench                  # where the microseconds go
 python3 scratch/tools/scratch_pow.py --port 8080   # fetch, solve, submit, re-fetch
 ```
 
-[`scratch/README.md`](scratch/README.md) has the whole cost model: one block
+[`SPEED.md`](SPEED.md#sha-256-in-scratch-blocks-the-slow-end) carries the full
+numbers, including why compiling the same blocks to wasm only buys ~1.0-1.6x over
+TurboWarp's JavaScript compiler: the wall is doubles pretending to be integers, not
+dispatch. [`scratch/README.md`](scratch/README.md) has the whole cost model: one block
 statement costs about a microsecond, which is what decided the design (constants
 folded into reporters, the limb loop unrolled). The project itself is
 [`scratch/build/sha256.sb3`](scratch/build/sha256.sb3) — 30 KiB, opens in
@@ -247,7 +253,7 @@ results that came out negative.
 | Browser, native library | **10x** the in-page wasm at difficulty 20 | `python3 firefox-extension/test-native.py` |
 | Gate server footprint | **~21x less RAM** (2.1 vs 44-46 MB), ~1.9x less CPU per request | `python3 tools/bench-server-resources.py` |
 | Client memory | wasm kernel 0.13 MiB vs Anubis's 1.06 MiB | `node tools/bench-client-resources.mjs` |
-| SHA-256 in pure Scratch blocks | **25 H/s** interpreted, **1,653 H/s** in TurboWarp — a difficulty-21 challenge in ~21 min | `cd scratch && make test` |
+| SHA-256 in pure Scratch blocks | **25 H/s** interpreted, **1,708 H/s** in TurboWarp — difficulty 20 solved in 9m56s, difficulty 21 in ~20.5 min | `cd scratch && make test` |
 | `tensor-v` server audit | **3.6 ms** at difficulty 16, against 538 ms of client wasm commit (~1:150) | `python3 tools/bench_tensor_v.py` |
 | The wall, end to end | six server x client combinations | `node tools/bench-endtoend.mjs` |
 

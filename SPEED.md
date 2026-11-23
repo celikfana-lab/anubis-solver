@@ -39,7 +39,9 @@ between algorithms is what matters.
 | `argon2id` (pure JS, browser fallback) | ~0.7-1.4/s | ~0.7-1.5 s/hash, 19 MiB; ~9-16x the wasm module |
 | `tensor` (WASM, browser) | ~4.2-8.1 GMAC/s | int8 GEMM, SIMD dot; not a hash rate, see below |
 | `tensor` (pure JS, browser fallback) | ~0.4-0.7 GMAC/s | same GEMM in JavaScript; ~10-13x slower |
-| `fast`, `slow` (pure JS, browser) | ~0.36 M/s | a fresh padded block per candidate; the nibble challenges have no wasm module |
+| `fast`, `slow` (pure JS, browser) | ~0.36 M/s |
+| `sha256` (Scratch blocks, TurboWarp) | ~1.7 k/s | the same tier written in Scratch blocks; 410,000x below the TPU kernel — see [SHA-256 in Scratch blocks](#sha-256-in-scratch-blocks-the-slow-end) |
+ a fresh padded block per candidate; the nibble challenges have no wasm module |
 
 Correcting an earlier row here: this table used to say `hashx` was 3.6 M/s
 "interpreted". It is not. The interpreter measures 0.46 M/s and the 3.2-3.6 M/s
@@ -687,6 +689,61 @@ and `--tfrt_tpu_pjrt_client_host_transfer_prefer_zero_copy_over_premap`.
 Raw data: [`results/tensor-v-tpu-2026-11-21.json`](results/tensor-v-tpu-2026-11-21.json).
 Reproduce: `cc -O2 -I. -o tensor_pjrt tensor_pjrt.c -ldl` then
 `./tensor_pjrt --lib /path/libtpu.so --tensor-v --difficulty 8,12,16 --rounds 5 --json`.
+
+## SHA-256 in Scratch blocks (the slow end)
+
+The same algorithm at the other end of every scale in this document. A Scratch 3
+project ([`scratch/`](scratch/)) implements the `sha256` tier in blocks: no wasm,
+no JavaScript, no extension, 30 KiB of `.sb3` that opens in TurboWarp and runs.
+
+It is a solver, not a demo — it asks for a challenge, searches the nonce space, and
+reports its own rate and ETA while it works.
+
+| runtime | hashes/second | difficulty 20 (2^20) | difficulty 21 (2^21) |
+|---|---:|---:|---:|
+| `scratch-vm`, the reference interpreter (Node) | 25 | 11.7 h | 23.3 h |
+| TurboWarp in Chrome, compiled | **1,708** | **~10 min** | ~20.5 min |
+| the same blocks compiled to WebAssembly (a separate compiler) | 2,100-2,600 | 7-8 min | ~14 min |
+
+Measured 2026-11-23 on the same i7-1260P, one browser tab, difficulty 20 (five
+leading zero nibbles, 20 bits):
+
+```
+nonce 1016595 in 595.7 s at 1708 H/s, hash 0000059c88d0ba19...
+```
+
+Expected work is 2^20 = 1,048,576 hashes, so the solve landed at 97% of the
+expectation — an ordinary draw, not a lucky one.
+
+Two things this number is good for.
+
+**It is the honest floor for this tier.** Anubis's own wasm module runs this tier
+at 1.7-1.9 M hashes/s — a thousand times more — and the TPU kernel in this
+repository does 700.2 MHash/s, 410,000x more. None of the
+*algorithm* changed — SHA-256 is SHA-256 — and there is no dispatch loop in the
+Scratch project either, since the blocks are the program. What changed is that
+Scratch has no integers and no bitwise operators, so one 32-bit `xor` becomes eight
+16x16 table lookups over doubles.
+
+**It separates interpretation from the language.** The same blocks run 68x slower
+in the reference interpreter than compiled to wasm — yet compiling to wasm buys
+only ~1.0-1.6x over TurboWarp's JavaScript compiler. Dispatch was never the wall.
+The wall is that the program is arithmetic on doubles pretending to be integers,
+and no compiler can fix that without recovering the integer semantics: an `i64`
+backend would replace the tables with `xor` outright, and that is the only
+remaining order of magnitude on this end.
+
+Reproduce the project side with:
+
+```bash
+cd scratch && make test     # 20 vectors against hashlib, and the rates
+cd scratch && make bench    # per-statement cost of the interpreter (~1 us)
+```
+
+The browser figure is a TurboWarp tab running `scratch/build/sha256.sb3`; the
+interpreter figure is `scratch/tools/verify_sha256.py` timing the same project
+through `scratch-vm`. The wasm figure comes from a compiler that is not part of
+this repository, hence the range.
 
 ## TPU: Argon2id, the chain is the wall
 

@@ -378,6 +378,24 @@ class Target:
     def when_key(self, key):
         return self.emit("event_whenkeypressed", fields={"KEY_OPTION": [key, None]})
 
+    def ask(self, question):
+        return self.emit("sensing_askandwait", inputs={"QUESTION": question})
+
+    def answer(self):
+        return self.emit("sensing_answer")
+
+    def timer(self):
+        return self.emit("sensing_timer")
+
+    def reset_timer(self):
+        return self.emit("sensing_resettimer")
+
+    def round(self, x):
+        return self.emit("operator_round", inputs={"NUM": x})
+
+    def think(self, text):
+        return self.emit("looks_think", inputs={"MESSAGE": text})
+
     def say(self, text):
         return self.emit("looks_say", inputs={"MESSAGE": text})
 

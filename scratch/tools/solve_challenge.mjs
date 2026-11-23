@@ -50,13 +50,26 @@ vm.setTurboMode(true);
 const st = vm.runtime.getTargetForStage();
 const slot = (id) => (st.variables instanceof Map ? st.variables.get(id) : st.variables[id]);
 
-const CHAL = pick(stageJson.lists, "CHAL");
-slot(CHAL).value = chal;
-slot(need("DIFF")).value = difficulty;
 slot(need("NONCE")).value = 0;
 slot(need("FOUND")).value = 0;
 slot(need("DONE")).value = 0;
 slot(need("OUT_HEX")).value = "";
+
+// The cat asks for the challenge and the difficulty; answer the way a person
+// would type them, so the hex parser and the ask/answer path get exercised.
+const answers = [chalHex, String(difficulty)];
+let nextAnswer = 0;
+// answer on emit('QUESTION', non-null): the real ask carries text (or '' for a
+// visible sprite), while clearing questions emits QUESTION(null)
+const realEmit = vm.runtime.emit.bind(vm.runtime);
+vm.runtime.emit = (event, ...rest) => {
+  if (event === "QUESTION" && rest[0] !== null && rest[0] !== undefined) {
+    const text = nextAnswer < answers.length ? answers[nextAnswer] : "";
+    nextAnswer += 1;
+    setTimeout(() => realEmit("ANSWER", text), 0);
+  }
+  return realEmit(event, ...rest);
+};
 
 const nonceSlot = slot(need("NONCE"));
 const doneSlot = slot(need("DONE"));

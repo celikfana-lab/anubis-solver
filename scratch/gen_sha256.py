@@ -111,6 +111,14 @@ def call(proc, *args):
     return ("call", proc, list(args))
 
 
+def joined(*parts):
+    """Fold parts into one left-nested join, in order (bubble text)."""
+    out = parts[0]
+    for part in parts[1:]:
+        out = op("join", out, part)
+    return out
+
+
 def not32(e):
     return op("sub", lit(MASK32), e)
 
@@ -177,6 +185,11 @@ class Fn:
     def change(self, name, e):
         self.pool = 0
         self.out.append(self.st.changev(name, self.value(e)))
+
+    def say(self, e):
+        """Speech bubble whose text is an expression (pure reporters only)."""
+        self.pool = 0
+        self.out.append(self.st.say(self.value(e)))
 
     def do(self, block):
         self.pool = 0
@@ -268,7 +281,7 @@ def gen(limb=4, out_path=None):
                  "S1", "S2", "CH", "MJ", "T1", "T2",
                  "MSGLEN", "NBLK", "BLK", "R", "I",
                  "OUT_HEX", "DONE", "IRES",
-                 "NONCE", "DIFF", "FOUND", "Z"):
+                 "NONCE", "DIFF", "FOUND", "Z", "HPS", "ETA", "ANS", "TMP2"):
         st.var(name, 0)
     for i in range(1, TEMP_SLOTS + 1):
         st.var("E%d" % i, 0)
@@ -281,12 +294,27 @@ def gen(limb=4, out_path=None):
     st.lst("HS", IV)
     st.lst("K", K)
     st.lst("HEXD", list("0123456789abcdef"))
+    st.lst("HEXDU", list("0123456789ABCDEF"))
     st.lst("POW2", [2 ** i for i in range(33)])
     entries = stride * stride
     st.lst("XOR_T", [float((i // stride) ^ (i % stride)) for i in range(entries)])
     st.lst("AND_T", [float((i // stride) & (i % stride)) for i in range(entries)])
     st.lst("OR_T", [float((i // stride) | (i % stride)) for i in range(entries)])
     p.monitor(st, "OUT_HEX", "large", 5, 5)
+    p.monitor(st, "NONCE", "default", 5, 80)
+    p.monitor(st, "HPS", "default", 5, 110)
+
+    # The cat has to own the blocks: `say` and `ask and wait` act on the sprite
+    # they live in, and a sprite cannot call the stage's custom blocks.  So the
+    # variables stay global (declared above, on the stage) and every block below
+    # is emitted into the sprite, which borrows the stage's name -> id maps.
+    cat = p.sprite("Cat")
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, "assets", "cat.svg"), encoding="utf-8") as fh:
+        p.costume(cat, "cat", fh.read(), 47, 50)
+    cat._varname = st._varname
+    cat._listname = st._listname
+    st = cat
 
     bitwise_proc(st, "xor32 %s %s", "XOR_T", limb)
     bitwise_proc(st, "and32 %s %s", "AND_T", limb)
@@ -417,30 +445,90 @@ def gen(limb=4, out_path=None):
     inner.do(st.if_else(ok,
                         st.setv("FOUND", 1),
                         st.changev("NONCE", 1)))
+    # every 256 tries: rate, progress and ETA into the cat's speech bubble
+    prog = Fn(st)
+    prog.set("HPS", op("div", var("NONCE"), raw(st.timer())))
+    prog.set("ETA", op("div",
+                       op("sub", item("POW2", op("add", var("DIFF"), lit(1))), var("NONCE")),
+                       var("HPS")))
+    prog.say(joined(
+        op("round", var("HPS")), lit(" H/s  "),
+        var("NONCE"), lit("/"), item("POW2", op("add", var("DIFF"), lit(1))),
+        lit("  ETA "), op("round", var("ETA")), lit(" s")))
+    inner.do(st.if_(st.and_(st.eq(st.mod(st.getv("NONCE"), 256), 0),
+                            st.gt(st.getv("NONCE"), 0)),
+                    st.chain(*prog.out)))
     f.do(st.repeat_until(st.eq(st.getv("FOUND"), 1), st.chain(*inner.out)))
+    f.set("HPS", op("div", op("add", var("NONCE"), lit(1)), raw(st.timer())))
     st.chain(d, *f.out)
     st.script(d)
 
-    # ---- entry point ----------------------------------------------------
+    # ---- entry point: the cat asks, then hashes ---------------------------
     flag = st.when_flag()
-    msg_mode = Fn(st)
-    msg_mode.do(st.clear("SRC"))
-    msg_mode.do(st.setv("I", 1))
+
+    msg = Fn(st)
+    msg.do(st.clear("SRC"))
+    msg.do(st.setv("I", 1))
     cp = Fn(st)
     cp.addto("SRC", raw(st.item("MSG", st.getv("I"))))
     cp.change("I", lit(1))
-    msg_mode.do(st.repeat(st.listlen("MSG"), st.chain(*cp.out)))
-    msg_mode.do(st.call_proc("sha256", []))
-    msg_mode.do(st.setv("DONE", 1))
-    solve_mode = Fn(st)
-    solve_mode.do(st.call_proc("solve", []))
-    solve_mode.do(st.setv("DONE", 1))
+    msg.do(st.repeat(st.listlen("MSG"), st.chain(*cp.out)))
+    msg.do(st.reset_timer())
+    msg.do(st.say("hashing your message in blocks..."))
+    msg.do(st.call_proc("sha256", []))
+    msg.say(joined(lit("SHA-256 = "), var("OUT_HEX")))
+    msg.do(st.setv("DONE", 1))
+
+    sol = Fn(st)
+    # hex string -> raw bytes, two characters at a time
+    sol.do(st.clear("CHAL"))
+    sol.do(st.setv("I", 1))
+    parse = Fn(st)
+    # one nibble: lower-case table first, then upper-case (people paste both)
+    for slot, offset in (("TMP2", 0), ("Z", 1)):
+        idx = st.add(st.getv("I"), offset) if offset else st.getv("I")
+        parse.do(st.setv(slot, st.itemnum("HEXD", st.letter(idx, st.getv("ANS")))))
+        parse.do(st.if_(st.eq(st.getv(slot), 0),
+                        st.setv(slot, st.itemnum("HEXDU", st.letter(idx, st.getv("ANS"))))))
+    parse.addto("CHAL", op("add",
+                           op("mul", op("sub", var("TMP2"), lit(1)), lit(16)),
+                           op("sub", var("Z"), lit(1))))
+    parse.change("I", lit(2))
+    sol.do(st.repeat(st.div(st.length(st.getv("ANS")), 2), st.chain(*parse.out)))
+    sol.do(st.ask("difficulty in bits? (Anubis usually 21)"))
+    sol.do(st.setv("DIFF", st.answer()))
+    sol.do(st.reset_timer())
+    sol.say(joined(lit("ok, "), raw(st.listlen("CHAL")),
+                   lit(" bytes of challenge at "), var("DIFF"),
+                   lit(" bits. hashing...")))
+    sol.do(st.call_proc("solve", []))
+    # the first 16 hex characters of the digest, for the bubble
+    sol.do(st.setv("TMP2", ""))
+    sol.do(st.setv("I", 1))
+    pref = Fn(st)
+    pref.set("TMP2", op("join", var("TMP2"),
+                        raw(st.letter(st.getv("I"), st.getv("OUT_HEX")))))
+    pref.change("I", lit(1))
+    sol.do(st.repeat(16, st.chain(*pref.out)))
+    sol.say(joined(
+        lit("solved! nonce "), var("NONCE"), lit(" in "),
+        op("div", op("round", op("mul", raw(st.timer()), lit(10))), lit(10)),
+        lit(" s at "), op("round", var("HPS")), lit(" H/s"),
+        lit(".  hash "), var("TMP2"), lit("...")))
+    sol.do(st.setv("DONE", 1))
+
     st.chain(flag,
              st.setv("DONE", 0),
              st.setv("FOUND", 0),
-             st.if_else(st.eq(st.listlen("CHAL"), 0),
-                        st.chain(*msg_mode.out),
-                        st.chain(*solve_mode.out)))
+             st.setv("NONCE", 0),
+             st.setv("OUT_HEX", ""),
+             st.setv("HPS", 0),
+             st.say("Hi! I'm the Scratch cat and I do the hashing in blocks."),
+             st.ask("challenge hex? (or press Enter to just hash MSG)"),
+             st.setv("ANS", st.answer()),
+             st.if_else(st.eq(st.length(st.getv("ANS")), 0),
+                        st.chain(*msg.out),
+                        st.chain(*sol.out)))
     st.script(flag)
 
     out = out_path or os.path.join(os.path.dirname(os.path.abspath(__file__)),

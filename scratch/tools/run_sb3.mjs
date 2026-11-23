@@ -29,6 +29,9 @@ const positional = argv.filter((a, i) => !a.startsWith("--") && !(i > 0 && argv[
 const [sb3Path, msgJson] = positional;
 const bytes = JSON.parse(msgJson || "[]");
 const repeats = Number(flags.repeats || 1);
+// Answers to `ask and wait`, in order.  The default -- pressing Enter -- runs
+// the "just hash MSG" path, which is what the vector tests use.
+const answers = JSON.parse(flags.answers || '[""]');
 
 const buf = fs.readFileSync(sb3Path);
 const zip = await JSZip.loadAsync(buf);
@@ -86,6 +89,25 @@ async function hashOnce() {
 }
 
 const wall0 = process.hrtime.bigint();
+// `ask and wait` queues a question and waits for an ANSWER event; a GUI
+// provides it with a text box, headless it has to come from here.  Driven from
+// the queue rather than the QUESTION event: the runtime also emits
+// QUESTION(null) when it clears questions (on green flag), which would eat an
+// answer.
+// Answering drives through emit('QUESTION'): the real ask emits a non-null
+// payload (the text, or '' when the asking sprite is visible), while clearing
+// questions on green flag emits QUESTION(null) -- which must NOT eat an answer.
+let nextAnswer = 0;
+const realEmit = vm.runtime.emit.bind(vm.runtime);
+vm.runtime.emit = (event, ...rest) => {
+  if (event === "QUESTION" && rest[0] !== null && rest[0] !== undefined) {
+    const text = nextAnswer < answers.length ? String(answers[nextAnswer]) : "";
+    nextAnswer += 1;
+    setTimeout(() => realEmit("ANSWER", text), 0);
+  }
+  return realEmit(event, ...rest);
+};
+
 vm.start();
 const digests = [];
 for (let i = 0; i < repeats; i += 1) digests.push(await hashOnce());

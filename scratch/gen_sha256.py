@@ -267,17 +267,21 @@ def gen(limb=4, out_path=None):
     for name in ("A", "B", "C", "D", "E", "F", "G", "H",
                  "S1", "S2", "CH", "MJ", "T1", "T2",
                  "MSGLEN", "NBLK", "BLK", "R", "I",
-                 "OUT_HEX", "DONE", "IRES"):
+                 "OUT_HEX", "DONE", "IRES",
+                 "NONCE", "DIFF", "FOUND", "Z"):
         st.var(name, 0)
     for i in range(1, TEMP_SLOTS + 1):
         st.var("E%d" % i, 0)
 
     st.lst("MSG", MSG_DEFAULT)
+    st.lst("CHAL", [])
+    st.lst("SRC", [])
     st.lst("BUF", [])
     st.lst("W", [0] * 64)
     st.lst("HS", IV)
     st.lst("K", K)
     st.lst("HEXD", list("0123456789abcdef"))
+    st.lst("POW2", [2 ** i for i in range(33)])
     entries = stride * stride
     st.lst("XOR_T", [float((i // stride) ^ (i % stride)) for i in range(entries)])
     st.lst("AND_T", [float((i // stride) & (i % stride)) for i in range(entries)])
@@ -349,14 +353,14 @@ def gen(limb=4, out_path=None):
     f.set("OUT_HEX", lit(""))
     for i in range(8):  # the chaining list is mutated in place: restore the IV
         f.setitem("HS", lit(i + 1), lit(IV[i]))
-    # copy MSG -> BUF so the caller's message survives a second green flag
+    # hash SRC, which the caller owns; BUF is the padded working copy
     f.do(st.clear("BUF"))
     f.do(st.setv("I", 1))
     copy = Fn(st)
-    copy.addto("BUF", raw(st.item("MSG", st.getv("I"))))
+    copy.addto("BUF", raw(st.item("SRC", st.getv("I"))))
     copy.change("I", lit(1))
-    f.do(st.repeat(st.listlen("MSG"), st.chain(*copy.out)))
-    f.do(st.setv("MSGLEN", st.listlen("MSG")))
+    f.do(st.repeat(st.listlen("SRC"), st.chain(*copy.out)))
+    f.do(st.setv("MSGLEN", st.listlen("SRC")))
     f.addto("BUF", lit(128))
     f.do(st.repeat_until(st.eq(st.mod(st.listlen("BUF"), 64), 56),
                          st.chain(st.addto("BUF", 0))))
@@ -378,8 +382,65 @@ def gen(limb=4, out_path=None):
     st.chain(d, *f.out)
     st.script(d)
 
+    # ---- solver mode ----------------------------------------------------
+    # Input = challenge raw bytes || 4-byte nonce, exactly what Anubis's wasm
+    # kernel hashes (it hex-decodes the challenge, then appends the nonce big
+    # endian, or little endian when the challenge's last byte is >= 0x80).
+    d, _ = st.def_proc("solve", [])
+    f = Fn(st)
+    inner = Fn(st)
+    inner.do(st.clear("SRC"))
+    inner.do(st.setv("I", 1))
+    cp = Fn(st)
+    cp.addto("SRC", raw(st.item("CHAL", st.getv("I"))))
+    cp.change("I", lit(1))
+    inner.do(st.repeat(st.listlen("CHAL"), st.chain(*cp.out)))
+    be, le = Fn(st), Fn(st)
+    for shift in (24, 16, 8, 0):
+        be.addto("SRC", op("mod", op("floor", op("div", var("NONCE"), lit(2 ** shift))), lit(256)))
+    for shift in (0, 8, 16, 24):
+        le.addto("SRC", op("mod", op("floor", op("div", var("NONCE"), lit(2 ** shift))), lit(256)))
+    inner.do(st.if_else(st.lt(st.item("CHAL", st.listlen("CHAL")), 128),
+                        st.chain(*be.out), st.chain(*le.out)))
+    inner.do(st.call_proc("sha256", []))
+    # leading DIFF bits must be zero: read the first 32 bits as a number
+    inner.do(st.setv("Z", 0))
+    inner.do(st.setv("I", 1))
+    chk = Fn(st)
+    chk.set("Z", op("add", op("mul", var("Z"), lit(16)),
+                    op("sub", raw(st.itemnum("HEXD", st.letter(st.getv("I"), st.getv("OUT_HEX")))),
+                       lit(1))))
+    chk.change("I", lit(1))
+    inner.do(st.repeat(8, st.chain(*chk.out)))
+    ok = st.eq(st.floor(st.div(st.getv("Z"),
+                               st.item("POW2", st.sub(33, st.getv("DIFF"))))), 0)
+    inner.do(st.if_else(ok,
+                        st.setv("FOUND", 1),
+                        st.changev("NONCE", 1)))
+    f.do(st.repeat_until(st.eq(st.getv("FOUND"), 1), st.chain(*inner.out)))
+    st.chain(d, *f.out)
+    st.script(d)
+
+    # ---- entry point ----------------------------------------------------
     flag = st.when_flag()
-    st.chain(flag, st.setv("DONE", 0), st.call_proc("sha256", []), st.setv("DONE", 1))
+    msg_mode = Fn(st)
+    msg_mode.do(st.clear("SRC"))
+    msg_mode.do(st.setv("I", 1))
+    cp = Fn(st)
+    cp.addto("SRC", raw(st.item("MSG", st.getv("I"))))
+    cp.change("I", lit(1))
+    msg_mode.do(st.repeat(st.listlen("MSG"), st.chain(*cp.out)))
+    msg_mode.do(st.call_proc("sha256", []))
+    msg_mode.do(st.setv("DONE", 1))
+    solve_mode = Fn(st)
+    solve_mode.do(st.call_proc("solve", []))
+    solve_mode.do(st.setv("DONE", 1))
+    st.chain(flag,
+             st.setv("DONE", 0),
+             st.setv("FOUND", 0),
+             st.if_else(st.eq(st.listlen("CHAL"), 0),
+                        st.chain(*msg_mode.out),
+                        st.chain(*solve_mode.out)))
     st.script(flag)
 
     out = out_path or os.path.join(os.path.dirname(os.path.abspath(__file__)),

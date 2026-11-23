@@ -8,8 +8,9 @@ compute, written the same way, as blocks, with no JavaScript anywhere.
 "Pure" means: no `js` escaping, no extension, no compiled-mode-only trick. Every
 line the interpreter runs is a Scratch block you can see in the editor.
 
-SHA-256 is done and verified. Argon2id and HashX are next; they share the
-builder and the two techniques below.
+SHA-256 is done, verified, and it **solves real Anubis sha256 challenges**: the
+project finds the nonce, and Anubis accepts the proof. Argon2id and HashX are
+next; they share the builder and the two techniques below.
 
 ```
 scratch/
@@ -105,6 +106,60 @@ the number that decides the design. Two consequences, both applied:
 The 3-byte case is slower than one block of steady-state work because V8 is
 still warming up: 41 ms for `abc` versus 12 ms for each block of a 4 KiB run.
 
+## Solving real Anubis challenges
+
+Anubis's sha256 tier (the wasm kernel in `wasm/pow/sha256/src/lib.rs`) hashes
+`challenge_raw || nonce`, where the challenge is **hex-decoded** first — the
+client worker does `y(c(r))` before handing the bytes to the module — and the
+nonce is 4 bytes, big-endian, or little-endian when the challenge's last byte is
+`>= 0x80`. `difficulty` is a count of leading zero *bits* of the digest.
+
+The server issues a 64-byte challenge, so the hashed input is 68 bytes: two
+blocks, about 40 ms per attempt here. The project has a solver mode: if the
+stage list `CHAL` is non-empty, the green flag rebuilds `CHAL || nonce`, hashes
+it, checks the leading `DIFF` bits, and bumps `NONCE` until it fits — all in
+blocks.
+
+```bash
+python3 tools/scratch_pow.py --port 8084     # fetch, solve, submit, re-fetch
+```
+
+Against a real Anubis v1.28.3, difficulty 12, 2026-11-23:
+
+```
+challenge: 64 raw bytes, difficulty 12, algorithm sha256, id 01a209f0-...
+blocks found nonce 7581 after 7582 hashes (25.3 H/s, 300.1 s)
+hash: 000e7eb3f4c65c64b53a4f31cb8268f34cd0063a97c21b8f9ee49990fd310d09
+pass-challenge: HTTP 302
+cookies: techaro.lol-anubis-auth-e0454d27, techaro.lol-anubis-cookie-verification-e0454d27
+av log:  msg="challenge accepted"
+```
+
+and at difficulty 8, with the re-fetch through the gate:
+
+```
+blocks found nonce 84 after 85 hashes (26.1 H/s, 3.3 s)
+pass-challenge: HTTP 302
+re-fetch: HTTP 200, still challenged: False, 247 bytes
+PASS: Anubis accepted a proof of work computed entirely in Scratch blocks
+```
+
+25 H/s is the number that matters, because the work is `2^difficulty` hashes:
+
+| difficulty | expected hashes | 4-bit limbs (25 H/s) | 8-bit limbs (~41 H/s) |
+|---|---|---|---|
+| 8 | 256 | 10 s | 6 s |
+| 12 | 4,096 | 2.7 min | 1.7 min |
+| 16 | 65,536 | 44 min | 27 min |
+| 21 | 2,097,152 | **23 h** | **14 h** |
+
+So: yes, it runs Anubis sha256 challenges, for real — and at the difficulty
+production Anubis uses for this tier (21, i.e. 2.1 million hashes) it takes most
+of a day in the interpreter. That is the honest ceiling: the algorithm fits in
+Scratch perfectly, the *throughput* is what a scratch interpreter cannot give
+you. TurboWarp's compiled mode would cut that by a large factor; it is not
+measured here.
+
 ## Test it
 
 The project is checked against `hashlib` on 20 vectors, including the lengths
@@ -140,3 +195,6 @@ NODE_PATH=/tmp/node_modules node scratch/tools/verify_sha256.py
 - Only SHA-256 so far. Argon2id needs a 32x32 -> 64-bit multiply, which Scratch's
   doubles cannot do directly (limbs, again); HashX is an interpreter, so that
   port is a different and larger problem.
+- Solver mode assumes the challenge length Anubis currently uses (any length
+  works; the nonce rule is implemented, the padding is not length-specific).
+  The 23 h figure is an extrapolation from the measured 25.3 H/s, not a run.

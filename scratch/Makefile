@@ -38,7 +38,13 @@ test-all: test test-byte
 bench:
 	$(PY) tools/bench_ops.py
 
+# solve a live challenge: needs a local Anubis on this port and a low difficulty
+solve:
+	$(PY) tools/scratch_pow.py --port $(PORT)
+
 clean:
 	rm -rf build
 
-.PHONY: all byte run profile test test-byte test-all bench clean
+PORT ?= 8084
+
+.PHONY: all byte run profile test test-byte test-all bench solve clean

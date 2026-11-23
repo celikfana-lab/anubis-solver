@@ -447,7 +447,9 @@ def gen(limb=4, out_path=None):
                         st.changev("NONCE", 1)))
     # every 256 tries: rate, progress and ETA into the cat's speech bubble
     prog = Fn(st)
-    prog.set("HPS", op("div", var("NONCE"), raw(st.timer())))
+    prog.set("HPS", op("div", op("round", op("mul",
+                                                op("div", var("NONCE"), raw(st.timer())),
+                                                lit(100))), lit(100)))
     prog.set("ETA", op("div",
                        op("sub", item("POW2", op("add", var("DIFF"), lit(1))), var("NONCE")),
                        var("HPS")))
@@ -459,7 +461,9 @@ def gen(limb=4, out_path=None):
                             st.gt(st.getv("NONCE"), 0)),
                     st.chain(*prog.out)))
     f.do(st.repeat_until(st.eq(st.getv("FOUND"), 1), st.chain(*inner.out)))
-    f.set("HPS", op("div", op("add", var("NONCE"), lit(1)), raw(st.timer())))
+    f.set("HPS", op("div", op("round", op("mul",
+                                          op("div", op("add", var("NONCE"), lit(1)), raw(st.timer())),
+                                          lit(100))), lit(100)))
     st.chain(d, *f.out)
     st.script(d)
 

@@ -187,9 +187,9 @@ NODE_PATH=/tmp/node_modules node scratch/tools/verify_sha256.py
   project against its own `sb3_definitions.json` schema. It has **not** been
   opened in the TurboWarp or scratch.mit.edu GUI editors; the blocks are the same
   blocks either way, but that check is not done.
-- TurboWarp's **compiled mode** (a JS transpiler for block stacks) will be much
-  faster and is not what these numbers measure. These are interpreter numbers,
-  the floor.
+- The KB/s figures in the table above are stock `scratch-vm` interpreter
+  numbers, the floor. In TurboWarp the same project runs ~66x faster (1653 H/s
+  measured by the user in a browser); see "Solving real Anubis challenges".
 - The 65,536-entry lists make the editor's list monitor unusable. Functional,
   not pleasant. Use the 4-bit build if you want to read the project.
 - Only SHA-256 so far. Argon2id needs a 32x32 -> 64-bit multiply, which Scratch's

@@ -112,12 +112,21 @@ def hashes_done(backend: int, nonce: int, chunk: int, devices: int) -> int:
     nonce 5 still cost a full chunk -- which is why the rate row uses the chunk
     arithmetic rather than 2^difficulty.
 
-    A multi-GPU CUDA solve splits the nonce space across devices that run in
-    lockstep, so both burn about the chunks the winning slice needed; the count
-    is that estimate, not a measurement of each device's dispatch.
+    A multi-GPU solve splits [0, 2^32) into `devices` contiguous slices, one
+    worker each, running in lockstep. The hashes are therefore the chunks the
+    *winning slice* needed times the number of devices -- using the absolute
+    nonce here instead (as this did) counts a device-1 hit as if every device had
+    walked all the way from zero, which inflated a 1.3 GHash/s pair to 183
+    GHash/s the first time it happened.
     """
     if backend >= OPENCL:
-        return devices * (nonce // chunk + 1) * chunk
+        if devices <= 1:
+            return (nonce // chunk + 1) * chunk
+        space = 1 << 32
+        per = (space + devices - 1) // devices
+        slice_no = nonce // per
+        local = nonce - slice_no * per
+        return devices * ((local // chunk) + 1) * chunk
     return nonce + 1
 
 
@@ -233,6 +242,13 @@ def main() -> int:
         chunk = int(env_chunk, 0)
     rows = []
     for backend in available:
+        if backend == CUDA:
+            want = os.environ.get("ANUBIS_MEATRIDER_PTX", "")
+            lib.anubis_meatrider_ptx_available.restype = ctypes.c_int
+            lib.anubis_meatrider_ptx_info.restype = ctypes.c_char_p
+            ptx = ("ptx" if want not in ("", "0") else "cu")
+            info = lib.anubis_meatrider_ptx_info() if ptx == "ptx" else None
+            print(f"\ncuda path: {ptx}" + (f" ({info.decode()})" if info else ""))
         d = (args.difficulty or 23) if backend >= OPENCL else args.cpu_difficulty
         reps = args.reps
         if reps <= 0:

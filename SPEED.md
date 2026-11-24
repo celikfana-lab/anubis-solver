@@ -911,14 +911,24 @@ both, and the CUDA backend splits the nonce space across the devices it can see:
 
 | kernel | one T4 | two T4 | scaling |
 |---|---:|---:|---:|
-| CUDA | 720.7 M | **1,513.0 M** | **2.10x** |
+| CUDA, the `.cu` kernel | 1,217.8 M | not published | see below |
+| PTX, per device | 1,285.9 M | 1,285.9 M | same wall time per solve |
+| PTX, aggregate | 1,285.9 M | **2,534 M** | **1.97x** |
 | OpenCL | 631.9 M | 574.5 M | 1x (the OpenCL backend uses one device) |
 | AVX-512 ×16 | 14.27 M | 13.19 M | the Xeon's, not the GPU's |
 | AVX2 ×8 | 7.47 M | 7.04 M | |
 | portable C | 1.98 M | 1.97 M | |
 
-Two T4s are worth 2.10x, i.e. the split is even and the dispatches overlap; the
-digest checks pass on both (20/20) before any of that is quoted.
+Two T4s are worth **1.97x** on the PTX path: eight chunk dispatches on the winning
+device in 26.1 ms with one card and in 26.5 ms with two, counted by the device
+rather than estimated. The `.cu` kernel's one-T4 row is 1,217.8 M (the PTX is
+1.06x ahead there); its two-T4 row read 1,295.6 M, which would mean it spends 1.9x
+longer per solve with a second card, and that is not published until
+`meatrider_cuda.cu` can count dispatches the way the PTX loader does. An earlier
+revision of this table said **2.10x** for the `.cu` pair: that came from an
+estimator that counted the winning slice's absolute nonce, so a device-1 hit
+claimed 1000x the work it did. The digest checks pass on both GPUs (20/20) before
+any of this is quoted.
 
 **Kaggle's CPU is not one machine.** The CPU-only kernel (`kaggle_meatrider_cpu/`)
 landed on an `Intel Xeon @ 2.20GHz` with `flags: avx2` only — no `avx512f`, no

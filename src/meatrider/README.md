@@ -55,11 +55,11 @@ header.
 | AVX-512 ×16 | `meatrider_avx512.s` | `meatrider_compress16_avx512()` | 8.7-14.3 (Colab Ice Lake, Kaggle Xeon; this CPU fuses it off) |
 | OpenCL | `meatrider_opencl.cl` | `meatrider_pow()` | 154–168 |
 | Vulkan | [`src/vulkan/meatrider_comp.comp`](../vulkan/meatrider_comp.comp) | `main()` | 56–80 |
-| CUDA | `meatrider_cuda.cu` | `meatrider_pow_kernel()` | 720.7 on one T4, 1,513.0 on two |
+| CUDA | `meatrider_cuda.cu` | `meatrider_pow_kernel()` | 1,217.8 on one T4; two-device row unresolved |
 | WebGPU | [`webgpu/meatrider.wgsl`](../../webgpu/meatrider.wgsl) | `main()` | 43–62 |
 | wasm SIMD128 ×4 | [`wasm/meatrider_simd.c`](../../wasm/meatrider_simd.c) | `anubis_work()` | 4.0–4.5 |
 | wasm scalar | [`wasm/meatrider_pow.c`](../../wasm/meatrider_pow.c) | `anubis_work()` | 1.75–1.93 |
-| PTX | `meatrider.ptx` | `meatrider_kernel` | 994.7-1199.5 (Colab T4, driver-JITed) |
+| PTX | `meatrider.ptx` | `meatrider_kernel` | 1,285.9 on one T4, 2,534 on two (1.97x) |
 | TPU | [`src/google/tpu/tpu_backend.c`](../google/tpu/tpu_backend.c) | `@main` (StableHLO) | runs: first TPU run mined d=12 and d=20, digests verified |
 
 Numbers are one run on an i7-1260P with an Iris Xe, one thread; the machine

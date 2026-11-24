@@ -34,12 +34,14 @@ implementation of the header:
 |---|---|---:|
 | portable C, SHA-NI, AVX2, AVX-512 | laptop, Colab, Kaggle Xeons | 2.1 – 14.3 |
 | WebGPU, Vulkan, OpenCL | Intel Iris Xe | 43 – 168 |
-| OpenCL, CUDA, PTX | Tesla T4 (one and two) | 654 / 721 / **1,513** / 1,200 |
+| OpenCL, CUDA `.cu`, PTX | Tesla T4 | 654 / 1,218 / 1,286 |
+| PTX on two T4s | Kaggle 2xT4 | **2,534** (1.97x one) |
 | wasm SIMD, wasm scalar | Firefox, Node | 4.0 / 1.8 |
 | TPU (StableHLO via PJRT) | Colab TPU | compiled and mined d=12, d=20 |
 
-The PTX is the fastest thing on a T4 (1.5x the `.cu` kernel, driver-JITed, no
-nvcc), two T4s are 2.10x one, and the browser mines 2.3x faster than it did in
+The PTX is the fastest thing on a T4 (1.06x-1.5x the `.cu` kernel depending on
+the box, driver-JITed, no nvcc), two T4s are **1.97x** one on that path, and the
+browser mines 2.3x faster than it did in
 2.40 because the gate now serves a 4-lane SIMD module and falls back to the
 scalar one. The sixteen rungs are still priced at what an Antminer S21 Pro would
 earn doing the same hashes — a femtocent to **$1.33**, 2.7 ASIC-hours — and the

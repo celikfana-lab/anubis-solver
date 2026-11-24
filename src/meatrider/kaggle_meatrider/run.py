@@ -139,6 +139,31 @@ EOF""")
                          "rates": rates, "json": bench.get("rows", []),
                          "tail": out[-1500:] if rc else ""}
 
+    # The same two configurations with the generated PTX instead of the .cu
+    # kernel: ANUBIS_MEATRIDER_PTX=1 routes the CUDA slot through the driver,
+    # which JITs meatrider.ptx per visible device and gives each one a worker.
+    for label, visible in (("ptx_one_t4", "0"), ("ptx_two_t4", "0,1")):
+        path = f"/tmp/{label}.json"
+        rc, out = sh(
+            f"CUDA_VISIBLE_DEVICES={visible} ANUBIS_MEATRIDER_PTX=1 "
+            f"python3 tools/meatrider_backends.py --threads 1 --reps 7 --json {path}",
+            env={"CUDA_VISIBLE_DEVICES": visible, "ANUBIS_MEATRIDER_PTX": "1"},
+            timeout=2400)
+        rates, avail = parse_harness(out)
+        try:
+            bench = json.load(open(path))
+        except OSError:
+            bench = {}
+        RESULT[label] = {"rc": rc, "visible": visible, "available": avail,
+                         "rates": rates, "json": bench.get("rows", []),
+                         "tail": out[-1500:] if rc else ""}
+
+    # And the standalone PTX harness, which checks digests at difficulty 0
+    # instead of only the winning nonce.
+    rc, out = sh("python3 src/meatrider/test_meatrider_ptx_gpu.py --reps 3",
+                 timeout=1200)
+    RESULT["ptx_standalone"] = {"rc": rc, "tail": out[-2500:]}
+
     # Forced AVX2 against AVX-512 on the same rungs, so the speedup is measured
     # rather than inferred from two different configurations.
     if RESULT["cpu"]["avx512"]:
@@ -159,14 +184,14 @@ def finish():
 
     print("\n=== summary ===", flush=True)
     print("cpu:", RESULT["cpu"]["model"], "| flags:", " ".join(RESULT["cpu"]["flags"]))
-    for label in ("one_t4", "two_t4", "avx2_forced"):
+    for label in ("one_t4", "two_t4", "ptx_one_t4", "ptx_two_t4", "avx2_forced"):
         if label not in RESULT:
             continue
         r = RESULT[label]["rates"]
         for name, row in sorted(r.items()):
             print(f"{label:11s} {name:8s} {row['hashes_per_second']:>15,} H/s "
                   f"(2^{row['difficulty']}, {row['solves']} solves)")
-    for key in ("build", "test_meatrider", "test_backends"):
+    for key in ("build", "test_meatrider", "test_backends", "ptx_standalone"):
         if key in RESULT:
             print(f"{key}: rc={RESULT[key]['rc']}")
     sys.exit(0)

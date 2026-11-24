@@ -36,6 +36,7 @@
 #define _POSIX_C_SOURCE 199309L
 
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,16 +76,24 @@ typedef struct {
     uint32_t hashes[8][8];
 } mr_results;
 
-static struct {
-    int state;              /* 0 untouched, 1 ready, -1 unavailable */
-    int ndev;
+#define MR_MAX_DEV 4
+
+/* One of these per visible device: a context, its own JITed module (the driver
+ * compiles the PTX per context), a results buffer and a host mirror. */
+typedef struct {
     CUdevice dev;
     CUcontext ctx;
     CUmodule mod;
     CUfunction fn;
     CUdeviceptr d_results;
     mr_results h_results;
+} mr_dev;
+
+static struct {
+    int state;              /* 0 untouched, 1 ready, -1 unavailable */
+    int ndev;
     char info[160];
+    mr_dev dev[MR_MAX_DEV];
 } g_mr;
 
 static double now_s(void) {
@@ -180,6 +189,7 @@ static int mr_init(void) {
     char *ptx;
     long len = 0;
     CUresult err;
+    int i, n = 0;
 
     if (g_mr.state != 0) {
         return g_mr.state == 1;
@@ -191,17 +201,11 @@ static int mr_init(void) {
     if (p_cuInit(0) != 0) {
         return 0;
     }
-    if (p_cuDeviceGetCount(&g_mr.ndev) != 0 || g_mr.ndev < 1) {
+    if (p_cuDeviceGetCount(&n) != 0 || n < 1) {
         return 0;
     }
-    if (p_cuDeviceGet(&g_mr.dev, 0) != 0 ||
-        p_cuDevicePrimaryCtxRetain(&g_mr.ctx, g_mr.dev) != 0 ||
-        p_cuCtxSetCurrent(g_mr.ctx) != 0) {
-        return 0;
-    }
-    name[0] = '\0';
-    if (p_cuDeviceGetName(name, (int)sizeof name, g_mr.dev) != 0) {
-        name[0] = '\0';
+    if (n > MR_MAX_DEV) {
+        n = MR_MAX_DEV;
     }
 
     env = getenv("ANUBIS_MEATRIDER_PTX");
@@ -215,20 +219,49 @@ static int mr_init(void) {
         fprintf(stderr, "meatrider_ptx: cannot read the PTX (set ANUBIS_MEATRIDER_PTX)\n");
         return 0;
     }
-    err = p_cuModuleLoadData(&g_mr.mod, ptx);
+
+    for (i = 0; i < n; i++) {
+        mr_dev *d = &g_mr.dev[i];
+
+        if (p_cuDeviceGet(&d->dev, i) != 0 ||
+            p_cuDevicePrimaryCtxRetain(&d->ctx, d->dev) != 0 ||
+            p_cuCtxSetCurrent(d->ctx) != 0) {
+            return 0;
+        }
+        err = p_cuModuleLoadData(&d->mod, ptx);
+        if (err != 0) {
+            fprintf(stderr, "meatrider_ptx: device %d: cuModuleLoadData failed: %d\n",
+                    i, (int)err);
+            free(ptx);
+            return 0;
+        }
+        if (p_cuModuleGetFunction(&d->fn, d->mod, "meatrider_kernel") != 0) {
+            fprintf(stderr, "meatrider_ptx: device %d: no meatrider_kernel entry\n", i);
+            free(ptx);
+            return 0;
+        }
+        if (p_cuMemAlloc_v2(&d->d_results, sizeof d->h_results) != 0) {
+            free(ptx);
+            return 0;
+        }
+        memset(&d->h_results, 0, sizeof d->h_results);
+        if (i == 0) {
+            name[0] = '\0';
+            if (p_cuDeviceGetName(name, (int)sizeof name, d->dev) != 0) {
+                name[0] = '\0';
+            }
+        }
+    }
     free(ptx);
-    if (err != 0) {
-        fprintf(stderr, "meatrider_ptx: cuModuleLoadData failed: %d\n", (int)err);
+    if (p_cuCtxSetCurrent(g_mr.dev[0].ctx) != 0) {
         return 0;
     }
-    if (p_cuModuleGetFunction(&g_mr.fn, g_mr.mod, "meatrider_kernel") != 0) {
-        fprintf(stderr, "meatrider_ptx: no meatrider_kernel entry\n");
-        return 0;
+    g_mr.ndev = n;
+    if (n == 1) {
+        snprintf(g_mr.info, sizeof g_mr.info, "CUDA: %.80s (PTX)", name);
+    } else {
+        snprintf(g_mr.info, sizeof g_mr.info, "CUDA: %.64s x%d (PTX)", name, n);
     }
-    if (p_cuMemAlloc_v2(&g_mr.d_results, sizeof g_mr.h_results) != 0) {
-        return 0;
-    }
-    snprintf(g_mr.info, sizeof g_mr.info, "CUDA: %.80s (PTX)", name);
     g_mr.state = 1;
     return 1;
 }
@@ -249,14 +282,113 @@ static uint32_t env_u32(const char *name, uint32_t fallback) {
     return (uint32_t)strtoul(s, NULL, 0);
 }
 
+typedef struct {
+    int i;                  /* device index */
+    const uint32_t *mid;
+    const uint32_t *tail;
+    int difficulty;
+    uint32_t start;
+    uint32_t end;
+    uint32_t chunk;
+    uint32_t block;
+    double deadline;        /* monotonic seconds, 0 = none */
+    volatile int *stop;
+    int rc;                 /* 0 hit, 1 exhausted, -1 failure */
+    uint32_t nonce;
+    uint32_t hashes[8];
+    int dispatches;
+} mr_job;
+
+static int mr_launch(mr_dev *d, const uint32_t mid[8], const uint32_t tail[3],
+                     int difficulty, uint32_t base, uint32_t n, uint32_t block) {
+    uint32_t grid = (n + block - 1u) / block;
+    uint32_t difficulty_arg = (uint32_t)difficulty;
+    uint32_t base_arg = base;
+    uint32_t n_arg = n;
+    CUdeviceptr res = d->d_results;
+    void *args[15];
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        args[i] = (void *)(void *)&mid[i];
+    }
+    for (i = 0; i < 3; i++) {
+        args[8 + i] = (void *)(void *)&tail[i];
+    }
+    args[11] = (void *)&difficulty_arg;
+    args[12] = (void *)&base_arg;
+    args[13] = (void *)&n_arg;
+    args[14] = (void *)&res;
+
+    if (p_cuMemsetD8_v2(d->d_results, 0, sizeof d->h_results) != 0) {
+        return -1;
+    }
+    if (p_cuLaunchKernel(d->fn, grid, 1, 1, block, 1, 1, 0, NULL, args, NULL) != 0) {
+        return -1;
+    }
+    if (p_cuCtxSynchronize() != 0) {
+        return -1;
+    }
+    if (p_cuMemcpyDtoH_v2(&d->h_results, d->d_results, sizeof d->h_results) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static void *mr_worker(void *argp) {
+    mr_job *j = (mr_job *)argp;
+    mr_dev *d = &g_mr.dev[j->i];
+    uint64_t base = j->start;
+
+    j->rc = 1;
+    if (p_cuCtxSetCurrent(d->ctx) != 0) {
+        j->rc = -1;
+        return NULL;
+    }
+    while (base <= (uint64_t)j->end && !*j->stop) {
+        uint64_t remaining = (uint64_t)j->end - base + 1u;
+        uint32_t n = (uint32_t)(remaining < (uint64_t)j->chunk ? remaining
+                                                              : (uint64_t)j->chunk);
+        int i;
+
+        if (n == 0) {
+            break;
+        }
+        if (mr_launch(d, j->mid, j->tail, j->difficulty, (uint32_t)base, n,
+                      j->block) != 0) {
+            j->rc = -1;
+            return NULL;
+        }
+        j->dispatches++;
+        base += n;
+        if (d->h_results.count > 0) {
+            j->nonce = d->h_results.nonces[0];
+            for (i = 0; i < 8; i++) {
+                j->hashes[i] = d->h_results.hashes[0][i];
+            }
+            j->rc = 0;
+            *j->stop = 1;
+            return NULL;
+        }
+        if (j->deadline > 0.0 && now_s() > j->deadline) {
+            j->rc = 1;
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
 int anubis_meatrider_ptx_solve(const uint32_t mid[8], const uint32_t tail[3],
                                int difficulty, uint32_t start, uint32_t count,
                                double budget_ms, uint32_t *out_nonce,
                                uint32_t out_hashes[8], int *out_dispatches) {
-    uint32_t chunk, block, done = 0;
-    uint64_t base, end;
+    mr_job jobs[MR_MAX_DEV];
+    pthread_t threads[MR_MAX_DEV];
+    uint32_t chunk, block;
+    uint64_t end, per;
     double deadline = 0.0;
-    int dispatches = 0;
+    volatile int stop = 0;
+    int i, spawned = 0, rc = 1;
 
     if (mid == NULL || tail == NULL || out_nonce == NULL) {
         return -1;
@@ -275,7 +407,6 @@ int anubis_meatrider_ptx_solve(const uint32_t mid[8], const uint32_t tail[3],
     if (block > 1024u) {
         block = 1024u;
     }
-    base = start;
     end = 0xffffffffull;
     if (count > 0) {
         uint64_t last = (uint64_t)start + (uint64_t)count - 1u;
@@ -287,75 +418,60 @@ int anubis_meatrider_ptx_solve(const uint32_t mid[8], const uint32_t tail[3],
         deadline = now_s() + budget_ms / 1000.0;
     }
 
-    memset(&g_mr.h_results, 0, sizeof g_mr.h_results);
-    if (p_cuMemcpyHtoD_v2(g_mr.d_results, &g_mr.h_results, sizeof g_mr.h_results) != 0) {
-        return -1;
-    }
+    per = (end - (uint64_t)start + 1u + (uint64_t)g_mr.ndev - 1u) /
+          (uint64_t)g_mr.ndev;
+    for (i = 0; i < g_mr.ndev; i++) {
+        uint64_t lo = (uint64_t)start + (uint64_t)i * per;
+        uint64_t hi = lo + per - 1u;
 
-    while (base <= end) {
-        uint64_t remaining = end - base + 1u;
-        uint32_t n = (uint32_t)(remaining < (uint64_t)chunk ? remaining
-                                                            : (uint64_t)chunk);
-        uint32_t grid = (n + block - 1u) / block;
-        uint32_t difficulty_arg = (uint32_t)difficulty;
-        uint32_t base_arg = (uint32_t)base;
-        CUdeviceptr res = g_mr.d_results;
-        void *args[15];
-        int i;
-
-        if (n == 0) {
+        if (lo > end) {
             break;
         }
-        for (i = 0; i < 8; i++) {
-            args[i] = (void *)(void *)&mid[i];
+        jobs[i].i = i;
+        jobs[i].mid = mid;
+        jobs[i].tail = tail;
+        jobs[i].difficulty = difficulty;
+        jobs[i].start = (uint32_t)lo;
+        jobs[i].end = (uint32_t)(hi > end ? end : hi);
+        jobs[i].chunk = chunk;
+        jobs[i].block = block;
+        jobs[i].deadline = deadline;
+        jobs[i].stop = &stop;
+        jobs[i].rc = 1;
+        jobs[i].nonce = 0;
+        jobs[i].dispatches = 0;
+        if (pthread_create(&threads[i], NULL, mr_worker, &jobs[i]) != 0) {
+            jobs[i].rc = -1;
+            break;
         }
-        for (i = 0; i < 3; i++) {
-            args[8 + i] = (void *)(void *)&tail[i];
-        }
-        args[11] = (void *)&difficulty_arg;
-        args[12] = (void *)&base_arg;
-        args[13] = (void *)&n;
-        args[14] = (void *)&res;
-
-        if (p_cuMemsetD8_v2(g_mr.d_results, 0, sizeof g_mr.h_results) != 0) {
-            return -1;
-        }
-        if (p_cuLaunchKernel(g_mr.fn, grid, 1, 1, block, 1, 1, 0, NULL, args,
-                             NULL) != 0) {
-            fprintf(stderr, "meatrider_ptx: cuLaunchKernel failed\n");
-            return -1;
-        }
-        if (p_cuCtxSynchronize() != 0) {
-            return -1;
-        }
-        if (p_cuMemcpyDtoH_v2(&g_mr.h_results, g_mr.d_results,
-                              sizeof g_mr.h_results) != 0) {
-            return -1;
-        }
-        dispatches++;
-        done += n;
-        base += n;
-
-        if (g_mr.h_results.count > 0) {
-            uint32_t s = 0;
-            *out_nonce = g_mr.h_results.nonces[0];
+        spawned++;
+    }
+    for (i = 0; i < spawned; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    for (i = 0; i < spawned; i++) {
+        if (jobs[i].rc == 0) {
+            int k;
+            *out_nonce = jobs[i].nonce;
             if (out_hashes != NULL) {
-                for (i = 0; i < 8; i++) {
-                    out_hashes[i] = g_mr.h_results.hashes[s][i];
+                for (k = 0; k < 8; k++) {
+                    out_hashes[k] = jobs[i].hashes[k];
                 }
             }
             if (out_dispatches != NULL) {
-                *out_dispatches = dispatches;
+                *out_dispatches = jobs[i].dispatches;
             }
             return 0;
         }
-        if (deadline > 0.0 && now_s() > deadline) {
-            break;
+        if (jobs[i].rc < 0) {
+            rc = -1;
         }
     }
     if (out_dispatches != NULL) {
-        *out_dispatches = dispatches;
+        *out_dispatches = spawned > 0 ? jobs[0].dispatches : 0;
     }
-    (void)done;
-    return 1;
+    if (spawned == 0) {
+        return -1;
+    }
+    return rc;
 }

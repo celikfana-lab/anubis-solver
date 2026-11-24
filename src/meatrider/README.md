@@ -60,6 +60,7 @@ header.
 | wasm SIMD128 ×4 | [`wasm/meatrider_simd.c`](../../wasm/meatrider_simd.c) | `anubis_work()` | 4.0–4.5 |
 | wasm scalar | [`wasm/meatrider_pow.c`](../../wasm/meatrider_pow.c) | `anubis_work()` | 1.75–1.93 |
 | PTX | `meatrider.ptx` | `meatrider_kernel` | 994.7-1199.5 (Colab T4, driver-JITed) |
+| TPU | [`src/google/tpu/tpu_backend.c`](../google/tpu/tpu_backend.c) | `@main` (StableHLO) | written, awaiting a TPU run |
 
 Numbers are one run on an i7-1260P with an Iris Xe, one thread; the machine
 readable copy is [`results/meatrider-backends.json`](../../results/meatrider-backends.json)
@@ -154,8 +155,13 @@ published on purpose. **Do not send bitcoin to it.**
   machine that wrote this, so the code could not be run once. The shader above is
   the same work that runs through Vulkan there; an L0 host would be
   `levelzero_sha256.c` with this kernel plugged in.
-- **TPU.** A PJRT SHA-256 program measures 9.38 MHash/s, so a two-compression
-  tier lands near 4.7 — slower than the AVX2 kernel on the same laptop. A kernel
-  that loses to the CPU is not worth its maintenance.
+- **TPU has a program, but no number yet.** `build_module_meatrider()` emits a
+  StableHLO module per challenge: both compressions unrolled, the display-order
+  byte swap, and one equality per 32 bits of difficulty. It is structurally
+  checked here (`test_meatrider_tpu.py`, 857 KB / 12,682 lines for 8 lanes) and
+  has never been compiled, because no TPU has been reachable from this machine.
+  `colab/meatrider-tpu-colab.ipynb` is the run that would settle it; the sha256
+  tier's much smaller PJRT module measures ~700 MHash/s on a TPU, so a few hundred
+  is the honest expectation rather than a promise.
 - **NEON.** The `sha256` tier has one; this tier's AArch64 path is the portable C
   kernel, which is what a phone would run anyway.

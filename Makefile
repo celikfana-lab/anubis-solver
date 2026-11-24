@@ -161,7 +161,7 @@ HAVE_TPU :=
 ifneq ($(TPU),0)
 ifneq ($(wildcard src/google/tpu/tpu_backend.c),)
 CORE_SRC += src/google/tpu/tpu_backend.c
-CFLAGS   += -DANUBIS_HAVE_TPU -Isrc/google/tpu
+CFLAGS   += -DANUBIS_HAVE_TPU -DANUBIS_MEATRIDER_TPU -Isrc/google/tpu
 LDFLAGS  += -ldl
 HAVE_TPU := 1
 else ifeq ($(TPU),1)

@@ -37,6 +37,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "meatrider/meatrider.h"
 #include "pjrt_c_api.h"
 #include "pjrt_common.h"
 #include "tpu_backend.h"
@@ -212,6 +213,258 @@ static const char *mb_rotr(modbuilder *bd, const char *x, unsigned n) {
     const char *sr = mb_op2(bd, "shift_right_logical", x, mb_const(bd, n));
     const char *sl = mb_op2(bd, "shift_left", x, mb_const(bd, 32 - n));
     return mb_op2(bd, "or", sr, sl);
+}
+
+/* ------------------------------------------------------------------ */
+/* meatrider: SHA-256d over a Bitcoin header                           */
+/*                                                                     */
+/* One hash is two compressions, the first from the challenge's        */
+/* midstate and the second over the first digest -- so the builder      */
+/* runs the same emission twice and the device decides "does this lane  */
+/* meet the target?" exactly as the sha256 tier's module does.          */
+/* ------------------------------------------------------------------ */
+
+static uint32_t mr_bswap32(uint32_t v) {
+    return (v >> 24) | ((v >> 8) & 0x0000ff00u) | ((v << 8) & 0x00ff0000u) |
+           (v << 24);
+}
+
+/* A 32-bit byte swap as HLO. Bitcoin shows the digest reversed, so the words
+ * the target test reads are byte-swapped and word-reversed. */
+static const char *mr_bswap(modbuilder *bd, const char *x) {
+    const char *a = mb_op2(bd, "shift_left", x, mb_const(bd, 24));
+    const char *bl = mb_op2(bd, "shift_left", x, mb_const(bd, 8));
+    const char *b = mb_op2(bd, "and", bl, mb_const(bd, 0x00ff0000u));
+    const char *cl = mb_op2(bd, "shift_right_logical", x, mb_const(bd, 8));
+    const char *c = mb_op2(bd, "and", cl, mb_const(bd, 0x0000ff00u));
+    const char *d = mb_op2(bd, "shift_right_logical", x, mb_const(bd, 24));
+
+    return mb_op2(bd, "or", mb_op2(bd, "or", a, b), mb_op2(bd, "or", c, d));
+}
+
+/* One compression: out = st + working, over the schedule expanded from `w`.
+ * The sha256 builder inlines this; meatrider needs it twice, so it is a
+ * function here and the sha256 path is left alone. */
+static void mr_compress(modbuilder *bd, const char *st[8], const char *w[16],
+                        const char *out[8]) {
+    const char *s[64];
+    const char *v[8];
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        s[i] = w[i];
+    }
+    for (i = 16; i < 64; i++) {
+        const char *a1 = mb_rotr(bd, s[i - 15], 7);
+        const char *a2 = mb_rotr(bd, s[i - 15], 18);
+        const char *a3 = mb_op2(bd, "shift_right_logical", s[i - 15],
+                                mb_const(bd, 3));
+        const char *s0 = mb_xor3(bd, a1, a2, a3);
+        const char *b1 = mb_rotr(bd, s[i - 2], 17);
+        const char *b2 = mb_rotr(bd, s[i - 2], 19);
+        const char *b3 = mb_op2(bd, "shift_right_logical", s[i - 2],
+                                mb_const(bd, 10));
+        const char *s1 = mb_xor3(bd, b1, b2, b3);
+        const char *t = mb_add3(bd, s[i - 16], s0, s[i - 7]);
+        s[i] = mb_op2(bd, "add", t, s1);
+    }
+
+    for (i = 0; i < 8; i++) {
+        v[i] = st[i];
+    }
+    for (i = 0; i < 64; i++) {
+        const char *S1 = mb_xor3(bd, mb_rotr(bd, v[4], 6), mb_rotr(bd, v[4], 11),
+                                 mb_rotr(bd, v[4], 25));
+        const char *en = mb_op2(bd, "xor", v[4], mb_const(bd, 0xffffffffu));
+        const char *ch = mb_op2(bd, "xor", mb_op2(bd, "and", v[4], v[5]),
+                                mb_op2(bd, "and", en, v[6]));
+        const char *kw = mb_op2(bd, "add", mb_const(bd, pjrt_k256[i]), s[i]);
+        const char *t1 = mb_add4(bd, v[7], S1, ch, kw);
+        const char *S0 = mb_xor3(bd, mb_rotr(bd, v[0], 2), mb_rotr(bd, v[0], 13),
+                                 mb_rotr(bd, v[0], 22));
+        const char *maj = mb_xor3(bd, mb_op2(bd, "and", v[0], v[1]),
+                                  mb_op2(bd, "and", v[0], v[2]),
+                                  mb_op2(bd, "and", v[1], v[2]));
+        const char *t2 = mb_op2(bd, "add", S0, maj);
+        const char *e_new = mb_op2(bd, "add", v[3], t1);
+        const char *a_new = mb_op2(bd, "add", t1, t2);
+
+        v[7] = v[6];
+        v[6] = v[5];
+        v[5] = v[4];
+        v[4] = e_new;
+        v[3] = v[2];
+        v[2] = v[1];
+        v[1] = v[0];
+        v[0] = a_new;
+    }
+    for (i = 0; i < 8; i++) {
+        out[i] = mb_op2(bd, "add", v[i], st[i]);
+    }
+}
+
+/* is `word` worth zero (or with its top `rem` bits zero)? */
+static const char *mr_eq_zero(modbuilder *bd, const char *x, int rem) {
+    const char *cmp = mb_name(bd, "eq");
+    const char *z = mb_name(bd, "z");
+    const char *zb = mb_name(bd, "zb");
+    const char *val = x;
+
+    if (rem > 0 && rem < 32) {
+        val = mb_op2(bd, "shift_right_logical", x, mb_const(bd, (unsigned)(32 - rem)));
+    }
+    bprintf(&bd->b, "    %s = stablehlo.constant dense<0> : tensor<i32>\n", z);
+    bprintf(&bd->b, "    %s = stablehlo.broadcast_in_dim %s, dims = [] "
+                    ": (tensor<i32>) -> tensor<%dxi32>\n", zb, z, bd->lanes);
+    bprintf(&bd->b, "    %s = \"stablehlo.compare\"(%s, %s) "
+                    "{comparison_direction = #stablehlo<comparison_direction EQ>, "
+                    "compare_type = #stablehlo<comparison_type SIGNED>} "
+                    ": (tensor<%dxi32>, tensor<%dxi32>) -> tensor<%dxi1>\n",
+            cmp, val, zb, bd->lanes, bd->lanes, bd->lanes);
+    return cmp;
+}
+
+static const char *mr_and_bool(modbuilder *bd, const char *a, const char *b) {
+    const char *r = mb_name(bd, "and");
+
+    bprintf(&bd->b, "    %s = stablehlo.and %s, %s : tensor<%dxi1>\n",
+            r, a, b, bd->lanes);
+    return r;
+}
+
+static char *build_module_meatrider(int lanes, const uint32_t mid[8],
+                                    const uint32_t tail[3], int difficulty) {
+    static const uint32_t iv[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u,
+                                   0xa54ff53au, 0x510e527fu, 0x9b05688cu,
+                                   0x1f83d9abu, 0x5be0cd19u};
+    modbuilder bd;
+    const char *w[16];
+    const char *st[8];
+    const char *h1[8];
+    const char *h2[8];
+    const char *dg[8];
+    const char *acc;
+    char *module;
+    int i, full, rem;
+
+    memset(&bd, 0, sizeof bd);
+    bd.lanes = lanes;
+
+    bprintf(&bd.b,
+            "module {\n"
+            "  func.func @main(%%n: tensor<i32>) -> tensor<%dxi8> {\n"
+            "    %%lane = stablehlo.iota dim = 0 : tensor<%dxi32>\n", lanes,
+            lanes);
+    {
+        const char *base = mb_name(&bd, "nb");
+        const char *nb;
+
+        bprintf(&bd.b, "    %s = stablehlo.broadcast_in_dim %%n, dims = [] "
+                       ": (tensor<i32>) -> tensor<%dxi32>\n", base, lanes);
+        nb = mb_op2(&bd, "add", "%lane", base);
+
+        /* block 1: nBits and the timestamp as big-endian words, the nonce
+         * little-endian at byte 12 (word 3, byte-swapped), 0x80, the length. */
+        w[0] = mb_const(&bd, mr_bswap32(tail[0]));
+        w[1] = mb_const(&bd, mr_bswap32(tail[1]));
+        w[2] = mb_const(&bd, mr_bswap32(tail[2]));
+        w[3] = mr_bswap(&bd, nb);
+    }
+    w[4] = mb_const(&bd, 0x80000000u);
+    for (i = 5; i < 15; i++) {
+        w[i] = mb_const(&bd, 0u);
+    }
+    w[15] = mb_const(&bd, 0x00000280u);   /* 80 bytes, 640 bits */
+    for (i = 0; i < 8; i++) {
+        st[i] = mb_const(&bd, mid[i]);
+    }
+    mr_compress(&bd, st, w, h1);
+
+    /* block 2: the first digest's words are its message words, because a
+     * SHA-256 message word is the big-endian reading of its four bytes. */
+    for (i = 0; i < 8; i++) {
+        w[i] = h1[i];
+    }
+    w[8] = mb_const(&bd, 0x80000000u);
+    for (i = 9; i < 15; i++) {
+        w[i] = mb_const(&bd, 0u);
+    }
+    w[15] = mb_const(&bd, 0x00000100u);   /* 32 bytes, 256 bits */
+    for (i = 0; i < 8; i++) {
+        st[i] = mb_const(&bd, iv[i]);
+    }
+    mr_compress(&bd, st, w, h2);
+
+    /* display order: reverse the words and byte-swap each one */
+    for (i = 0; i < 8; i++) {
+        dg[i] = mr_bswap(&bd, h2[7 - i]);
+    }
+
+    /* Leading zero bits, as equalities against zero. `difficulty` is baked in,
+     * so the number of words to test is known at build time; the host checks
+     * the full difficulty again before believing a lane. */
+    full = difficulty / 32;
+    rem = difficulty % 32;
+    acc = NULL;
+    for (i = 0; i < full && i < 8; i++) {
+        const char *t = mr_eq_zero(&bd, dg[i], 0);
+        acc = (acc == NULL) ? t : mr_and_bool(&bd, acc, t);
+    }
+    if (rem != 0 && full < 8) {
+        const char *t = mr_eq_zero(&bd, dg[full], rem);
+        acc = (acc == NULL) ? t : mr_and_bool(&bd, acc, t);
+    }
+    if (acc == NULL) {
+        /* difficulty 0: every lane passes, spelled as an equality with itself */
+        acc = mr_eq_zero(&bd, dg[0], 0);
+    }
+    {
+        const char *fl = mb_name(&bd, "flag");
+
+        bprintf(&bd.b, "    %s = \"stablehlo.convert\"(%s) "
+                       ": (tensor<%dxi1>) -> tensor<%dxi8>\n",
+                fl, acc, lanes, lanes);
+        bprintf(&bd.b, "    return %s : tensor<%dxi8>\n", fl, lanes);
+    }
+    bprintf(&bd.b, "  }\n}\n");
+
+    if (bd.b.oom || bd.arena.oom || bd.b.s == NULL) {
+        free(bd.b.s);
+        arena_release(&bd.arena);
+        return NULL;
+    }
+    module = bd.b.s;
+    arena_release(&bd.arena);
+    return module;
+}
+
+/* The module text, for tests and for anyone who wants to read the program the
+ * device is asked to run without owning a TPU. Returns its length, -1 when the
+ * builder fails, -2 when `out` is too small. */
+int anubis_tpu_meatrider_hlo(int lanes, const uint32_t mid[8],
+                             const uint32_t tail[3], int difficulty, char *out,
+                             size_t cap) {
+    char *module;
+    size_t len;
+
+    if (mid == NULL || tail == NULL || out == NULL) {
+        return -1;
+    }
+    if (lanes < 1) {
+        lanes = 8;
+    }
+    module = build_module_meatrider(lanes, mid, tail, difficulty);
+    if (module == NULL) {
+        return -1;
+    }
+    len = strlen(module);
+    if (cap <= len) {
+        free(module);
+        return -2;
+    }
+    memcpy(out, module, len + 1);
+    free(module);
+    return (int)len;
 }
 
 /*
@@ -992,6 +1245,170 @@ int anubis_tpu_solve(const uint8_t *challenge, uint32_t challenge_len,
         }
     }
 
+    pthread_mutex_unlock(&g_lock);
+    return result;
+}
+
+/* ==================================================================== */
+/* meatrider: the same PJRT lifecycle, a different module               */
+/* ==================================================================== */
+
+typedef struct {
+    PJRT_LoadedExecutable *ex;
+    uint8_t *flags;
+    uint32_t mid[8];
+    uint32_t tail[3];
+    int difficulty;
+    int lanes;
+    int valid;
+} mr_ex_cache;
+
+static mr_ex_cache g_mr_cache;
+
+int anubis_tpu_meatrider_available(void) {
+    pthread_once(&g_probe_once, probe_once);
+    return g_tpu.status == 1;
+}
+
+/* A new challenge or difficulty is a new compile: the midstate, nBits and the
+ * timestamp are constants in the module, exactly like the sha256 tier's
+ * message words. The old executable stays cached if the new compile fails. */
+static int mr_cache_ready(const uint32_t mid[8], const uint32_t tail[3],
+                          int difficulty) {
+    int need = !g_mr_cache.valid || g_mr_cache.difficulty != difficulty ||
+               g_mr_cache.lanes != g_lanes ||
+               memcmp(g_mr_cache.mid, mid, sizeof g_mr_cache.mid) != 0 ||
+               memcmp(g_mr_cache.tail, tail, sizeof g_mr_cache.tail) != 0;
+    PJRT_LoadedExecutable *ex;
+    uint8_t *flags;
+    char *module;
+
+    if (!need) {
+        return 0;
+    }
+    module = build_module_meatrider(g_lanes, mid, tail, difficulty);
+    if (module == NULL) {
+        return -1;
+    }
+    ex = compile_module(g_tpu.api, g_tpu.client, module);
+    free(module);
+    if (ex == NULL) {
+        return -1;
+    }
+    flags = malloc((size_t)g_lanes);
+    if (flags == NULL) {
+        destroy_executable(g_tpu.api, ex);
+        return -1;
+    }
+    if (g_mr_cache.valid) {
+        destroy_executable(g_tpu.api, g_mr_cache.ex);
+        free(g_mr_cache.flags);
+    }
+    g_mr_cache.ex = ex;
+    g_mr_cache.flags = flags;
+    memcpy(g_mr_cache.mid, mid, sizeof g_mr_cache.mid);
+    memcpy(g_mr_cache.tail, tail, sizeof g_mr_cache.tail);
+    g_mr_cache.difficulty = difficulty;
+    g_mr_cache.lanes = g_lanes;
+    g_mr_cache.valid = 1;
+    return 0;
+}
+
+int anubis_tpu_meatrider_solve(const meatrider_ctx *ctx, uint32_t start,
+                               uint32_t count, double budget_ms,
+                               uint32_t *out_nonce, uint8_t out_digest[32]) {
+    uint32_t tail[3];
+    uint64_t base, end;
+    double t0;
+    int result = 1;
+    int i;
+
+    if (ctx == NULL || out_nonce == NULL || out_digest == NULL) {
+        return -1;
+    }
+    if (!anubis_tpu_meatrider_available()) {
+        return -1;
+    }
+    for (i = 0; i < 3; i++) {
+        tail[i] = (uint32_t)ctx->tail[4 * i] |
+                  ((uint32_t)ctx->tail[4 * i + 1] << 8) |
+                  ((uint32_t)ctx->tail[4 * i + 2] << 16) |
+                  ((uint32_t)ctx->tail[4 * i + 3] << 24);
+    }
+    end = 0xFFFFFFFFull;
+    if (count > 0) {
+        uint64_t last = (uint64_t)start + (uint64_t)count - 1u;
+        if (last < end) {
+            end = last;
+        }
+    }
+
+    pthread_mutex_lock(&g_lock);
+    t0 = pjrt_now_s();
+    if (mr_cache_ready(ctx->mid, tail, ctx->difficulty) != 0) {
+        pthread_mutex_unlock(&g_lock);
+        return -1;
+    }
+    if (budget_ms > 0.0 && (pjrt_now_s() - t0) * 1000.0 >= budget_ms) {
+        pthread_mutex_unlock(&g_lock);
+        return 1;
+    }
+
+    base = start;
+    while (base <= end) {
+        uint64_t remaining = end - base + 1u;
+        uint32_t n = remaining < (uint64_t)g_lanes ? (uint32_t)remaining
+                                                  : (uint32_t)g_lanes;
+        PJRT_Buffer *arg = NULL;
+        PJRT_Buffer *res = NULL;
+        uint32_t lane;
+        int hit = 0;
+
+        if (upload_i32(g_tpu.api, g_tpu.client, g_tpu.device,
+                       bits_i32((uint32_t)base), &arg) != 0) {
+            result = -1;
+            break;
+        }
+        if (execute(g_tpu.api, g_mr_cache.ex, arg, &res) != 0) {
+            destroy_buffer(g_tpu.api, arg);
+            result = -1;
+            break;
+        }
+        destroy_buffer(g_tpu.api, arg);
+        if (read_back(g_tpu.api, res, g_mr_cache.flags, (size_t)g_lanes) != 0) {
+            destroy_buffer(g_tpu.api, res);
+            result = -1;
+            break;
+        }
+        destroy_buffer(g_tpu.api, res);
+
+        for (lane = 0; lane < n; lane++) {
+            uint32_t nonce;
+            uint8_t digest[32];
+
+            if (g_mr_cache.flags[lane] == 0) {
+                continue;
+            }
+            nonce = (uint32_t)(base + lane);
+            /* Re-derive in C: a lane flag is a claim, the digest is the proof. */
+            meatrider_hash(ctx, nonce, digest);
+            if (!meatrider_meets(digest, ctx->difficulty)) {
+                continue;
+            }
+            *out_nonce = nonce;
+            memcpy(out_digest, digest, 32);
+            pthread_mutex_unlock(&g_lock);
+            return 0;
+        }
+        if (hit) {
+            break;
+        }
+        base += n;
+        if (budget_ms > 0.0 && (pjrt_now_s() - t0) * 1000.0 >= budget_ms) {
+            result = 1;
+            break;
+        }
+    }
     pthread_mutex_unlock(&g_lock);
     return result;
 }

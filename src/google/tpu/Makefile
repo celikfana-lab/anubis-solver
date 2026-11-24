@@ -29,10 +29,13 @@ argon2_pjrt: argon2_pjrt.c pjrt_c_api.h pjrt_common.h
 
 # Library object for libanubis_solver.so. -fPIC is not optional here.
 $(LIBOBJ): tpu_backend.c tpu_backend.h pjrt_c_api.h pjrt_common.h
-	$(CC) $(CFLAGS) -fPIC -I. -c -o $@ tpu_backend.c
+	$(CC) $(CFLAGS) -fPIC -I. -I../.. -c -o $@ tpu_backend.c
 
 $(SELFTEST): tpu_backend_selftest.c $(LIBOBJ) tpu_backend.h pjrt_common.h
-	$(CC) $(CFLAGS) -I. -o $@ tpu_backend_selftest.c $(LIBOBJ) -ldl -lpthread
+# the selftest links the tier's portable reference: the backend re-derives
+# every meatrider lane flag with it, exactly as the library does.
+	$(CC) $(CFLAGS) -I. -I../.. -o $@ tpu_backend_selftest.c $(LIBOBJ) \
+		../../meatrider/meatrider.c -ldl -lpthread
 
 selftest: $(SELFTEST)
 

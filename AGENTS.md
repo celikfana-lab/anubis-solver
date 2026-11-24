@@ -53,6 +53,7 @@ node wasm/verify-meatrider-simd.mjs        # the 4-lane meatrider browser kernel
 deno run --allow-all tools/meatrider-webgpu.mjs  # meatrider on WebGPU, 203 digest comparisons
 python3 src/meatrider/test_meatrider_ptx.py      # the meatrider PTX kernel, in ptxsim
 python3 src/meatrider/test_meatrider_ptx_gpu.py  # the same PTX JITed on a real GPU
+python3 src/meatrider/test_meatrider_tpu.py      # the TPU StableHLO (structure, then a run if there is one)
 cd web  && make check                      # the site: links, anchors, layout
 webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see webgpu/README.md)
 gcc -O2 -o /tmp/clrun tools/xe-sha256-opencl.c -lOpenCL && /tmp/clrun   # SHA-256 on Intel Xe, needs intel-opencl-icd
@@ -82,7 +83,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `web/` | the static documentation site: beginner guide, algorithms, comparison, benchmarks. `cd web && make check` |
 | `webgpu/` | HashX, Argon2id, SHA-256 and meatrider compiled to WGSL and run on WebGPU; SHA-256 is 33x wasm, Argon2id is slower than wasm, HashX is wrong on the Intel backend — see its README before quoting any number from it |
 | `betterAnusbis/` | an Anubis-compatible PoW gate in one C file; links this library |
-| `colab/` | the Colab notebook that builds with CUDA and measures every meatrider kernel on a T4 |
+| `colab/` | the Colab notebooks: every meatrider kernel on a T4, and the TPU program's first run |
 | `firefox-extension/` | native messaging host so the browser uses `libanubis_solver.so` |
 | `beyond/`, `card/` | the hardware half: RTL, testbenches, QEMU PCI device + driver |
 

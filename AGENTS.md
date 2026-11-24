@@ -65,7 +65,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `src/core/anubis_solver.c` | core: hashing, search loop, backend dispatch, verification |
 | `src/hashx/hashx.c/.h` | HashX generator, interpreter, x86-64/AArch64 JITs (LGPL-3.0) |
 | `src/cpu/*.s` | hand-written SHA-256 kernels (AVX2, SHA-NI, AVX-512, NEON) |
-| `src/meatrider/` | the Bitcoin-header tier: the portable reference, `meatrider_*` clones of the CPU kernels, one kernel per accelerator, the backend table, the PTX kernel |
+| `src/meatrider/` | the Bitcoin-header tier: the portable reference, `meatrider_*` clones of the CPU kernels, one kernel per accelerator, the backend table, the PTX kernel, and a README that says which byte is what |
 | `src/nvidia/cuda/*.cu` | CUDA backends (SHA-256, Argon2id, HashX) |
 | `src/intel/xe/` | Intel Xe (gen12lp) assembly for the SHA-256 kernel: a hand-written listing from `tools/gen_xe_sha256.py`, and IGC's own code extracted from a Zebin that ran on the GPU |
 | `src/intel/levelzero/*.c` | Level Zero backends; kernels in `src/intel/levelzero/*.cl` |

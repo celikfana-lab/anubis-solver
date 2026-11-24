@@ -808,7 +808,8 @@ lands on difficulty 61.
 
 The column that matters is the one not in the table. The tier is SHA-256d over a
 real header, which is the hottest loop in computing, so the same proof can be
-mined by every kernel this repository owns:
+mined by every kernel this repository owns ([`src/meatrider/README.md`](src/meatrider/README.md)
+is the directory's own guide):
 
 | kernel | where | MHash/s | vs the portable C |
 |---|---|---:|---:|

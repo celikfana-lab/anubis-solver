@@ -94,6 +94,10 @@ def main() -> int:
     ap.add_argument("--dump", type=Path, default=None, help="write the StableHLO here")
     ap.add_argument("--difficulty", type=int, default=20)
     ap.add_argument("--lanes", type=int, default=8)
+    ap.add_argument("--bench", action="store_true",
+                    help="after the runs, time repeated solves on one cached challenge")
+    ap.add_argument("--bench-reps", type=int, default=3)
+    ap.add_argument("--bench-difficulty", type=int, default=18)
     ap.add_argument("--budget", type=float, default=600000.0,
                     help="ms per solve, compile included (default 10 min: the first\n"
                          "call compiles ~857 KB of StableHLO, which is the slow part)")
@@ -159,6 +163,33 @@ def main() -> int:
         want = meatrider_ref.digest(rd, difficulty, nonce.value).hex() if rc == 0 else ""
         check(rc == 0 and digest.raw.hex() == want,
               f"difficulty {difficulty}: nonce {nonce.value}, digest agrees with the reference")
+
+    if args.bench:
+        print(f"\nthroughput at difficulty {args.bench_difficulty} "
+              f"({args.bench_reps} solves, one cached executable):")
+        ctx = Ctx()
+        lib.meatrider_ctx_init(ctypes.byref(ctx), rd, args.bench_difficulty)
+        nonce = ctypes.c_uint32(0)
+        digest = ctypes.create_string_buffer(32)
+        # The first call compiles; the timed ones do not.
+        rc = lib.anubis_tpu_meatrider_solve(ctypes.byref(ctx), 0, 0, args.budget,
+                                           ctypes.byref(nonce), digest)
+        if rc != 0:
+            check(False, f"bench warm-up returned {rc}")
+        else:
+            import time as _time
+            started = _time.perf_counter()
+            ok = True
+            for _ in range(args.bench_reps):
+                rc = lib.anubis_tpu_meatrider_solve(ctypes.byref(ctx), 0, 0,
+                                                    args.budget, ctypes.byref(nonce),
+                                                    digest)
+                ok = ok and rc == 0
+            elapsed = _time.perf_counter() - started
+            hashes = args.bench_reps * (2 ** args.bench_difficulty)
+            check(ok, f"{args.bench_reps} solves of 2^{args.bench_difficulty} in "
+                      f"{elapsed:.2f} s = {hashes / elapsed / 1e6:.2f} MHash/s")
+            print("  (the executable is cached, so this is dispatch + windows, not compile)")
 
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0

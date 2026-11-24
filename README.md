@@ -822,6 +822,7 @@ is the directory's own guide):
 | WebGPU | `webgpu/meatrider.wgsl` | 43-62 | 20-29x |
 | WASM, 4-lane SIMD | `wasm/meatrider_simd.c` | 4.0-4.5 | 1.9x |
 | WASM, scalar | `wasm/meatrider_pow.c` | 1.75-1.93 | — |
+| TPU | `src/google/tpu/tpu_backend.c` | runs | Colab TPU: d=12 and d=20 mined, digests verified; no rate yet |
 | PTX | `src/meatrider/meatrider.ptx` | 994.7-1199.5 | Colab T4, driver-JITed; 1.53x the .cu kernel |
 
 All of them agree on the digest: `tests/test_meatrider_backends.py` asks each

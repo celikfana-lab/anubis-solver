@@ -868,6 +868,19 @@ Two things that run only there, and their numbers:
   checked-in `meatrider.ptx` directly (no nvcc, no ptxas, no cubin), and
   `ANUBIS_MEATRIDER_PTX=1` makes the library's CUDA slot use it.
 
+### On a Colab TPU
+
+The tier's PJRT program (`build_module_meatrider()` in
+`src/google/tpu/tpu_backend.c`) compiled and ran on a Colab TPU
+(`TPU: PJRT 0.116, 1 device`): difficulty 12 and difficulty 20 both mined, and both
+winning digests were re-derived in C and agreed
+(`python3 src/meatrider/test_meatrider_tpu.py`, 12 checks). What is *not* measured
+is throughput: the module is 857 KB / 12,682 lines of StableHLO for 8 lanes, the
+first call on a challenge pays a compile, and the sustained rate is PJRT dispatch
+per 8-lane window rather than arithmetic. `--bench` times repeated solves on one
+cached executable; that row stays empty until someone runs it and writes the
+number here.
+
 ### On Kaggle (2× Tesla T4)
 
 `src/meatrider/kaggle_meatrider/` measures the same tier with one T4 and then with

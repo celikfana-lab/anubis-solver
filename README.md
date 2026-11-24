@@ -842,6 +842,13 @@ this is reconciliation, not verification, so the code cannot be fooled into
 accepting money that was not sent: the operator is the one who says it was.
 There is no node, no invoice, no address watch and no wallet in this repository.
 
+The address belongs to the **gate**, which is the only place it is configured
+(`--meatrider-pay` or the `MEATRIDER_PAY` environment variable) and where the
+money lands. `libanubis_solver.so` has no address, no key and no wallet: its
+meatrider entry points take a challenge and return a nonce. The solving clients
+never see a payment instruction either — the `pay` object lives in the challenge
+page that betterAnusbis renders.
+
 **Suspicion buys a rung.** `--meatrider-escalate` wires the rung to the honeypot
 the gate already runs: a network that follows the trap link gets a meatrider
 challenge instead of `difficulty + 8`, and every doubling of its hit count moves

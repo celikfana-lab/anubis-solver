@@ -84,7 +84,8 @@ honeypot's hit count picks the rung, one wall up the browser ladder per doubling
 (a second, a minute, an hour, three days, an ASIC's second), so a crawler is
 priced by its own behaviour instead of by a rule someone remembered to write. The
 top rungs can be paid instead of mined when `--meatrider-pay` names an address:
-the page shows a `bitcoin:` link, and the gate accepts
+the page shows a `bitcoin:` link (the address is the gate's — the solver
+library has none, and never sees it), and the gate accepts
 `HMAC(key, "meatrider-receipt:" || id)` as the response once the operator has
 confirmed the payment. It is single-use, bound to one challenge id, and the gate
 never talks to Bitcoin — reconciliation, not verification.

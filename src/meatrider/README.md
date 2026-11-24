@@ -52,10 +52,10 @@ header.
 | portable C | `meatrider.c` | `meatrider_hash()` | 2.14 |
 | SHA-NI | `meatrider_shani.s` | `meatrider_block_shani()` | 6.27 |
 | AVX2 ×8 | `meatrider_avx2.s` | `meatrider_compress8_avx2()` | 6.91 |
-| AVX-512 ×16 | `meatrider_avx512.s` | `meatrider_compress16_avx512()` | 8.69 (Colab Ice Lake; this CPU fuses it off) |
+| AVX-512 ×16 | `meatrider_avx512.s` | `meatrider_compress16_avx512()` | 8.7-14.3 (Colab Ice Lake, Kaggle Xeon; this CPU fuses it off) |
 | OpenCL | `meatrider_opencl.cl` | `meatrider_pow()` | 154–168 |
 | Vulkan | [`src/vulkan/meatrider_comp.comp`](../vulkan/meatrider_comp.comp) | `main()` | 56–80 |
-| CUDA | `meatrider_cuda.cu` | `meatrider_pow_kernel()` | 785.8 (Colab T4) |
+| CUDA | `meatrider_cuda.cu` | `meatrider_pow_kernel()` | 720.7 on one T4, 1,513.0 on two |
 | WebGPU | [`webgpu/meatrider.wgsl`](../../webgpu/meatrider.wgsl) | `main()` | 43–62 |
 | wasm SIMD128 ×4 | [`wasm/meatrider_simd.c`](../../wasm/meatrider_simd.c) | `anubis_work()` | 4.0–4.5 |
 | wasm scalar | [`wasm/meatrider_pow.c`](../../wasm/meatrider_pow.c) | `anubis_work()` | 1.75–1.93 |

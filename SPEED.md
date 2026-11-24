@@ -868,10 +868,30 @@ Two things that run only there, and their numbers:
   checked-in `meatrider.ptx` directly (no nvcc, no ptxas, no cubin), and
   `ANUBIS_MEATRIDER_PTX=1` makes the library's CUDA slot use it.
 
-**The Kaggle CPU that was supposed to have AVX-512 does not**: `Intel(R) Xeon(R)
-CPU @ 2.20GHz`, `flags: avx2` — no `avx512f`, and no `sha_ni` either, so that box
-ran the portable C and AVX2 kernels only (`src/meatrider/kaggle_meatrider_cpu/`,
-14 checks passed, 68 digests correct).
+### On Kaggle (2× Tesla T4)
+
+`src/meatrider/kaggle_meatrider/` measures the same tier with one T4 and then with
+both, and the CUDA backend splits the nonce space across the devices it can see:
+
+| kernel | one T4 | two T4 | scaling |
+|---|---:|---:|---:|
+| CUDA | 720.7 M | **1,513.0 M** | **2.10x** |
+| OpenCL | 631.9 M | 574.5 M | 1x (the OpenCL backend uses one device) |
+| AVX-512 ×16 | 14.27 M | 13.19 M | the Xeon's, not the GPU's |
+| AVX2 ×8 | 7.47 M | 7.04 M | |
+| portable C | 1.98 M | 1.97 M | |
+
+Two T4s are worth 2.10x, i.e. the split is even and the dispatches overlap; the
+digest checks pass on both (20/20) before any of that is quoted.
+
+**Kaggle's CPU is not one machine.** The CPU-only kernel (`kaggle_meatrider_cpu/`)
+landed on an `Intel Xeon @ 2.20GHz` with `flags: avx2` only — no `avx512f`, no
+`sha_ni`, so it exercised the portable C and AVX2 kernels (14 checks, 68 digests
+correct). The GPU kernel landed on an `Intel Xeon @ 2.00GHz` with
+`avx512f avx512vl avx512bw avx512dq`, where the 16-lane kernel runs at 14.27
+MHash/s against 7.47 for AVX2 — **1.91x**, the cleanest measurement of that ratio
+in the project (`7 solves at d=20`, one thread). So AVX-512 exists on some Kaggle
+instances and not others, which is exactly why the table above names the CPU.
 
 The browser column in the README ladder is at 1.0 M/s (the original scalar wasm
 kernel). With the 4-lane SIMD kernel the gate now serves, those times shrink by

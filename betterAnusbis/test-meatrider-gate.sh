@@ -13,7 +13,12 @@
 #      operator-issued receipt as the response. The receipt is HMAC over the
 #      challenge id, so it is single-use and worthless for any other id.
 #
-# No browser and no wallet are needed: curl plays both clients.
+# No browser and no wallet are needed: curl plays both clients. The payout
+# address is the repository's test wallet (tests/wallet/test-wallet.json) --
+# a real secp256k1 key whose private half is published on purpose, because a
+# fixture everyone can check is worth more than a fixture nobody can. Never send
+# bitcoin to it. `python3 ../tools/test_wallet.py --check` derives the address
+# from the key, so this script is not trusting a copied string.
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")"
 PORT_ESC=8096
@@ -21,6 +26,8 @@ PORT_PAY=8097
 PORT_BACK=8003
 PASS=0; FAIL=0
 SECRET=$(printf 'ab%.0s' $(seq 32))
+WALLET=../tests/wallet/test-wallet.json
+TEST_ADDR=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['testnet']['address'])" "$WALLET")
 
 mkdir -p /tmp/ba-pay-site
 echo '<html><body><h1>PAST THE WALL</h1></body></html>' > /tmp/ba-pay-site/index.html
@@ -70,7 +77,7 @@ stop $ESC_PID
 echo
 echo "meatrider: \$1 of bitcoin, paid not mined"
 ./betterAnusbis --listen 127.0.0.1:$PORT_PAY --target "http://127.0.0.1:$PORT_BACK" \
-    --meatrider-usd 1 --meatrider-pay bcrt1qmeatridertestaddress --secret-hex "$SECRET" \
+    --meatrider-usd 1 --meatrider-pay "$TEST_ADDR" --secret-hex "$SECRET" \
     >/tmp/ba-mr-pay.log 2>&1 &
 PAY_PID=$!
 sleep 0.8
@@ -83,6 +90,11 @@ check "the page carries a bitcoin amount in satoshis" \
       "$(printf '%s' "$PAGE" | grep -o '"pay":{[^}]*}')"
 check "the amount is under a cent's worth of BTC formatting slips (8dp)" \
       "$(printf '%s' "$PAGE" | grep -q '"btc":"0\.0000[0-9]*"' && echo 1 || echo 0)"
+check "the pay field carries the test wallet's address" \
+      "$(printf '%s' "$PAGE" | grep -q "\"address\":\"$TEST_ADDR\"" && echo 1 || echo 0)" \
+      "$(printf '%s' "$PAGE" | grep -o '\"pay\":{[^}]*}')"
+check "which the test wallet's key actually derives" \
+      "$(python3 ../tools/test_wallet.py --check >/dev/null 2>&1 && echo 1 || echo 0)"
 
 ID=$(printf '%s' "$PAGE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 RECEIPT=$(./betterAnusbis --meatrider-receipt "$ID" --secret-hex "$SECRET")

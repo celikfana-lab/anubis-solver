@@ -43,6 +43,7 @@ node tools/bench-endtoend.mjs      # the wall, 2 servers x 3 clients
 node betterAnusbis/tests_js_tensor.mjs    # the `tensor` browser paths
 node betterAnusbis/tests_js_tensor_v.mjs  # `tensor-v` sample protocol + WebNN hand-off
 ./betterAnusbis/test-meatrider-gate.sh    # suspicion buys a rung; a receipt buys the ASIC rung
+python3 tools/test_wallet.py --check       # the payout fixture derives from its own key
 python3 tools/bench-server-resources.py   # RAM and CPU, from /proc
 node tools/bench-client-resources.mjs     # wasm vs native memory and CPU
 

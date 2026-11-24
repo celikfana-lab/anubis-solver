@@ -1,0 +1,25 @@
+{
+  "purpose": "the fixture the gate tests use as the meatrider payout address: it exercises --meatrider-pay, the pay JSON and the receipt derivation. It is not a destination and no code in this repository ever signs a transaction.",
+  "warning": [
+    "TEST WALLET. The private key below is published on purpose so the",
+    "fixture can be verified by anyone. NEVER send bitcoin to the mainnet",
+    "address: every satoshi sent there is spendable by every reader of this",
+    "repository, and none of it reaches the author. The tests use the",
+    "testnet address, where coins are worthless by design."
+  ],
+  "private_key_hex": "9d7ab5a59bb416af615a1d444f4ff514260f91d0a477b5762a03470cbfdcb43f",
+  "pubkey_compressed": "0291493f9e4905e9b56a7dc95ede9c7de82ba03bf0a8230fd2691750a29202391a",
+  "hash160": "c39928d5d48439b9bf3e98ff4a1f69a2d62be786",
+  "mainnet": {
+    "address": "1JqEF7kiFgrGeev211tSf1Xq22FePvCYj9",
+    "wif": "L2Vq6oggM56zHJ3bvn3mr8dSHniYiSMhtg6wpMvktubKwxLotGpP",
+    "use": "do not send bitcoin here"
+  },
+  "testnet": {
+    "address": "myMBYAqh4iHXRmPdiarpUvk9t1rMJB7wKd",
+    "wif": "cSrpZigXn8oFSjWsKBruDT8Vv21xNtTPxiFQvnPGQ2FLChNsqdij",
+    "use": "the tests point here"
+  },
+  "derivation": "P2PKH, compressed public key, no derivation path",
+  "generated_by": "tools/test_wallet.py --new"
+}

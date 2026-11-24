@@ -851,9 +851,12 @@ GPU is 70x cheaper than the browser column says.
 ./betterAnusbis --meatrider-usd 1e-10                     # the atom rung, d=28
 python3 tools/meatrider_ref.py --ladder                   # the same table, in Python
 
-# the dollar rung, payable: 1,334 sats at $100k/BTC, receipt on request
-./betterAnusbis --meatrider-usd 1 --meatrider-pay bc1q... --meatrider-btc-usd 100000 \
-                --secret-file /etc/betteranusbis/key
+# the dollar rung, payable: 1,334 sats at $100k/BTC, receipt on request.
+# The address below is the repository's TEST wallet (tests/wallet/), whose private
+# key is published on purpose -- it is a fixture for this example, never a
+# destination. Use your own address, generated somewhere that is not this repo.
+./betterAnusbis --meatrider-usd 1 --meatrider-pay myMBYAqh4iHXRmPdiarpUvk9t1rMJB7wKd \
+                --meatrider-btc-usd 100000 --secret-file /etc/betteranusbis/key
 ./betterAnusbis --meatrider-receipt <challenge-id> --secret-file /etc/betteranusbis/key
 
 # the honeypot prices the request: one wall up per doubling of the hit count

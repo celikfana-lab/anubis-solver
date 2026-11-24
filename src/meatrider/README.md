@@ -59,7 +59,7 @@ header.
 | WebGPU | [`webgpu/meatrider.wgsl`](../../webgpu/meatrider.wgsl) | `main()` | 43–62 |
 | wasm SIMD128 ×4 | [`wasm/meatrider_simd.c`](../../wasm/meatrider_simd.c) | `anubis_work()` | 4.0–4.5 |
 | wasm scalar | [`wasm/meatrider_pow.c`](../../wasm/meatrider_pow.c) | `anubis_work()` | 1.75–1.93 |
-| PTX | `meatrider.ptx` | `meatrider_kernel` | `test_meatrider_ptx.py`, in `ptxsim` |
+| PTX | `meatrider.ptx` | `meatrider_kernel` | `test_meatrider_ptx.py` (ptxsim) or `test_meatrider_ptx_gpu.py` (hardware) |
 
 Numbers are one run on an i7-1260P with an Iris Xe, one thread; the machine
 readable copy is [`results/meatrider-backends.json`](../../results/meatrider-backends.json)
@@ -93,7 +93,14 @@ directly, which is what the tests and `tools/meatrider_backends.py` use.
 python3 tests/test_meatrider.py            # the portable reference, 546 checks
 python3 tests/test_meatrider_backends.py   # every available kernel vs Python
 python3 tools/meatrider_backends.py        # the same, plus the rate table
+python3 src/meatrider/test_meatrider_ptx_gpu.py  # the PTX kernel on a real GPU (needs libcuda)
 ```
+
+`test_meatrider_ptx_gpu.py` builds `meatrider_ptx_loader.c` (driver API only, no
+toolkit headers) and lets the driver JIT the checked-in PTX, so the generated
+kernel runs on hardware without nvcc or ptxas. It checks a difficulty-0 dispatch
+-- where every nonce is a hit, so every reported digest is compared -- then real
+searches, and reports nonces dispatched per second.
 
 On a machine with an NVIDIA GPU the same three commands run after `make CUDA=1`;
 the [`colab/`](../../colab/meatrider-colab.ipynb) notebook does exactly that on a

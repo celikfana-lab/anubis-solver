@@ -52,6 +52,7 @@ cd wasm && make verify-jit                 # the runtime HashX compiler, 63 chec
 node wasm/verify-meatrider-simd.mjs        # the 4-lane meatrider browser kernel, 1,993 checks
 deno run --allow-all tools/meatrider-webgpu.mjs  # meatrider on WebGPU, 203 digest comparisons
 python3 src/meatrider/test_meatrider_ptx.py      # the meatrider PTX kernel, in ptxsim
+python3 src/meatrider/test_meatrider_ptx_gpu.py  # the same PTX JITed on a real GPU
 cd web  && make check                      # the site: links, anchors, layout
 webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see webgpu/README.md)
 gcc -O2 -o /tmp/clrun tools/xe-sha256-opencl.c -lOpenCL && /tmp/clrun   # SHA-256 on Intel Xe, needs intel-opencl-icd

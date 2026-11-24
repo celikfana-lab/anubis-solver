@@ -1,7 +1,7 @@
 # Evolution: where this began
 
-Thirteen days of commits (`2026-11-11` → `2026-11-24`, 339 of them) plus the two
-weeks of code before the repository existed. Dates are from `git log`, and each
+Thirteen days of commits (`2026-11-11` → `2026-11-24`, 339 of them at the time
+of writing) plus the two weeks of code before the repository existed. Dates are from `git log`, and each
 chapter names the commits that carry it, so any claim here can be checked with
 `git show`. Nothing in this file is a feature: it is the story of why the
 features exist.
@@ -148,9 +148,10 @@ unless an address is published.
 - One `.so`, nine tiers (`fast`, `slow`, `sha256`, `argon2id`, `hashx`,
   `meatrider`, `tensor`, `tensor-v`, `metarefresh`), five backends plus a CPU
   fallback, a gate in one C file, and a browser path that needs no native code.
-- 339 commits in thirteen days, every number in `SPEED.md` reproducible from a
-  command printed next to it, and a `HALL_OF_SHAME.md` for the ones that were
-  wrong — including this project's own.
+- 339 commits in thirteen days at the time of writing, every number in
+  `SPEED.md` reproducible from a command printed next to it, and a
+  `HALL_OF_SHAME.md` for the ones that were wrong — including this project's
+  own.
 - Started as a binary in a pirate tool. Ended as a published library that says
   exactly where the money goes.
 

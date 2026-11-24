@@ -72,8 +72,8 @@ $(error CUDA=1 but nvcc ($(NVCC)) is not on PATH; install the CUDA toolkit, or b
 endif
 else
 CUDA_SRC := src/nvidia/cuda/cuda_sha256.cu src/nvidia/cuda/cuda_argon2.cu src/nvidia/cuda/cuda_hashx.cu \
-            src/nvidia/cuda/cuda_tensor.cu
-CFLAGS   += -DANUBIS_HAVE_CUDA
+            src/nvidia/cuda/cuda_tensor.cu src/meatrider/meatrider_cuda.cu
+CFLAGS   += -DANUBIS_HAVE_CUDA -DANUBIS_MEATRIDER_CUDA
 HAVE_CUDA := 1
 # nvcc is the linker here; it rejects bare -pthread, so pass it to the host
 # compiler explicitly.

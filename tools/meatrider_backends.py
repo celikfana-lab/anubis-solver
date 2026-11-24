@@ -104,21 +104,41 @@ def parity(lib, challenges: list[bytes], difficulties: list[int],
     return result
 
 
-def hashes_done(backend: int, nonce: int, chunk: int) -> int:
+def hashes_done(backend: int, nonce: int, chunk: int, devices: int) -> int:
     """How many hashes a solve actually performed.
 
     The CPU walks nonces in order and stops at the hit. The accelerators dispatch
     a whole chunk of CHUNK nonces and only then look, so a solve that hits at
     nonce 5 still cost a full chunk -- which is why the rate row uses the chunk
     arithmetic rather than 2^difficulty.
+
+    A multi-GPU CUDA solve splits the nonce space across devices that run in
+    lockstep, so both burn about the chunks the winning slice needed; the count
+    is that estimate, not a measurement of each device's dispatch.
     """
     if backend >= OPENCL:
-        return (nonce // chunk + 1) * chunk
+        return devices * (nonce // chunk + 1) * chunk
     return nonce + 1
 
 
+def cuda_devices(lib: ctypes.CDLL) -> int:
+    """How many CUDA devices the library will use, from its own info string."""
+    try:
+        lib.anubis_gpu_info.restype = ctypes.c_char_p
+        info = lib.anubis_gpu_info()
+    except AttributeError:
+        return 1
+    if not info:
+        return 1
+    text = info.decode()
+    if "x" not in text:
+        return 1
+    tail = text.rsplit("x", 1)[1].strip()
+    return int(tail) if tail.isdigit() and int(tail) > 0 else 1
+
+
 def rate(lib, backend: int, challenge: bytes, difficulty: int, threads: int,
-         reps: int, chunk: int) -> tuple[float, int]:
+         reps: int, chunk: int, devices: int) -> tuple[float, int]:
     """(hashes/second, hits verified) from `reps` real solves."""
     # One untimed solve first: the OpenCL and Vulkan paths build a pipeline on
     # first use, and that cost belongs in neither the rate nor a user's first
@@ -139,7 +159,8 @@ def rate(lib, backend: int, challenge: bytes, difficulty: int, threads: int,
             raise RuntimeError(f"{name(lib, backend)}: verify rejected {nonce}")
         if check.value.decode() != hexdigest:
             raise RuntimeError(f"{name(lib, backend)}: digest disagrees with the reference")
-        hashes += hashes_done(backend, nonce, chunk)
+        hashes += hashes_done(backend, nonce, chunk,
+                              devices if backend == CUDA else 1)
         verified += 1
     elapsed = time.perf_counter() - started
     return hashes / elapsed, verified
@@ -163,6 +184,7 @@ def main() -> int:
         return 1
     lib = load()
 
+    print(f"cuda devices: {devices}")
     print(f"meatrider backends on {platform.machine()} / {platform.system()} "
           f"{platform.release()}, {args.threads} thread(s)")
     print(f"  active: {name(lib, lib.anubis_meatrider_backend_active())}")
@@ -189,6 +211,7 @@ def main() -> int:
             print(f"  {name(lib, backend):10s} hit-only: checked end to end below")
 
     # ---- search rate ----------------------------------------------------
+    devices = cuda_devices(lib)
     chunk = 1 << 22                     # the kernels' default dispatch
     env_chunk = os.environ.get("ANUBIS_OPENCL_CHUNK") or os.environ.get("ANUBIS_VULKAN_CHUNK")
     if env_chunk:
@@ -204,7 +227,8 @@ def main() -> int:
             reps = max(5, min(2000, int(target / max(per_solve, 1e-6))))
         ch = challenges[0]
         try:
-            hps, verified = rate(lib, backend, ch, d, args.threads, reps, chunk)
+            hps, verified = rate(lib, backend, ch, d, args.threads, reps, chunk,
+                                 devices)
         except RuntimeError as exc:
             print(f"  {name(lib, backend):10s} {exc}")
             continue
@@ -228,6 +252,7 @@ def main() -> int:
             "machine": f"{platform.machine()} / {platform.system()} {platform.release()}",
             "cpu": platform.processor(),
             "threads": args.threads,
+            "cuda_devices": devices,
             "digest_checks": {name(lib, b): {"passed": p, "attempted": a}
                               for b, (p, a) in sorted(checks.items())},
             "rows": rows,

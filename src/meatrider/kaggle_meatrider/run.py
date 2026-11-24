@@ -159,8 +159,17 @@ EOF""")
                          "rates": rates, "json": bench.get("rows", []),
                          "tail": out[-1500:] if rc else ""}
 
-    # And the standalone PTX harness, which checks digests at difficulty 0
-    # instead of only the winning nonce.
+    # The decisive one-vs-two-device comparison: the same standalone test, the
+    # same challenge and the same winning nonce, with one T4 visible and then
+    # both. Two devices in parallel find that nonce in the same wall time as one
+    # and count twice the hashes, so the ratio is the parallelism itself -- free
+    # of the harness's per-slice arithmetic.
+    for label, visible in (("ptx_standalone_one", "0"), ("ptx_standalone_two", "0,1")):
+        rc, out = sh("python3 src/meatrider/test_meatrider_ptx_gpu.py --reps 5 "
+                     "--difficulty 24 --budget 300000",
+                     env={"CUDA_VISIBLE_DEVICES": visible}, timeout=1200)
+        RESULT[label] = {"rc": rc, "visible": visible, "tail": out[-2500:]}
+
     rc, out = sh("python3 src/meatrider/test_meatrider_ptx_gpu.py --reps 3",
                  timeout=1200)
     RESULT["ptx_standalone"] = {"rc": rc, "tail": out[-2500:]}
@@ -192,7 +201,8 @@ def finish():
         for name, row in sorted(r.items()):
             print(f"{label:11s} {name:8s} {row['hashes_per_second']:>15,} H/s "
                   f"(2^{row['difficulty']}, {row['solves']} solves)")
-    for key in ("build", "test_meatrider", "test_backends", "ptx_standalone"):
+    for key in ("build", "test_meatrider", "test_backends", "ptx_standalone",
+            "ptx_standalone_one", "ptx_standalone_two"):
         if key in RESULT:
             print(f"{key}: rc={RESULT[key]['rc']}")
     sys.exit(0)

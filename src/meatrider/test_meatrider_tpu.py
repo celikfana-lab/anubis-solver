@@ -94,6 +94,9 @@ def main() -> int:
     ap.add_argument("--dump", type=Path, default=None, help="write the StableHLO here")
     ap.add_argument("--difficulty", type=int, default=20)
     ap.add_argument("--lanes", type=int, default=8)
+    ap.add_argument("--budget", type=float, default=600000.0,
+                    help="ms per solve, compile included (default 10 min: the first\n"
+                         "call compiles ~857 KB of StableHLO, which is the slow part)")
     args = ap.parse_args()
 
     if not LIB.exists():
@@ -150,7 +153,8 @@ def main() -> int:
         lib.meatrider_ctx_init(ctypes.byref(ctx), rd, difficulty)
         nonce = ctypes.c_uint32(0)
         digest = ctypes.create_string_buffer(32)
-        rc = lib.anubis_tpu_meatrider_solve(ctypes.byref(ctx), 0, 0, 60000.0,
+        print(f"  difficulty {difficulty}: compiling and mining (the first call pays the compile)")
+        rc = lib.anubis_tpu_meatrider_solve(ctypes.byref(ctx), 0, 0, args.budget,
                                             ctypes.byref(nonce), digest)
         want = meatrider_ref.digest(rd, difficulty, nonce.value).hex() if rc == 0 else ""
         check(rc == 0 and digest.raw.hex() == want,

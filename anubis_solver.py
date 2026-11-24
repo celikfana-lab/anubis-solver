@@ -320,7 +320,8 @@ class _Native:
             ctypes.c_char_p,
         ]
 
-        for name in ("anubis_solve_argon2id", "anubis_solve_hashx"):
+        for name in ("anubis_solve_argon2id", "anubis_solve_hashx",
+                     "anubis_solve_meatrider"):
             fn = getattr(lib, name)
             fn.restype = ctypes.c_int
             fn.argtypes = [
@@ -366,7 +367,7 @@ class _Native:
                 ctypes.POINTER(ctypes.c_double),
             ]
         for name in ("anubis_verify_argon2id", "anubis_verify_hashx",
-                     "anubis_verify_tensor"):
+                     "anubis_verify_meatrider", "anubis_verify_tensor"):
             fn = getattr(lib, name)
             fn.restype = ctypes.c_int
             fn.argtypes = [
@@ -374,6 +375,27 @@ class _Native:
                 ctypes.c_uint32,
                 ctypes.c_int,
                 ctypes.c_char_p,
+            ]
+
+        # meatrider introspection: the header, nBits, and what the work is
+        # worth. Optional, so an older .so still loads.
+        self._has_meatrider_info = hasattr(lib, "anubis_meatrider_header")
+        if self._has_meatrider_info:
+            lib.anubis_meatrider_header.restype = ctypes.c_int
+            lib.anubis_meatrider_header.argtypes = [
+                ctypes.c_char_p, ctypes.c_int, ctypes.c_uint32, ctypes.c_char_p,
+            ]
+            lib.anubis_meatrider_bits.restype = ctypes.c_uint
+            lib.anubis_meatrider_bits.argtypes = [ctypes.c_int]
+            for name in ("anubis_meatrider_price_usd", "anubis_meatrider_asic_seconds"):
+                fn = getattr(lib, name)
+                fn.restype = ctypes.c_double
+                fn.argtypes = [ctypes.c_int, ctypes.c_double]
+            lib.anubis_meatrider_tier.restype = ctypes.c_char_p
+            lib.anubis_meatrider_tier.argtypes = [ctypes.c_int]
+            lib.anubis_meatrider_difficulty_for_usd.restype = ctypes.c_int
+            lib.anubis_meatrider_difficulty_for_usd.argtypes = [
+                ctypes.c_double, ctypes.c_double,
             ]
 
     @property
@@ -626,6 +648,45 @@ class _Native:
             "anubis_solve_hashx", challenge_hex, difficulty, threads, budget_ms
         )
 
+    def solve_meatrider(
+        self, challenge_hex: str, difficulty: int, threads: int, budget_ms: float
+    ) -> tuple[int, str, float]:
+        """SHA-256d over a Bitcoin header rebuilt from the challenge."""
+        return self._solve_wasm_alg(
+            "anubis_solve_meatrider", challenge_hex, difficulty, threads, budget_ms
+        )
+
+    # -- meatrider: the header and the price ladder ----------------------
+    def meatrider_header(self, challenge_hex: str, difficulty: int, nonce: int) -> str:
+        """The 80-byte block header, as 160 hex characters."""
+        out = ctypes.create_string_buffer(161)
+        rc = self.lib.anubis_meatrider_header(
+            challenge_hex.encode(), int(difficulty), int(nonce), out
+        )
+        if rc != ANUBIS_OK:
+            raise SolverError(f"meatrider_header failed: {_RC_TEXT.get(rc, rc)}")
+        return out.value.decode()
+
+    def meatrider_bits(self, difficulty: int) -> int:
+        return int(self.lib.anubis_meatrider_bits(int(difficulty)))
+
+    def meatrider_price_usd(self, difficulty: int, usd_per_th_day: float = 0.0) -> float:
+        return float(self.lib.anubis_meatrider_price_usd(int(difficulty),
+                                                         float(usd_per_th_day)))
+
+    def meatrider_asic_seconds(self, difficulty: int, hashrate: float = 0.0) -> float:
+        return float(self.lib.anubis_meatrider_asic_seconds(int(difficulty),
+                                                            float(hashrate)))
+
+    def meatrider_tier(self, difficulty: int) -> str | None:
+        name = self.lib.anubis_meatrider_tier(int(difficulty))
+        return name.decode() if name else None
+
+    def meatrider_difficulty_for_usd(self, usd: float,
+                                     usd_per_th_day: float = 0.0) -> int:
+        return int(self.lib.anubis_meatrider_difficulty_for_usd(float(usd),
+                                                                float(usd_per_th_day)))
+
     def _verify_wasm_alg(
         self, fn_name: str, challenge_hex: str, nonce: int, difficulty: int
     ) -> tuple[bool, str]:
@@ -644,6 +705,13 @@ class _Native:
     def verify_hashx(self, challenge_hex: str, nonce: int, difficulty: int) -> tuple[bool, str]:
         return self._verify_wasm_alg(
             "anubis_verify_hashx", challenge_hex, nonce, difficulty
+        )
+
+    def verify_meatrider(
+        self, challenge_hex: str, nonce: int, difficulty: int
+    ) -> tuple[bool, str]:
+        return self._verify_wasm_alg(
+            "anubis_verify_meatrider", challenge_hex, nonce, difficulty
         )
 
     def solve_tensor(
@@ -780,7 +848,7 @@ class AnubisSolver:
 
     ALGORITHMS = frozenset(
         {"fast", "slow", "sha256", "wasm-sha256", "argon2id", "hashx", "tensor",
-         "tensor-v"}
+         "tensor-v", "meatrider"}
     )
 
     def __init__(
@@ -895,6 +963,10 @@ class AnubisSolver:
             nonce, response, elapsed = self._native.solve_hashx(
                 challenge.random_data, difficulty, self.threads, self.budget_ms
             )
+        elif algorithm == "meatrider":
+            nonce, response, elapsed = self._native.solve_meatrider(
+                challenge.random_data, difficulty, self.threads, self.budget_ms
+            )
         elif algorithm == "tensor":
             nonce, response, elapsed = self._native.solve_tensor(
                 challenge.random_data, difficulty, self.threads, self.budget_ms
@@ -953,6 +1025,10 @@ class AnubisSolver:
             )
         elif challenge.algorithm == "hashx":
             ok, _ = self._native.verify_hashx(
+                challenge.random_data, nonce, challenge.difficulty
+            )
+        elif challenge.algorithm == "meatrider":
+            ok, _ = self._native.verify_meatrider(
                 challenge.random_data, nonce, challenge.difficulty
             )
         elif challenge.algorithm == "tensor":

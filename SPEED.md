@@ -41,6 +41,9 @@ between algorithms is what matters.
 | `tensor` (pure JS, browser fallback) | ~0.4-0.7 GMAC/s | same GEMM in JavaScript; ~10-13x slower |
 | `fast`, `slow` (pure JS, browser) | ~0.36 M/s |
 | `sha256` (Scratch blocks, TurboWarp) | ~1.7 k/s | the same tier written in Scratch blocks; 410,000x below the TPU kernel — see [SHA-256 in Scratch blocks](#sha-256-in-scratch-blocks-the-slow-end) |
+| `meatrider` (native, one core) | ~0.91 M/s | SHA-256d over an 80-byte Bitcoin header: two compressions per hash, no SHA-NI path |
+| `meatrider` (WASM) | ~1.04 M/s | the same `src/meatrider/meatrider.c`, compiled for wasm32 |
+| `meatrider` (pure JS, browser fallback) | ~0.12 M/s | three JS compressions per hash — see [`meatrider`: two compressions and a price tag](#meatrider-two-compressions-and-a-price-tag) |
  a fresh padded block per candidate; the nibble challenges have no wasm module |
 
 Correcting an earlier row here: this table used to say `hashx` was 3.6 M/s
@@ -744,6 +747,52 @@ The browser figure is a TurboWarp tab running `scratch/build/sha256.sb3`; the
 interpreter figure is `scratch/tools/verify_sha256.py` timing the same project
 through `scratch-vm`. The wasm figure comes from a compiler that is not part of
 this repository, hence the range.
+
+
+## `meatrider`: two compressions and a price tag
+
+The Bitcoin-shaped tier ([README](README.md#meatrider-proof-of-work-priced-in-bitcoin))
+is SHA-256, twice, over an 80-byte header. Header bytes 0..63 are fixed for a
+challenge, so their midstate is compressed once and a hash costs **two**
+compressions afterwards: the 16-byte block holding `time`, `nBits` and the nonce,
+then the second SHA-256 over the 32-byte digest.
+
+| backend | hashes/second | vs the `sha256` tier |
+|---|---:|---:|
+| native, one core (`taskset -c 0`) | **0.91 M** | 0.24x |
+| wasm32 (`wasm/meatrider_pow.wasm`) | **0.76-1.04 M** | 0.10-0.13x |
+| pure JavaScript (browser fallback) | **0.12 M** | 0.13x |
+| Antminer S21 Pro, for scale | 234 T | 2.6e8x |
+
+`python3 tools/bench_tiers.py --reps 5` (the `meatrider` rows: 0.84-0.93 M/s
+across difficulties 11, 16 and 20) and `node wasm/verify-meatrider.mjs` (its
+`rate:` line, 0.76-1.04 M/s across runs on this laptop's unstable governor) are
+the commands.
+
+Two things are worth being precise about, because both are easy to get wrong:
+
+- **The 4x gap to `sha256` is not a bug and not a tuning opportunity.** One
+  `sha256` hash on this laptop is one compression *and* runs through the SHA-NI
+  assembly kernel: 3.74 M/s. `meatrider` is two compressions of portable C with
+  no SHA-NI path: 0.91 M/s, i.e. 1.8 M compressions/s. Per compression the two
+  are within 2x, and the remaining factor is that `src/meatrider/meatrider.c`
+  is compiled into the wasm module too, where SHA-NI does not exist. Making the
+  native path use `sha256_block_shani()` would roughly double it and make the
+  two backends disagree in speed but not in output; not worth the split for a
+  tier that is not on a hot path.
+- **There is no batching.** The `sha256` tier appends the nonce to the message,
+  which is why AVX2 can do 8 candidates per compression by keeping eight
+  midstates. `meatrider` puts the nonce *inside* the header's last four bytes, so
+  the varying block is the same block for every lane and the eight compressed
+  candidates would have to be built anyway. A Vector bit-slicing kernel could
+  still do it; nothing in the repo does.
+
+The ladder, at the measured browser rate (1.0 M/s for the wasm kernel), is the
+table in the README. The short version: the two-millisecond rung is
+**1.19e-15 USD** and the dollar rung is **2.7 hours of an S21 Pro**, or 73,062
+years of one browser tab. That is the whole point of the tier: the money column
+and the time column are the same column, and one of them is quoted against
+hardware the client does not have.
 
 ## TPU: Argon2id, the chain is the wall
 

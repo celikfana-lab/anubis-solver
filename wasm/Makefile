@@ -9,7 +9,7 @@ HASHES  ?= 2000000
 OFFICIAL ?= /media/miku6/kubuntu_2404/home/miku/DOWN/pyani/anubis/web/static/wasm
 
 all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm argon2_fill_simd.wasm argon2_fill_c.wasm sha256_pow.wasm
-all: argon2id_pow.wasm hashx_pow.wasm tensor_pow.wasm
+all: argon2id_pow.wasm hashx_pow.wasm tensor_pow.wasm meatrider_pow.wasm
 
 # Two flags bite the Argon2id module, and both were measured before they were
 # believed:
@@ -87,6 +87,22 @@ sha256_pow.wasm: sha256_pow.c
 	      -Wl,--export=result_hash_ptr -Wl,--export=result_hash_size \
 	      -Wl,--export=anubis_work -o sha256_pow.wasm sha256_pow.c
 	@ls -l sha256_pow.wasm
+
+# the `meatrider` PoW: SHA-256d over an 80-byte Bitcoin header. It shares
+# src/meatrider/meatrider.c with the native library, so the browser kernel and
+# the server cannot disagree about the header or the target.
+meatrider_pow.wasm: meatrider_pow.c $(REPO)/src/meatrider/meatrider.c \
+                    $(REPO)/src/meatrider/meatrider.h
+	clang --target=wasm32 -O3 -nostdlib -Wl,--no-entry \
+	      -I$(REPO)/src/meatrider \
+	      -Wl,--export-memory -Wl,--export=data_ptr -Wl,--export=set_data_length \
+	      -Wl,--export=result_hash_ptr -Wl,--export=result_hash_size \
+	      -Wl,--export=anubis_work -Wl,--export=anubis_work_limited \
+	      -o meatrider_pow.wasm meatrider_pow.c $(REPO)/src/meatrider/meatrider.c
+	@ls -l meatrider_pow.wasm
+
+verify-meatrider: meatrider_pow.wasm
+	node verify-meatrider.mjs
 
 # the `tensor` PoW: A@B of two N*N int8/uint8 matrices, N = 64*clamp(difficulty,2,16).
 # SIMD=1 (default) builds the hand-written i8x16 kernel in tensor_pow.c, which is
@@ -176,4 +192,5 @@ clean:
 	      argon2_fill.wasm argon2_fill.wat argon2_fill_simd.wasm argon2_fill_simd.wat \
 	      argon2_fill_c.wasm
 
-.PHONY: all bench a2i vectors compare live serve clean verify-tensor verify-tensor-v
+.PHONY: all bench a2i vectors compare live serve clean verify-tensor verify-tensor-v \
+        verify-meatrider

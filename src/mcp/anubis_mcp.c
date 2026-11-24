@@ -8,7 +8,9 @@
  * goes, returned as text), anubis_fetch_raw (the same fetch without the HTML
  * to text pass), anubis_dump_headers (the same fetch, reporting the header
  * blocks of every response it went through), anubis_solve (one local proof of
- * work), anubis_version and anubis_backends (introspection).
+ * work from separate fields), anubis_solve_raw (the same, starting from the raw
+ * challenge/page and returning the raw pass-challenge query), anubis_version
+ * and anubis_backends (introspection).
  *
  * No JSON library: a small validating parser and a small escaper are right
  * here. No dynamic allocations survive a request. The solver is the same
@@ -516,6 +518,17 @@ static int jv_long(const json_value *v, const char *key, long *out) {
     return 1;
 }
 
+static int jv_double(const json_value *v, const char *key, double *out) {
+    json_value *item = jv_get(v, key);
+    char *endp = NULL;
+    double value;
+    if (!item || item->type != JSON_NUMBER) return 0;
+    value = strtod(item->text, &endp);
+    if (!endp || *endp != '\0') return 0;
+    *out = value;
+    return 1;
+}
+
 /* ------------------------------------------------------------- JSON replies */
 
 static void put_id(sb *b, const json_value *id) {
@@ -803,7 +816,8 @@ typedef enum {
     ALG_BITS,
     ALG_ARGON2ID,
     ALG_HASHX,
-    ALG_TENSOR
+    ALG_TENSOR,
+    ALG_MEATRIDER
 } alg_kind;
 
 typedef struct {
@@ -819,6 +833,7 @@ static const alg_entry ALGORITHMS[] = {
     {"argon2id", ALG_ARGON2ID},
     {"hashx", ALG_HASHX},
     {"tensor", ALG_TENSOR},
+    {"meatrider", ALG_MEATRIDER},
     {NULL, ALG_NIBBLES}
 };
 
@@ -830,7 +845,7 @@ static const alg_entry *find_algorithm(const char *name) {
 }
 
 static const char *algorithm_list(void) {
-    return "fast, slow, sha256, wasm-sha256, argon2id, hashx, tensor";
+    return "fast, slow, sha256, wasm-sha256, argon2id, hashx, tensor, meatrider";
 }
 
 static int solve_one(const alg_entry *alg, const char *challenge, int difficulty,
@@ -880,6 +895,13 @@ static int solve_one(const alg_entry *alg, const char *challenge, int difficulty
             uint32_t nonce = 0;
             rc = anubis_solve_tensor(challenge, difficulty, threads, 0.0, &nonce, out_hex,
                                      NULL);
+            *out_nonce = nonce;
+            break;
+        }
+        case ALG_MEATRIDER: {
+            uint32_t nonce = 0;
+            rc = anubis_solve_meatrider(challenge, difficulty, threads, 0.0, &nonce,
+                                        out_hex, NULL);
             *out_nonce = nonce;
             break;
         }
@@ -941,6 +963,22 @@ static const char TOOLS_JSON[] =
     "\"threads\":{\"type\":\"integer\",\"description\":\"Worker threads; 0 or "
     "omitted means the library default.\"}},"
     "\"required\":[\"algorithm\",\"challenge\",\"difficulty\"]}},"
+    "{\"name\":\"anubis_solve_raw\","
+    "\"description\":\"Solve an Anubis challenge the caller already has, with no "
+    "network I/O at all. The input may be the anubis_challenge JSON (both the "
+    "{\\\"challenge\\\":\\\"<hex>\\\"} and nested "
+    "{\\\"challenge\\\":{\\\"randomData\\\":...}} spellings), the "
+    "<script id=\\\"anubis_challenge\\\"> element, or the whole challenge page. "
+    "Returns the raw pass-challenge query parameters as plain text, for example "
+    "id=<uuid>&response=<hex>&nonce=<n>&elapsedTime=1. No page is fetched.\","
+    "\"inputSchema\":{\"type\":\"object\",\"properties\":{"
+    "\"input\":{\"type\":\"string\",\"description\":\"Raw challenge: the JSON "
+    "payload, the anubis_challenge script element, or the whole page.\"},"
+    "\"threads\":{\"type\":\"integer\",\"description\":\"Worker threads; 0 or "
+    "omitted means the library default.\"},"
+    "\"budget_ms\":{\"type\":\"number\",\"description\":\"Optional solve budget "
+    "in milliseconds; 0 or omitted means no limit.\"}},"
+    "\"required\":[\"input\"]}},"
     "{\"name\":\"anubis_version\","
     "\"description\":\"Return the solver version, release codename and supported "
     "algorithms.\","
@@ -1045,6 +1083,42 @@ static void tool_solve(const json_value *id, const json_value *args) {
     sb_puts(&text, "\"}");
     send_tool_text(id, text.s, text.len, 0);
     sb_free(&text);
+}
+
+/* The challenge is already in hand: parse it, solve it, and hand back the raw
+ * pass-challenge query. Nothing here touches the network. */
+static void tool_solve_raw(const json_value *id, const json_value *args) {
+    json_value *input = jv_get(args, "input");
+    long threads = 0;
+    double budget_ms = 0.0;
+    anubis_raw_solution sol;
+    char err[256] = "";
+
+    if (!input || input->type != JSON_STRING) {
+        send_tool_error(id, "missing required argument: input");
+        return;
+    }
+    if (jv_get(args, "threads") && !jv_long(args, "threads", &threads)) {
+        send_tool_error(id, "threads must be an integer");
+        return;
+    }
+    if (threads < 0 || threads > 4096) {
+        send_tool_error(id, "threads must be between 0 and 4096");
+        return;
+    }
+    if (jv_get(args, "budget_ms") && !jv_double(args, "budget_ms", &budget_ms)) {
+        send_tool_error(id, "budget_ms must be a number");
+        return;
+    }
+    if (budget_ms < 0.0) {
+        budget_ms = 0.0;
+    }
+    if (anubis_solve_challenge_input(input->text, input->text_len, (int)threads,
+                                     budget_ms, &sol, err, sizeof err) != 0) {
+        send_tool_error(id, "%s", err[0] ? err : "cannot solve challenge");
+        return;
+    }
+    send_tool_text(id, sol.raw, strlen(sol.raw), 0);
 }
 
 /* status/url/transport plus the session state. A caller keeps the session by
@@ -1218,6 +1292,8 @@ static void tool_call(const json_value *id, const json_value *params) {
         tool_dump_headers(id, args);
     } else if (strcmp(name, "anubis_solve") == 0) {
         tool_solve(id, args);
+    } else if (strcmp(name, "anubis_solve_raw") == 0) {
+        tool_solve_raw(id, args);
     } else if (strcmp(name, "anubis_version") == 0) {
         tool_version(id);
     } else if (strcmp(name, "anubis_backends") == 0) {

@@ -89,6 +89,8 @@ typedef struct {
     const char *target;          /* scheme://host[:port] */
     const char *algorithm;
     int difficulty;
+    char meatrider_usd[32];      /* --meatrider-usd: a price, not a difficulty */
+    int meatrider_ladder;        /* --meatrider-ladder: print and exit */
     const char *cookie_prefix;
     int verbose;
     /* derived */
@@ -642,6 +644,8 @@ static int verify_answer(const char *algorithm, const char *random_data, unsigne
         rc = anubis_verify_argon2id(random_data, (uint32_t)nonce, difficulty, out);
     } else if (!strcasecmp(algorithm, "hashx")) {
         rc = anubis_verify_hashx(random_data, (uint32_t)nonce, difficulty, out);
+    } else if (!strcasecmp(algorithm, "meatrider")) {
+        rc = anubis_verify_meatrider(random_data, (uint32_t)nonce, difficulty, out);
     } else if (!strcasecmp(algorithm, "tensor")) {
         /* No nonce search: the digest is the proof. The nonce is still part
          * of the wire format (Anubis always sends one), and it is always 0. */
@@ -11146,6 +11150,46 @@ static const char *CHALLENGE_JS = R"JS(
     }
   }
   const lz=(b)=>{let n=0;for(const x of b){if(x===0){n+=8;continue;}n+=Math.clz32(x)-24;break;}return n;};
+  // leading zero bits of the Bitcoin-order hash, i.e. trailing zero bits of the
+  // raw SHA-256d digest: the tier's digest is already reversed before it is shown
+  const lzr=(b)=>{let n=0;for(let i=b.length-1;i>=0;i--){const x=b[i];if(x===0){n+=8;continue;}n+=Math.clz32(x)-24;break;}return n;};
+  // nBits for the exact target 2^(256-difficulty): Bitcoin's GetCompact() for a
+  // power of two, which always round-trips exactly. Same arithmetic as
+  // meatrider_bits() in src/meatrider/meatrider.c.
+  function mrBits(d){
+    const k=256-d, blen=k+1, size=Math.ceil(blen/8);
+    let c=size<=3?(1<<k)<<(8*(3-size)):(1<<(k-8*(size-3)));
+    let sz=size;
+    if(c&0x800000){c>>>=8;sz++;}
+    return ((c>>>0)|(sz<<24))>>>0;
+  }
+  function mrTime(s){
+    if(!isFinite(s)) return "longer than the universe";
+    if(s<1e-6) return (s*1e9).toFixed(0)+" ns";
+    if(s<1e-3) return (s*1e6).toFixed(0)+" us";
+    if(s<1) return (s*1e3).toFixed(0)+" ms";
+    if(s<90) return s.toFixed(0)+" s";
+    if(s<5400) return (s/60).toFixed(0)+" min";
+    if(s<172800) return (s/3600).toFixed(1)+" h";
+    if(s<3.16e7) return (s/86400).toFixed(0)+" days";
+    const y=s/3.156e7;
+    return y<1e6 ? y.toFixed(0)+" years" : y.toExponential(1)+" years";
+  }
+  // The ladder is money: 2^difficulty hashes at the default hash price. These are
+  // the same numbers as tools/meatrider_ref.py --ladder and anubis_meatrider_price_usd().
+  const MR_TIERS=[[1e-15,"spark"],[1e-14,"grain"],[1e-13,"speck"],[1e-12,"mote"],
+    [1e-11,"crumb"],[1e-10,"atom"],[1e-9,"nano"],[1e-8,"microbit"],[1e-7,"dust"],
+    [1e-6,"suspicious"],[1e-5,"very-suspicious"],[1e-4,"bot-shaped"],[1e-3,"farm"],
+    [1e-2,"datacenter"],[1e-1,"asic"],[1e0,"meatrider"]];
+  function meatriderBlurb(d){
+    const hashes=Math.pow(2,d);
+    const price=hashes*0.05/(1e12*86400);
+    let name=MR_TIERS[0][1];
+    for(const t of MR_TIERS) if(price>=t[0]) name=t[1];
+    return name+": 2^"+d+" hashes, $"+(price<0.01?price.toExponential(1):price.toFixed(2))+
+      " of bitcoin at $0.05/TH-day, "+mrTime(hashes/2.34e14)+" of an Antminer S21 Pro, "+
+      mrTime(hashes/1e6)+" of this browser's wasm kernel";
+  }
   /* HASHX-JIT-BEGIN */
   // Build the HashX wasm module for this challenge in the page. This is the same
   // derivation and emission as wasm/hashx_jit.mjs; wasm/verify-jit.mjs parses
@@ -12235,7 +12279,7 @@ function buildModule(challenge) {
   // ships: data_ptr / set_data_length / anubis_work / result_hash_*.
   const KERNELS={sha256:"sha256_pow_batch.wasm","wasm-sha256":"sha256_pow_batch.wasm",
                  argon2id:"argon2id_pow.wasm",hashx:"hashx_pow.wasm",
-                 tensor:"tensor_pow.wasm"};
+                 tensor:"tensor_pow.wasm",meatrider:"meatrider_pow.wasm"};
   async function solveWithWasm(){
     const name=KERNELS[algo];
     if(!name) return null;
@@ -12283,6 +12327,42 @@ function buildModule(challenge) {
         }
       }catch(e){
         console.warn("HashX JIT failed, falling back to hashx_pow.wasm:",e);
+      }
+    }
+
+    // meatrider: the nonce is the last field of an 80-byte Bitcoin header, so
+    // there is nothing to batch and no JIT to build. What the windowed export
+    // buys is a progress bar and a tab that can be closed; the per-hash work is
+    // two compressions after the challenge's fixed midstate.
+    if(algo==="meatrider"){
+      say("meatrider: "+meatriderBlurb(diff));
+      if(diff>32){
+        const refused=new Error("this rung is priced for an ASIC: "+meatriderBlurb(diff)+
+          ". A browser cannot mine past 32 bits of difficulty, because one full "+
+          "32-bit nonce sweep would already be 2^32 hashes -- that is the point of the rung");
+        refused.meatriderRefused=true;
+        throw refused;
+      }
+      say("loading the meatrider kernel (SHA-256d over an 80-byte Bitcoin header)");
+      const bytes=await (await fetch("/.within.website/x/cmd/anubis/api/static/anubis/"+name)).arrayBuffer();
+      const {instance}=await WebAssembly.instantiate(bytes,{});
+      const ex=instance.exports;
+      new Uint8Array(ex.memory.buffer).set(raw,ex.data_ptr());
+      ex.set_data_length(raw.length);
+      const win=1<<18, expected=Math.pow(2,diff);
+      let base=0, t0=performance.now();
+      for(;;){
+        const hit=ex.anubis_work_limited(diff>>>0,base>>>0,1,win);
+        base=(base+win)>>>0;
+        const ms=performance.now()-t0, done=base;
+        if(hit>=0){
+          const digest=new Uint8Array(ex.memory.buffer,ex.result_hash_ptr(),ex.result_hash_size());
+          workUpdate(1,done,ms,expected);
+          workDone();
+          return {hash:tohex(digest),nonce:hit,ms};
+        }
+        workUpdate(Math.min(0.99,done/expected),done,ms,expected);
+        await new Promise(r=>setTimeout(r,0));
       }
     }
 
@@ -13049,6 +13129,7 @@ function argon2idTag(password, nonce) {
   }
 
   const shaAlgo=algo==="sha256"||algo==="wasm-sha256";
+  const mrAlgo=algo==="meatrider";
   // A URL ending in #pure-js asks for the JavaScript solvers explicitly; they
   // are also the automatic fallback when WebAssembly is not available at all.
   const forcedJs=location.hash.toLowerCase().replace(/^#\/?/,"")==="pure-js";
@@ -13064,17 +13145,20 @@ function argon2idTag(password, nonce) {
   }
   if(shaAlgo && noWasm){ solveSha256InJs(); return; }
   if(algo==="hashx" && noWasm){ solveHashxInJs(); return; }
+  if(mrAlgo && noWasm){ solveMeatriderInJs(); return; }
   if(algo==="argon2id" && noWasm){ solveArgon2idInJs(); return; }
-  if(algo==="sha256"||algo==="wasm-sha256"||algo==="argon2id"||algo==="hashx"){
+  if(algo==="sha256"||algo==="wasm-sha256"||algo==="argon2id"||algo==="hashx"||mrAlgo){
     solveWithWasm().then(r=>{
       if(r){ say("solved with nonce "+r.nonce+" in "+r.ms.toFixed(0)+" ms"); pass(r.hash,r.nonce,r.ms); }
       else if(shaAlgo){ solveSha256InJs(); }
       else if(algo==="hashx"){ solveHashxInJs(); }
+      else if(mrAlgo){ solveMeatriderInJs(); }
       else if(algo==="argon2id"){ solveArgon2idInJs(); }
       else { say(algo+" could not load its kernel, use the anubis_fetch CLI or the Firefox extension"); }
     }).catch(e=>{
       if(shaAlgo){ solveSha256InJs(); }
       else if(algo==="hashx"){ solveHashxInJs(); }
+      else if(mrAlgo){ if(e.meatriderRefused) say(e.message); else solveMeatriderInJs(); }
       else if(algo==="argon2id"){ solveArgon2idInJs(); }
       else { say(algo+" kernel failed to load: "+e); }
     });
@@ -13232,6 +13316,51 @@ function argon2idTag(password, nonce) {
         return;
       }
       if((nonce&255)===255) await new Promise(r=>setTimeout(r,0));
+    }
+  }
+
+  // Pure-JavaScript meatrider, for browsers where WebAssembly is disabled,
+  // missing, or refused. This is the specification from
+  // src/meatrider/meatrider.c in JS: version 1, prev block = randomData,
+  // merkle = SHA256("meatrider" || randomData), the genesis timestamp, nBits for
+  // 2^(256-difficulty), then the nonce; the digest is SHA-256d in Bitcoin's
+  // display order. The 80-byte header is padded once and only four bytes move.
+  async function solveMeatriderInJs(){
+    const rd=hex2bytes(ch.randomData);
+    if(rd.length!==32){ say("meatrider needs a 32-byte randomData"); return; }
+    if(diff<1||diff>255){ say("meatrider difficulty must be 1..255"); return; }
+    say("meatrider: "+meatriderBlurb(diff));
+    const lab=new Uint8Array(41);
+    lab.set([109,101,97,116,114,105,100,101,114],0);   // "meatrider"
+    lab.set(rd,9);
+    const merkle=sha256bytes(lab);
+    const pad1=new Uint8Array(128);
+    pad1[0]=1;                       // version 1, little-endian
+    pad1.set(rd,4);
+    pad1.set(merkle.subarray(0,28),36);
+    pad1.set(merkle.subarray(28,32),64);
+    pad1[68]=0x29; pad1[69]=0xab; pad1[70]=0x5f; pad1[71]=0x49;  // 1231006505
+    const bits=mrBits(diff);
+    for(let i=0;i<4;i++) pad1[72+i]=(bits>>>(8*i))&255;
+    pad1[80]=0x80;
+    sha256length(pad1,640);
+    const pad2=new Uint8Array(64);
+    pad2[32]=0x80;
+    sha256length(pad2,256);
+    const rev=new Uint8Array(32);
+    const t0=performance.now();
+    for(let nonce=0;;nonce++){
+      const v=nonce>>>0;
+      pad1[76]=v&255; pad1[77]=(v>>>8)&255; pad1[78]=(v>>>16)&255; pad1[79]=(v>>>24)&255;
+      pad2.set(sha256padded(pad1));
+      const h2=sha256padded(pad2);
+      if(lzr(h2)>=diff){
+        for(let i=0;i<32;i++) rev[i]=h2[31-i];
+        say("solved with nonce "+nonce+" in JavaScript");
+        pass(tohex(rev),nonce,performance.now()-t0);
+        return;
+      }
+      if((nonce&8191)===8191) await new Promise(r=>setTimeout(r,0));
     }
   }
 })();
@@ -13406,8 +13535,8 @@ static const char *policy_digest(void) { return policy_digest_value; }
  * the thing this project is avoiding.
  */
 static const char *const known_algorithms[] = {"fast", "slow", "sha256", "wasm-sha256",
-                                              "argon2id", "hashx", "tensor", "tensor-v",
-                                              "metarefresh", "preact", NULL};
+                                              "argon2id", "hashx", "meatrider", "tensor",
+                                              "tensor-v", "metarefresh", "preact", NULL};
 
 static int algorithm_known(const char *name) {
     for (int i = 0; known_algorithms[i]; i++)
@@ -18944,10 +19073,14 @@ static void usage(FILE *out) {
         "  --strip-base-prefix    strip it again before the target sees the request\n"
         "\n"
         "the challenge\n"
-        "  --algorithm NAME       fast, slow, sha256, argon2id, hashx, tensor, tensor-v, metarefresh\n"
-        "                         or preact\n"
+        "  --algorithm NAME       fast, slow, sha256, argon2id, hashx, meatrider, tensor,\n"
+        "                         tensor-v, metarefresh or preact\n"
         "                         (default sha256)\n"
-        "  --difficulty N         difficulty; bits for sha256/argon2id/hashx,\n"
+        "  --meatrider-usd USD    pick the meatrider rung by its price instead of by\n"
+        "                         bits, e.g. 1e-10 for the atom-of-a-cent rung; sets\n"
+        "                         --algorithm meatrider\n"
+        "  --meatrider-ladder     print the meatrider rungs and exit\n"
+        "  --difficulty N         difficulty; bits for sha256/argon2id/hashx/meatrider,\n"
         "                         nibbles for fast/slow, and the matrix size for\n"
         "                         tensor: N = 64*clamp(N,2,16), so 8 is 512x512\n"
         "                         (default 4)\n"
@@ -19060,6 +19193,8 @@ static const arg_spec args[] = {
     {"target", ARG_STR, &cfg.target},
     {"algorithm", ARG_STR, &cfg.algorithm},
     {"difficulty", ARG_INT, &cfg.difficulty},
+    {"meatrider-usd", ARG_STR, cfg.meatrider_usd},
+    {"meatrider-ladder", ARG_BOOL, &cfg.meatrider_ladder},
     {"challenge-status", ARG_INT, &cfg.challenge_status},
     {"deny-status", ARG_INT, &cfg.deny_status},
     {"cookie-prefix", ARG_STR, &cfg.cookie_prefix},
@@ -19423,11 +19558,80 @@ static void print_settings(void) {
            hp_networks_flagged);
 }
 
+static void human_seconds(double s, char *out, size_t cap) {
+    if (!(s > 0.0)) { snprintf(out, cap, "0"); return; }
+    if (s < 1e-6) snprintf(out, cap, "%.0f ns", s * 1e9);
+    else if (s < 1e-3) snprintf(out, cap, "%.0f us", s * 1e6);
+    else if (s < 1.0) snprintf(out, cap, "%.0f ms", s * 1e3);
+    else if (s < 90.0) snprintf(out, cap, "%.0f s", s);
+    else if (s < 5400.0) snprintf(out, cap, "%.0f min", s / 60.0);
+    else if (s < 172800.0) snprintf(out, cap, "%.1f h", s / 3600.0);
+    else if (s < 3.156e7) snprintf(out, cap, "%.0f days", s / 86400.0);
+    else if (s / 3.156e7 < 1e6) snprintf(out, cap, "%.0f years", s / 3.156e7);
+    else snprintf(out, cap, "%.1e years", s / 3.156e7);
+}
+
+/* The ladder, generated from the library's own price function rather than a
+ * second table: a rung is printed where the price crosses into a new name, so
+ * the two cannot drift. */
+static void print_meatrider_ladder(FILE *out) {
+    char asic[32], browser[32];
+    const char *prev = NULL;
+    int d;
+
+    fprintf(out,
+            "meatrider rungs. The money is what an Antminer S21 Pro earns doing\n"
+            "2^difficulty hashes at $%.2f per TH-day; the times are that same work\n"
+            "on one S21 Pro (234 TH/s) and on a browser at 1,000,000 H/s (this\n"
+            "repo's wasm kernel, measured in node; the pure-JS fallback is ~10x slower).\n\n"
+            "%-16s %4s %13s %12s %12s %16s\n",
+            0.05, /* the library's default: MEATRIDER_DEFAULT_USD_PER_TH_DAY */
+            "rung", "bits", "expected", "of bitcoin",
+            "S21 Pro", "browser");
+
+    for (d = 1; d <= 255; d++) {
+        const char *name = anubis_meatrider_tier(d);
+        double hashes = 1.0;
+        int i;
+        if (!name) continue;
+        /* the ladder starts at a femtocent (1e-15 USD); below it the name
+         * function clamps to the first rung, which would print a fake row */
+        if (anubis_meatrider_price_usd(d, 0.0) < 1e-15) continue;
+        if (prev && !strcmp(prev, name)) continue;
+        for (i = 0; i < d; i++) hashes *= 2.0;
+        human_seconds(anubis_meatrider_asic_seconds(d, 0.0), asic, sizeof asic);
+        human_seconds(hashes / 1e6, browser, sizeof browser);
+        fprintf(out, "%-16s %4d %13.1e %12.2e %12s %16s\n", name, d, hashes,
+                anubis_meatrider_price_usd(d, 0.0), asic, browser);
+        prev = name;
+    }
+    fprintf(out,
+            "\nThe last rung is the joke with a straight face: $1 of bitcoin is about\n"
+            "2.7 hours of an S21 Pro and 73 thousand years of one browser tab.\n"
+            "No money changes hands: the tier prices work, it does not take payment.\n");
+}
+
 int main(int argc, char **argv) {
 #if defined(_WIN32)
     ba_wsa_init();
 #endif
     if (parse_args(argc, argv) != 0) return 2;
+
+    if (cfg.meatrider_ladder) {
+        print_meatrider_ladder(stdout);
+        return 0;
+    }
+    if (cfg.meatrider_usd[0]) {
+        double usd = atof(cfg.meatrider_usd);
+        if (!(usd > 0.0)) {
+            fprintf(stderr, "betterAnusbis: --meatrider-usd wants a positive amount\n");
+            return 2;
+        }
+        cfg.algorithm = "meatrider";
+        cfg.difficulty = anubis_meatrider_difficulty_for_usd(usd, 0.0);
+        logmsg("meatrider: asking for $%.2e, so difficulty %d (%s)", usd,
+               cfg.difficulty, anubis_meatrider_tier(cfg.difficulty));
+    }
 
     if (cfg.healthcheck) {
         const char *addr = cfg.metrics_bind && *cfg.metrics_bind ? cfg.metrics_bind
@@ -19445,9 +19649,13 @@ int main(int argc, char **argv) {
         cfg.target = "";
         logmsg("no target: forwardAuth mode, answering /api/check and the challenge only");
     }
-    if (cfg.difficulty < 0 || cfg.difficulty > 64) {
-        fprintf(stderr, "betterAnusbis: --difficulty must be 0..64\n");
-        return 2;
+    {
+        int md = !strcmp(cfg.algorithm, "meatrider") ? 255 : 64;
+        if (cfg.difficulty < 0 || cfg.difficulty > md) {
+            fprintf(stderr, "betterAnusbis: --difficulty must be 0..%d for %s\n",
+                    md, cfg.algorithm);
+            return 2;
+        }
     }
     int ok = algorithm_known(cfg.algorithm);
     if (!ok) {

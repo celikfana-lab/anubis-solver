@@ -132,6 +132,16 @@ accepted by `known_algorithms`, by per-rule `algorithm:` lines and by the
 (`N = 64*clamp(d,2,16)`), not nibbles or bits, so a policy that switches an
 existing rule to `tensor` should also set its difficulty.
 
+`--algorithm meatrider` is ours alone too: SHA-256d over an 80-byte Bitcoin
+header rebuilt from the challenge, with the work priced in bitcoin. It is
+accepted by `known_algorithms`, by per-rule `algorithm:` lines and by the
+`--algorithm` flag, and its difficulty unit is leading zero bits of the
+display-order hash, the same unit as `sha256`. `--meatrider-ladder` prints the
+rungs and `--meatrider-usd` picks one by price; see
+[the README section](../README.md#meatrider-proof-of-work-priced-in-bitcoin).
+It takes a 32-byte `randomData` only, because the header's prev-block field is
+32 bytes.
+
 `--algorithm tensor-v` is the sampled-proof variant (same work, a two-request
 commit/audit protocol, a few milliseconds to verify). It is likewise repo-only
 and uses the same difficulty unit. Unlike the other algorithms it cannot be

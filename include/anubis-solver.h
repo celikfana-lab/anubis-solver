@@ -171,6 +171,51 @@ ANUBIS_API int anubis_solve_hashx(const char *challenge_hex, int difficulty,
                                   uint32_t *out_nonce, char *out_hex,
                                   double *out_ms);
 
+/* `meatrider` (leading zero bits, SHA-256d over a Bitcoin block header).
+ *
+ * The 32-byte `randomData` seeds a real 80-byte header:
+ * version 1, prev block = randomData, merkle = SHA256("meatrider" || randomData),
+ * time = the genesis timestamp, bits = compact(2^(256-difficulty)), and the
+ * nonce in the last four bytes. The digest is reported in Bitcoin's display
+ * order, so `difficulty` means exactly what it means for every other tier.
+ *
+ * `difficulty` is 1..255 here (a 256-bit target does not fit nBits), and a
+ * 32-bit nonce space above 32 bits of difficulty means one full sweep is
+ * unlikely to succeed: that is the "you are an ASIC now" end of the ladder.
+ *
+ * The target is a field of the header, as Bitcoin's nBits is, so a proof is
+ * valid only at the difficulty it was mined for: the same nonce hashes to a
+ * different digest at another difficulty. Verifiers should use the difficulty
+ * the challenge was issued with, which is what the gate does.
+ *
+ * The price helpers are labels on the work, not payments: they answer what an
+ * Antminer S21 Pro earns doing 2^difficulty hashes, at `usd_per_th_day` per
+ * terahash-day (0 = the 0.05 default). No money changes hands anywhere in this
+ * library. */
+ANUBIS_API int anubis_solve_meatrider(const char *challenge_hex, int difficulty,
+                                      int threads, double budget_ms,
+                                      uint32_t *out_nonce, char *out_hex,
+                                      double *out_ms);
+
+/* The full 80-byte header as 160 hex characters plus a terminator: `out_hex`
+ * must hold 161 bytes. Useful for showing that the proof really is Bitcoin's
+ * header and not a hash of the challenge string. */
+ANUBIS_API int anubis_meatrider_header(const char *challenge_hex, int difficulty,
+                                       uint32_t nonce, char *out_hex);
+
+/* nBits for the exact target 2^(256-difficulty). */
+ANUBIS_API unsigned anubis_meatrider_bits(int difficulty);
+
+/* What the work is worth in USD, how long an ASIC needs for it, and the rung's
+ * name ("atom", "suspicious", "asic", "meatrider", ...). */
+ANUBIS_API double anubis_meatrider_price_usd(int difficulty, double usd_per_th_day);
+ANUBIS_API double anubis_meatrider_asic_seconds(int difficulty, double hashrate);
+ANUBIS_API const char *anubis_meatrider_tier(int difficulty);
+
+/* The difficulty whose price first reaches `usd`, i.e. which rung to ask for. */
+ANUBIS_API int anubis_meatrider_difficulty_for_usd(double usd,
+                                                   double usd_per_th_day);
+
 /* ------------------------------------------------------------------ *
  * Verification (re-check a nonce; returns ANUBIS_OK when valid)
  * ------------------------------------------------------------------ */
@@ -183,6 +228,8 @@ ANUBIS_API int anubis_verify_argon2id(const char *challenge_hex, uint32_t nonce,
                                       int difficulty, char *out_hex);
 ANUBIS_API int anubis_verify_hashx(const char *challenge_hex, uint32_t nonce,
                                    int difficulty, char *out_hex);
+ANUBIS_API int anubis_verify_meatrider(const char *challenge_hex, uint32_t nonce,
+                                       int difficulty, char *out_hex);
 
 /* `tensor`: one integer GEMM, digest of the result. Deterministic, so the
  * proof is the digest itself and the nonce is always 0; verification

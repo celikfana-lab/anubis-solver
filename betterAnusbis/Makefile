@@ -58,11 +58,13 @@ web/hashx_pow.wasm: $(WASM)/hashx_pow.wasm
 	cp -f $< $@
 web/sha256_pow_batch.wasm: $(WASM)/sha256_pow_batch.wasm
 	cp -f $< $@
+web/meatrider_pow.wasm: $(WASM)/meatrider_pow.wasm
+	cp $< $@
 web/tensor_pow.wasm: $(WASM)/tensor_pow.wasm
 	cp -f $< $@
 
 wasm-kernels: web/argon2id_pow.wasm web/hashx_pow.wasm web/sha256_pow_batch.wasm \
-              web/tensor_pow.wasm
+              web/tensor_pow.wasm web/meatrider_pow.wasm
 
 betterAnusbis: betterAnusbis.c $(LIBDIR)/libanubis_solver.so
 	$(CC) $(CFLAGS) $(HTTP_CFLAGS) -I$(LIBDIR)/include -o $@ betterAnusbis.c $(LDLIBS) $(HTTP_LIBS)

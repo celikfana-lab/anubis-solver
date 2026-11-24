@@ -67,6 +67,58 @@ curl -s localhost:8088/v1/solve -d '{
 Unknown algorithm is a 400 with `{"error":"unknown algorithm"}`. `threads` and
 `budget_ms` are optional and map straight onto the solver's arguments.
 
+### `POST /v1/solve_raw`
+
+Take the Anubis challenge exactly as the site handed it over, solve it locally,
+and return the raw `pass-challenge` query parameters. This endpoint never opens
+a socket: it is the "I already have the challenge" path, not the fetch path.
+
+The body can be any of:
+
+- the `anubis_challenge` JSON payload,
+- the `<script id="anubis_challenge">...</script>` element,
+- the whole challenge page containing that script.
+
+Both payload spellings are understood: the current
+`{"rules":{...},"challenge":"<hex>","id":"<uuid>"}` and the nested
+`{"rules":{...},"challenge":{"id":"<uuid>","randomData":"<hex>"}}`.
+
+By default the response body is plain text, exactly the query Anubis expects:
+
+```bash
+curl -s localhost:8088/v1/solve_raw --data-binary '{
+  "rules": {"algorithm": "fast", "difficulty": 4},
+  "challenge": "0123456789abcdef",
+  "id": "00000000-0000-0000-0000-000000000001"
+}'
+```
+
+```
+id=00000000-0000-0000-0000-000000000001&response=0c64...17ab&nonce=6&elapsedTime=1
+```
+
+The algorithm, difficulty, nonce and response are also in `X-Anubis-*`
+response headers. `threads` and `budget_ms` are optional query parameters:
+
+```bash
+curl -s 'localhost:8088/v1/solve_raw?threads=2&budget_ms=1500' \
+     --data-binary @challenge.html
+```
+
+Add `?format=json` for an envelope instead of the bare query:
+
+```json
+{"algorithm":"fast","difficulty":4,
+ "id":"00000000-0000-0000-0000-000000000001",
+ "nonce":6,"response":"0c64...17ab","elapsed_ms":0.31,"wait_ms":0,
+ "raw":"id=00000000-0000-0000-0000-000000000001&response=0c64...17ab&nonce=6&elapsedTime=1"}
+```
+
+`wait_ms` is nonzero only for the time-based methods: `preact` and
+`metarefresh` have no leading-zero search, so the result carries `result=` or
+`challenge=` instead of `response=`/`nonce=` and the caller still has to wait.
+Malformed or non-challenge input is a 400 with `{"error":"..."}`.
+
 ### `POST /v1/verify`
 
 ```bash

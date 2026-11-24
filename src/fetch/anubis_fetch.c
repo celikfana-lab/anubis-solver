@@ -7,6 +7,10 @@
  * implements: a JSON payload in <script id="anubis_challenge">, a
  * pass-challenge GET with id/response/nonce, and a cookie that follows.
  *
+ * The same parser is available without the GET: anubis_solve_challenge_input()
+ * takes a challenge the caller already has and returns the raw pass-challenge
+ * query, opening no socket.
+ *
  * Two transports. The built-in one is deliberately small: HTTP/1.1,
  * Content-Length or chunked, one request per connection (Connection: close), a
  * cookie list, and redirects. The other is libcurl-impersonate, when it is
@@ -598,6 +602,362 @@ static int json_int(const char *json, const char *key, long *out) {
     return 1;
 }
 
+/* ---------------------------------------------------------- raw challenge */
+
+/* A challenge page is small; a caller handing us a whole page should still
+ * fit, but anything past this is a mistake or an attack on memory. */
+#define RAW_CHALLENGE_MAX_INPUT (4u << 20)
+
+/* Bounded, case-insensitive substring search. strcasestr() would keep going
+ * past the end of an extracted script body. */
+static const char *find_ci(const char *hay, size_t haylen, const char *needle) {
+    size_t n = strlen(needle);
+    size_t i;
+    if (n == 0 || haylen < n) {
+        return NULL;
+    }
+    for (i = 0; i + n <= haylen; i++) {
+        if (strncasecmp(hay + i, needle, n) == 0) {
+            return hay + i;
+        }
+    }
+    return NULL;
+}
+
+/* Decode the handful of HTML entities that can appear if a page escaped its
+ * JSON script instead of emitting it raw. Hex random data and UUIDs are
+ * unaffected; this only makes the JSON parseable again. */
+static void raw_entity_decode(const char *in, size_t len, char *out) {
+    static const struct {
+        const char *entity;
+        char value;
+    } table[] = {
+        {"&quot;", '"'}, {"&#34;", '"'}, {"&#x22;", '"'}, {"&apos;", '\''},
+        {"&#39;", '\''}, {"&#x27;", '\''}, {"&lt;", '<'},   {"&gt;", '>'},
+        {"&amp;", '&'},
+    };
+    size_t i = 0, o = 0;
+    while (i < len) {
+        size_t k;
+        int matched = 0;
+        if (in[i] == '&') {
+            for (k = 0; k < sizeof table / sizeof table[0]; k++) {
+                size_t n = strlen(table[k].entity);
+                if (i + n <= len && strncasecmp(in + i, table[k].entity, n) == 0) {
+                    out[o++] = table[k].value;
+                    i += n;
+                    matched = 1;
+                    break;
+                }
+            }
+        }
+        if (!matched) {
+            out[o++] = in[i++];
+        }
+    }
+    out[o] = '\0';
+}
+
+/* Find the JSON body of the challenge: <script id="anubis_challenge"> first,
+ * then any application/json script whose contents look like a challenge, then
+ * the whole input when it is already just the JSON payload. Returns 0 and
+ * allocates a NUL-terminated, entity-decoded copy in *out. */
+static int raw_extract_json(const char *input, size_t len, char **out,
+                            char *err, size_t errcap) {
+    const char *end = input + len;
+    const char *content = NULL;
+    size_t content_len = 0;
+    const char *p = input;
+
+    while ((p = find_ci(p, (size_t)(end - p), "<script")) != NULL) {
+        const char *gt = memchr(p, '>', (size_t)(end - p));
+        const char *close;
+        if (gt == NULL) {
+            break;
+        }
+        close = find_ci(gt + 1, (size_t)(end - (gt + 1)), "</script");
+        if (close == NULL) {
+            break;
+        }
+        if (find_ci(p, (size_t)(gt - p), "anubis_challenge") != NULL ||
+            (find_ci(p, (size_t)(gt - p), "application/json") != NULL &&
+             find_ci(gt + 1, (size_t)(close - (gt + 1)), "\"rules\"") != NULL &&
+             (find_ci(gt + 1, (size_t)(close - (gt + 1)), "\"challenge\"") != NULL ||
+              find_ci(gt + 1, (size_t)(close - (gt + 1)), "\"randomData\"") != NULL))) {
+            content = gt + 1;
+            content_len = (size_t)(close - content);
+            break;
+        }
+        p = close + 8;
+    }
+
+    if (content == NULL) {
+        /* No script element: accept the bare payload. */
+        if (find_ci(input, len, "\"rules\"") != NULL &&
+            (find_ci(input, len, "\"challenge\"") != NULL ||
+             find_ci(input, len, "\"randomData\"") != NULL)) {
+            content = input;
+            content_len = len;
+        } else {
+            snprintf(err, errcap,
+                     "input is not an Anubis challenge (no anubis_challenge "
+                     "script and no challenge/rules JSON)");
+            return -1;
+        }
+    }
+
+    *out = malloc(content_len + 1);
+    if (*out == NULL) {
+        snprintf(err, errcap, "out of memory");
+        return -1;
+    }
+    raw_entity_decode(content, content_len, *out);
+    return 0;
+}
+
+int anubis_parse_challenge_input(const char *input, size_t len,
+                                 anubis_raw_challenge *out, char *err,
+                                 size_t errcap) {
+    char *json = NULL;
+    const char *scope;
+    char local_err[256];
+    long difficulty = 0;
+    size_t i;
+
+    if (err == NULL) {
+        err = local_err;
+        errcap = sizeof local_err;
+    }
+    if (out == NULL || input == NULL) {
+        snprintf(err, errcap, "no challenge input");
+        return -1;
+    }
+    memset(out, 0, sizeof *out);
+
+    if (len > RAW_CHALLENGE_MAX_INPUT) {
+        snprintf(err, errcap, "challenge input is too large");
+        return -1;
+    }
+    if (len == 0) {
+        snprintf(err, errcap, "empty challenge input");
+        return -1;
+    }
+    if (raw_extract_json(input, len, &json, err, errcap) != 0) {
+        return -1;
+    }
+
+    scope = strstr(json, "\"rules\"");
+    if (scope == NULL) {
+        scope = json;
+    }
+    if (!json_string(scope, "algorithm", out->algorithm,
+                     sizeof out->algorithm)) {
+        snprintf(err, errcap, "challenge has no rules.algorithm");
+        free(json);
+        return -1;
+    }
+    if (!json_int(scope, "difficulty", &difficulty) || difficulty < 0 ||
+        difficulty > (1 << 20)) {
+        snprintf(err, errcap, "challenge has no valid rules.difficulty");
+        free(json);
+        return -1;
+    }
+    out->difficulty = (int)difficulty;
+
+    /* v1.22+ nests the payload under "challenge"; older pages and the
+     * make-challenge reply keep the string at the top level. */
+    if (!json_string(json, "randomData", out->random_data,
+                     sizeof out->random_data) &&
+        !json_string(json, "challenge", out->random_data,
+                     sizeof out->random_data)) {
+        snprintf(err, errcap, "challenge has no randomData/challenge payload");
+        free(json);
+        return -1;
+    }
+    if (out->random_data[0] == '\0') {
+        snprintf(err, errcap, "challenge payload is empty");
+        free(json);
+        return -1;
+    }
+
+    (void)json_string(json, "id", out->id, sizeof out->id);
+
+    for (i = 0; out->algorithm[i] != '\0'; i++) {
+        out->algorithm[i] =
+            (char)tolower((unsigned char)out->algorithm[i]);
+    }
+    free(json);
+    return 0;
+}
+
+/* Append "name=<url-encoded value>" (prefixed with & unless it is first) to
+ * the fixed raw buffer. Returns the new offset, or (size_t)-1 when it does not
+ * fit. */
+static size_t raw_kv(char *raw, size_t cap, size_t off, int first,
+                     const char *name, const char *value) {
+    char *enc = url_encode(value);
+    int n;
+    if (enc == NULL) {
+        return (size_t)-1;
+    }
+    n = snprintf(raw + off, cap - off, "%s%s=%s", first ? "" : "&", name, enc);
+    free(enc);
+    if (n < 0 || (size_t)n >= cap - off) {
+        return (size_t)-1;
+    }
+    return off + (size_t)n;
+}
+
+int anubis_solve_challenge_input(const char *input, size_t len, int threads,
+                                 double budget_ms, anubis_raw_solution *out,
+                                 char *err, size_t errcap) {
+    int rc = 0;
+    double ms = 0.0;
+    unsigned long long nonce = 0;
+    size_t off = 0;
+    char local_err[256];
+    int is_pow = 1;
+
+    if (err == NULL) {
+        err = local_err;
+        errcap = sizeof local_err;
+    }
+    if (out == NULL) {
+        snprintf(err, errcap, "no output");
+        return -1;
+    }
+    memset(out, 0, sizeof *out);
+    if (threads < 0) {
+        snprintf(err, errcap, "threads must be non-negative");
+        return -1;
+    }
+    if (budget_ms < 0.0) {
+        budget_ms = 0.0;
+    }
+    if (anubis_parse_challenge_input(input, len, &out->challenge, err,
+                                     errcap) != 0) {
+        return -1;
+    }
+
+    const char *alg = out->challenge.algorithm;
+    if (!strcasecmp(alg, "fast") || !strcasecmp(alg, "slow")) {
+        uint64_t n = 0;
+        rc = anubis_solve_nibbles(out->challenge.random_data,
+                                  out->challenge.difficulty, threads, 0,
+                                  budget_ms, &n, out->response, &ms);
+        nonce = (unsigned long long)n;
+    } else if (!strcasecmp(alg, "sha256") || !strcasecmp(alg, "wasm-sha256")) {
+        uint32_t n = 0;
+        rc = anubis_solve_bits(out->challenge.random_data,
+                               out->challenge.difficulty, threads, budget_ms,
+                               &n, out->response, &ms);
+        nonce = n;
+    } else if (!strcasecmp(alg, "argon2id")) {
+        uint32_t n = 0;
+        rc = anubis_solve_argon2id(out->challenge.random_data,
+                                   out->challenge.difficulty, threads,
+                                   budget_ms, &n, out->response, &ms);
+        nonce = n;
+    } else if (!strcasecmp(alg, "hashx")) {
+        uint32_t n = 0;
+        rc = anubis_solve_hashx(out->challenge.random_data,
+                                out->challenge.difficulty, threads, budget_ms,
+                                &n, out->response, &ms);
+        nonce = n;
+    } else if (!strcasecmp(alg, "meatrider")) {
+        uint32_t n = 0;
+        rc = anubis_solve_meatrider(out->challenge.random_data,
+                                    out->challenge.difficulty, threads,
+                                    budget_ms, &n, out->response, &ms);
+        nonce = n;
+    } else if (!strcasecmp(alg, "tensor")) {
+        uint32_t n = 0;
+        rc = anubis_solve_tensor(out->challenge.random_data,
+                                 out->challenge.difficulty, threads, budget_ms,
+                                 &n, out->response, &ms);
+        nonce = n;
+    } else if (!strcasecmp(alg, "preact")) {
+        /* preact is a hash echo plus a server-side delay, not a search. */
+        if (anubis_sha256_hex(out->challenge.random_data,
+                              strlen(out->challenge.random_data),
+                              out->response) != 0) {
+            snprintf(err, errcap, "preact hash failed");
+            return -1;
+        }
+        out->wait_ms = out->challenge.difficulty * 100 + 100;
+        is_pow = 0;
+    } else if (!strcasecmp(alg, "metarefresh")) {
+        /* Nothing to compute; the server only checks elapsed time. */
+        out->wait_ms = out->challenge.difficulty * 800 + 200;
+        is_pow = 0;
+        rc = ANUBIS_OK;
+        ms = 0.0;
+    } else {
+        snprintf(err, errcap, "unknown challenge algorithm '%s'", alg);
+        return -1;
+    }
+
+    if (is_pow && rc != ANUBIS_OK) {
+        if (rc == ANUBIS_ERR_ARG) {
+            snprintf(err, errcap,
+                     "invalid challenge for %s (hex required for every "
+                     "algorithm except fast/slow)",
+                     alg);
+        } else if (rc == ANUBIS_ERR_UNSOLVED) {
+            snprintf(err, errcap, "no solution found for %s at difficulty %d",
+                     alg, out->challenge.difficulty);
+        } else {
+            snprintf(err, errcap, "solver error %d for %s", rc, alg);
+        }
+        return -1;
+    }
+
+    out->nonce = nonce;
+    out->elapsed_ms = (ms >= 0.0) ? ms : 0.0;
+    if (strlen(out->response) != 64 && is_pow) {
+        snprintf(err, errcap, "solver returned a malformed digest");
+        return -1;
+    }
+
+    if (out->challenge.id[0] != '\0') {
+        off = raw_kv(out->raw, sizeof out->raw, off, 1, "id",
+                     out->challenge.id);
+        if (off == (size_t)-1) {
+            snprintf(err, errcap, "raw result is too large");
+            return -1;
+        }
+    }
+    if (is_pow) {
+        off = raw_kv(out->raw, sizeof out->raw, off, off == 0, "response",
+                     out->response);
+    } else if (!strcasecmp(alg, "preact")) {
+        off = raw_kv(out->raw, sizeof out->raw, off, off == 0, "result",
+                     out->response);
+    } else {
+        off = raw_kv(out->raw, sizeof out->raw, off, off == 0, "challenge",
+                     out->challenge.random_data);
+    }
+    if (off == (size_t)-1 || off >= sizeof out->raw) {
+        snprintf(err, errcap, "raw result is too large");
+        return -1;
+    }
+    {
+        int n;
+        if (is_pow) {
+            n = snprintf(out->raw + off, sizeof out->raw - off,
+                         "&nonce=%llu&elapsedTime=1", nonce);
+        } else {
+            n = snprintf(out->raw + off, sizeof out->raw - off,
+                         "&elapsedTime=%d", out->wait_ms);
+        }
+        if (n < 0 || (size_t)n >= sizeof out->raw - off) {
+            snprintf(err, errcap, "raw result is too large");
+            return -1;
+        }
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ solve */
 
 static int solve_algorithm(const char *algorithm, const char *challenge,
@@ -614,6 +974,8 @@ static int solve_algorithm(const char *algorithm, const char *challenge,
         rc = anubis_solve_argon2id(challenge, difficulty, 0, 0, nonce, digest, NULL);
     } else if (!strcasecmp(algorithm, "hashx")) {
         rc = anubis_solve_hashx(challenge, difficulty, 0, 0, nonce, digest, NULL);
+    } else if (!strcasecmp(algorithm, "meatrider")) {
+        rc = anubis_solve_meatrider(challenge, difficulty, 0, 0, nonce, digest, NULL);
     } else if (!strcasecmp(algorithm, "tensor")) {
         rc = anubis_solve_tensor(challenge, difficulty, 0, 0, nonce, digest, NULL);
     } else {

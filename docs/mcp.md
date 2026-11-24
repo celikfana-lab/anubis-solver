@@ -2,10 +2,10 @@
 
 `anubis_mcp` is a Model Context Protocol server written in C, with no Python
 and no Node in the loop. It speaks newline-delimited JSON-RPC 2.0 on stdio and
-exposes four tools: fetch a URL through an Anubis challenge, solve a challenge
-directly, report the version, and describe the compute backends. Both the
-solving and the HTTP work come from this repository: `libanubis_solver.so` and
-`src/fetch/anubis_fetch.c`.
+exposes seven tools: fetch a URL through an Anubis challenge, solve a challenge
+from separate fields, solve one from the raw challenge/page, report the version,
+and describe the compute backends. Both the solving and the HTTP work come from
+this repository: `libanubis_solver.so` and `src/fetch/anubis_fetch.c`.
 
 ## Build
 
@@ -55,8 +55,16 @@ under `/usr/local/bin` + `/usr/local/lib`).
 | `anubis_fetch_raw` | same as `anubis_fetch` | the same preamble, then the body exactly as it arrived: raw HTML or bytes, no tag stripping |
 | `anubis_dump_headers` | `url` (required), `impersonate` optional | `status:`, `url:`, `transport:`, `headers: <n> bytes`, then the raw header block of every response seen, in order |
 | `anubis_solve` | `algorithm`, `challenge` (hex), `difficulty`, `threads` optional | JSON `{"nonce":n,"response":"<hex>","algorithm":"..."}` |
+| `anubis_solve_raw` | `input` (required), `threads` optional, `budget_ms` optional | the raw `pass-challenge` query, e.g. `id=<uuid>&response=<hex>&nonce=<n>&elapsedTime=1`; no network I/O |
 | `anubis_version` | none | JSON `{"version":"2.0.2","codename":"shaoogle","algorithms":[...],"impersonate":"chrome116","impersonate_available":true}` |
 | `anubis_backends` | none | JSON `{"compiled":["cpu","vulkan","opencl"],"available":["cpu","vulkan","opencl"]}`; `available` probes the drivers and can take a second on a cold stack |
+
+`anubis_solve_raw` is for the case where the challenge is already in hand: paste
+the `anubis_challenge` JSON, its `<script>` element, or the whole challenge page
+and the tool returns the query parameters to append to `pass-challenge`. It
+never fetches anything, so no URL, cookie or TLS fingerprint is involved.
+`preact` and `metarefresh` have no leading-zero search; their result carries
+`result=`/`challenge=` and their `elapsedTime=` is the wait the server expects.
 
 `anubis_fetch` follows the challenge the same way the browser does: it reads the
 `anubis_challenge` JSON, solves it with the algorithm it names (`fast`, `slow`,

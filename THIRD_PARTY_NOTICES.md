@@ -6,6 +6,14 @@ licenses; the `LICENSE` covers only the original code, under **MIT + attribution
 the terms below and cannot loosen them — where they conflict, the third-party
 license wins for that portion.
 
+## The meatrider logo (`mascot/meatrider.jpg`)
+
+An internet meme — a man riding a flying steak above the clouds — used as the
+logo of the `meatrider` tier. Its origin and licence are unknown; it is included
+as a joke, is not covered by the project's licence grant, and is not needed to
+build or use anything here. If you hold the rights and want it gone, open an
+issue and it will be replaced.
+
 ## HashX (`src/hashx.c`, `src/hashx.h`)
 
 A C port of **tevador/hashx** (LGPL-3.0), the proof-of-work function used by

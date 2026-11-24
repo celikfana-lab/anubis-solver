@@ -60,6 +60,10 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
                        double budget_ms, uint32_t *out_nonce, char *out_hex,
                        double *out_ms);
 
+int anubis_solve_meatrider(const char *challenge_hex, int difficulty,
+                           int threads, double budget_ms, uint32_t *out_nonce,
+                           char *out_hex, double *out_ms);
+
 /* Verify one nonce (returns ANUBIS_OK when it is valid). */
 int anubis_verify_nibbles(const char *challenge, uint64_t nonce,
                           int difficulty, char *out_hex);
@@ -69,6 +73,18 @@ int anubis_verify_argon2id(const char *challenge_hex, uint32_t nonce,
                            int difficulty, char *out_hex);
 int anubis_verify_hashx(const char *challenge_hex, uint32_t nonce,
                         int difficulty, char *out_hex);
+int anubis_verify_meatrider(const char *challenge_hex, uint32_t nonce,
+                            int difficulty, char *out_hex);
+
+/* meatrider: the header behind the proof, and what the work is worth.
+ * anubis_meatrider_header() needs a 161-byte buffer (160 hex chars + NUL). */
+int anubis_meatrider_header(const char *challenge_hex, int difficulty,
+                            uint32_t nonce, char *out_hex);
+unsigned anubis_meatrider_bits(int difficulty);
+double anubis_meatrider_price_usd(int difficulty, double usd_per_th_day);
+double anubis_meatrider_asic_seconds(int difficulty, double hashrate);
+const char *anubis_meatrider_tier(int difficulty);
+int anubis_meatrider_difficulty_for_usd(double usd, double usd_per_th_day);
 
 /* Utility. */
 const char *anubis_solver_version(void);
@@ -123,9 +139,22 @@ else. `anubis_gpu_info()` is the one-line description of the backend that would
 be used first.
 
 Which family to call: `nibbles` for `fast`/`slow`, `bits` for
-`sha256`/`wasm-sha256`, `argon2id`, `hashx` respectively, plus
+`sha256`/`wasm-sha256`, `argon2id`, `hashx` and `meatrider` respectively, plus
 `anubis_verify_tensor` and `anubis_tensor_digest` for the deterministic
 `tensor` tier (one int8 GEMM; the nonce is always 0).
+
+`meatrider` is SHA-256d over an 80-byte Bitcoin block header rebuilt from the
+challenge. It takes exactly **32 bytes** of `randomData` (the header's prev-block
+field is 32 bytes) and `difficulty` 1..255, because the target is a field of the
+header (Bitcoin's nBits) and a 256-bit target does not fit. One consequence is
+worth knowing before you cache anything: the target is hashed, so a proof is
+valid only at the difficulty it was mined for, exactly as in Bitcoin.
+
+The price helpers are labels on the work, not payments. They answer what an
+Antminer S21 Pro earns doing 2^difficulty hashes at `usd_per_th_day` per
+terahash-day (`<= 0` means the $0.05 default), and how long that ASIC needs.
+`anubis_meatrider_tier()` names the rung: `spark`, `atom`, `suspicious`, `asic`,
+`meatrider`. No money changes hands anywhere in this library.
 
 The sampled variant is a four-call protocol in the same header:
 

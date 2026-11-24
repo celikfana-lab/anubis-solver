@@ -89,6 +89,7 @@ just that a challenge was issued:
   metarefresh  difficulty 1   via node    PASS
   argon2id     difficulty 4   via python  PASS
   hashx        difficulty 4   via python  PASS
+  meatrider    difficulty 8   via python  PASS
   tensor       difficulty 4   via node    PASS
   tensor-v     difficulty 4   via python  PASS
 
@@ -165,8 +166,11 @@ where to listen, what to protect
   --strip-base-prefix        strip that prefix before the backend sees it
 
 the challenge
-  --algorithm NAME           fast, slow, sha256, argon2id, hashx, tensor, tensor-v, metarefresh
-  --difficulty N             bits for sha256/argon2id/hashx, nibbles for fast/slow
+  --algorithm NAME           fast, slow, sha256, argon2id, hashx, meatrider, tensor,
+                             tensor-v, metarefresh
+  --meatrider-usd USD        pick the meatrider rung by price; sets --algorithm meatrider
+  --meatrider-ladder         print the meatrider rungs and exit
+  --difficulty N             bits for sha256/argon2id/hashx/meatrider, nibbles for fast/slow
   --challenge-status N       status for the challenge page (default 200)
   --deny-status N            status for a policy deny (default 200, see below)
   --serve-robots-txt         answer /robots.txt with Disallow: /
@@ -306,6 +310,7 @@ challenge bytes and only falls back to fetching the interpreter.
 | `hashx` | compiled in the page from the challenge (`hashx_jit.mjs`), falling back to `hashx_pow.wasm` | 10.4 KB / 14.9 KB | **exact, and 7-8x faster** |
 | `tensor` | `tensor_pow.wasm` (int8 GEMM, SIMD dot) | 49.4 KB | not comparable: Anubis has no such tier. Exact against the C engine and the page's JavaScript |
 | `tensor-v` | the same module, plus `tv_solve` / `tv_make_witness` (Merkle root and witness) | 49.4 KB | not comparable; exact against the C core (`wasm/verify-tensor-v.mjs`) |
+| `meatrider` | `meatrider_pow.wasm`, the same C file the native library compiles | 12.6 KB | not comparable: Anubis has no such tier. Exact against `node:crypto` and the C core (`wasm/verify-meatrider.mjs`) |
 
 `sha256` and the nibble challenges also have a **pure-JavaScript SHA-256**.
 If WebAssembly is missing or the module will not instantiate, the page computes

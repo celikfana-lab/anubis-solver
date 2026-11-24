@@ -145,8 +145,8 @@ Two binaries, one shared C client, no scripting runtime:
 
 | binary | what it is | docs |
 |---|---|---|
-| `anubis_mcp` | MCP server over stdio: tools `anubis_fetch`, `anubis_fetch_raw`, `anubis_dump_headers`, `anubis_solve`, `anubis_version`, `anubis_backends` | [docs/mcp.md](docs/mcp.md) |
-| `anubis_api` | HTTP/1.1 JSON service: `/v1/solve`, `/v1/verify`, `/v1/fetch`, `/v1/fetch_raw`, `/v1/dump_headers`, `/v1/backends` | [docs/api-service.md](docs/api-service.md) |
+| `anubis_mcp` | MCP server over stdio: tools `anubis_fetch`, `anubis_fetch_raw`, `anubis_dump_headers`, `anubis_solve`, `anubis_solve_raw`, `anubis_version`, `anubis_backends` | [docs/mcp.md](docs/mcp.md) |
+| `anubis_api` | HTTP/1.1 JSON service: `/v1/solve`, `/v1/solve_raw`, `/v1/verify`, `/v1/fetch`, `/v1/fetch_raw`, `/v1/dump_headers`, `/v1/backends` | [docs/api-service.md](docs/api-service.md) |
 
 ```bash
 make -j8 libanubis_solver.so
@@ -194,6 +194,11 @@ make test-impersonate         # local TLS server: GREASE present/absent per prof
   still passes only `f^96` of the time. See
   [the section below](#tensor-and-tensor-v-the-two-tiers-that-are-ours) and
   [betterAnusbis/SECURITY-REVIEW.md](betterAnusbis/SECURITY-REVIEW.md#tensor-v-sampled-verification).
+- **A ninth, `meatrider`**: SHA-256, twice, over a real 80-byte Bitcoin block
+  header rebuilt from the challenge, with the work priced in bitcoin — from a
+  femtocent (two milliseconds of browser) to **$1.33, which is 2.7 hours of an
+  Antminer S21 Pro and 73,000 years of one browser tab**. See
+  [the ladder below](#meatrider-proof-of-work-priced-in-bitcoin).
 - **CPU kernels**: hand-written AVX2, SHA-NI, AVX-512 and AArch64 NEON/SHA-2
   assembly, with runtime dispatch down to a portable C fallback.
 - **GPU backends** (all opt-in except SHA-256): CUDA, oneAPI Level Zero,
@@ -212,8 +217,11 @@ make test-impersonate         # local TLS server: GREASE present/absent per prof
   own OpenSSL client when none is installed. No BoringSSL in the build.
 - **Two C services (new in 2.0.1)**: an **MCP server** over stdio (`anubis_mcp`)
   that lets an agent fetch Anubis-protected URLs and solve challenges, and an
-  **HTTP API service** (`anubis_api`) exposing `/v1/solve`, `/v1/verify`,
-  `/v1/fetch`, `/v1/fetch_raw`, `/v1/dump_headers` and `/v1/backends` as JSON.
+  **HTTP API service** (`anubis_api`) exposing `/v1/solve`, `/v1/solve_raw`,
+  `/v1/verify`, `/v1/fetch`, `/v1/fetch_raw`, `/v1/dump_headers` and
+  `/v1/backends` as JSON. `solve_raw` / `anubis_solve_raw` take the raw
+  challenge JSON, script element or page and return the raw `pass-challenge`
+  query without touching the network.
   Both link the `.so` and the shared C
   fetch layer (`src/fetch/`), with no Python or Node in the path.
 - **Every GPU hit is re-verified** with the CPU reference; a mismatch silently
@@ -254,6 +262,7 @@ results that came out negative.
 | Gate server footprint | **~21x less RAM** (2.1 vs 44-46 MB), ~1.9x less CPU per request | `python3 tools/bench-server-resources.py` |
 | Client memory | wasm kernel 0.13 MiB vs Anubis's 1.06 MiB | `node tools/bench-client-resources.mjs` |
 | SHA-256 in pure Scratch blocks | **25 H/s** interpreted, **1,708 H/s** in TurboWarp — difficulty 20 solved in 9m56s, difficulty 21 in ~20.5 min | `cd scratch && make test` |
+| `meatrider` (SHA-256d, Bitcoin header) | **0.91 MHash/s** native one core, **0.76-1.04 MHash/s** in wasm — two compressions per hash, no SHA-NI path | `python3 tools/bench_tiers.py --reps 5`, `node wasm/verify-meatrider.mjs` |
 | `tensor-v` server audit | **3.6 ms** at difficulty 16, against 538 ms of client wasm commit (~1:150) | `python3 tools/bench_tensor_v.py` |
 | The wall, end to end | six server x client combinations | `node tools/bench-endtoend.mjs` |
 
@@ -375,9 +384,9 @@ It builds for Linux x86-64, Linux aarch64 and Windows x86-64; the Windows releas
 is a native mingw-w64 build that ships `betterAnusbis.exe` + `anubis_solver.dll`
 as a zip and an MSI installer (`betterAnusbis/win32/build-windows.sh`).
 
-All eight algorithms are gated and verified (fast, slow, sha256, argon2id, hashx,
-tensor, tensor-v, metarefresh), `./test-all-algorithms.sh` asserts the protected page comes
-back for each, and tampering gets a 403.
+All nine algorithms are gated and verified (fast, slow, sha256, argon2id, hashx,
+meatrider, tensor, tensor-v, metarefresh), `./test-all-algorithms.sh` asserts the
+protected page comes back for each, and tampering gets a 403.
 
 It also has the pieces a real deployment asks for: a **policy file** (allow /
 deny / challenge on user agent, path, header or IPv4 CIDR, with per-rule
@@ -591,6 +600,7 @@ Makefile at install time.
 | `sha256` (WASM) | SHA-256(raw challenge + uint32 nonce) | leading zero bits | ✅ |
 | `argon2id` (WASM) | Argon2id(password=challenge, salt=u64 nonce) | leading zero bits | ✅ |
 | `hashx` (WASM) | HashX program derived from the challenge | leading zero bits | ✅ |
+| `meatrider` | SHA-256d over an 80-byte Bitcoin header rebuilt from the challenge | leading zero bits of the *display-order* hash | ✅ |
 | `soteria` | a SIMD wasm challenge, documented upstream with **no implementation registered** | unknown until a sample exists | ❌ needs a live sample — [see the top of this file](#anubis-solver) |
 
 Byte-exact details:
@@ -603,6 +613,14 @@ Byte-exact details:
 - **hashx**: `HashX::new(challenge)`; if the generator rejects the seed, a
   little-endian u32 counter is appended and the seed retried — the port does the
   same, so client and server agree on the program.
+- **meatrider**: needs a 32-byte `randomData`, because the header has a fixed
+  32-byte prev-block field; version 1, prev = the challenge, merkle =
+  `SHA256("meatrider" || challenge)`, time = the genesis block's 1231006505,
+  nBits = `compact(2^(256-difficulty))`, nonce in the last four bytes,
+  little-endian as Bitcoin writes it. The digest is Bitcoin's display order
+  (reverse of SHA-256d), so the leading-zero-bit test applies unchanged. The
+  target is *in* the header, exactly as Bitcoin's nBits is, so a proof is valid
+  only at the difficulty it was mined for.
 
 Unknown algorithms raise `UnsupportedAlgorithm`.
 
@@ -726,6 +744,99 @@ node betterAnusbis/tests_js_tensor_v.mjs   # WebNN hand-off, transpose retry, pu
 The full protocol, the threat model and the two residual weaknesses are in
 [betterAnusbis/SECURITY-REVIEW.md](betterAnusbis/SECURITY-REVIEW.md#tensor-v-sampled-verification);
 the browser side is in [betterAnusbis/README.md](betterAnusbis/README.md).
+
+### `meatrider`: proof of work priced in bitcoin
+
+<img src="mascot/meatrider.jpg" width="360" alt="a man riding a flying t-bone steak above the clouds: the meatrider">
+
+The ninth tier is SHA-256, doubled, over a real 80-byte Bitcoin block header
+rebuilt from the challenge:
+
+| header bytes | field | value |
+|---|---|---|
+| 0..3 | version | `1` |
+| 4..35 | prev block | the challenge's 32-byte `randomData` |
+| 36..67 | merkle root | `SHA256("meatrider" || randomData)` |
+| 68..71 | time | `1231006505`, the genesis block's timestamp |
+| 72..75 | nBits | `compact(2^(256-difficulty))` |
+| 76..79 | nonce | the client's nonce, little-endian |
+
+The digest is `reverse(SHA256(SHA256(header)))` — Bitcoin's display order — so
+`difficulty` means the same leading-zero-bit count every other tier uses, and the
+proof really is a Bitcoin proof of work at target `2^(256-difficulty)`. Nothing
+about the wire protocol changes: same 32-byte `randomData`, same 32-bit nonce, so
+a client that can hash once can hash twice. The `bits` field is Bitcoin's own
+nBits encoding, so the header is self-describing; because nBits is hashed, a
+proof is bound to its difficulty, as in Bitcoin.
+
+What makes it a tier rather than a gimmick is the pricing. The work is priced at
+what an Antminer S21 Pro would earn doing it, at $0.05 per TH-day (234 TH/s,
+3,510 W — the S21 Pro's spec):
+
+| rung | bits | expected hashes | of bitcoin | one S21 Pro | one browser tab |
+|---|---:|---:|---:|---:|---:|
+| `spark` | 11 | 2,048 | $1.19e-15 | 0 ns | 2 ms |
+| `grain` | 15 | 32,768 | $1.90e-14 | 0 ns | 33 ms |
+| `speck` | 18 | 262,144 | $1.52e-13 | 1 ns | 262 ms |
+| `mote` | 21 | 2,097,152 | $1.21e-12 | 9 ns | 2 s |
+| `crumb` | 25 | 33,554,432 | $1.94e-11 | 143 ns | 34 s |
+| `atom` | 28 | 268,435,456 | $1.55e-10 | 1 us | 4 min |
+| `nano` | 31 | 2,147,483,648 | $1.24e-09 | 9 us | 36 min |
+| `microbit` | 35 | 34,359,738,368 | $1.99e-08 | 147 us | 9.5 h |
+| `dust` | 38 | 274,877,906,944 | $1.59e-07 | 1 ms | 3 days |
+| `suspicious` | 41 | 2,199,023,255,552 | $1.27e-06 | 9 ms | 25 days |
+| `very-suspicious` | 44 | 17,592,186,044,416 | $1.02e-05 | 75 ms | 204 days |
+| `bot-shaped` | 48 | 281,474,976,710,656 | $1.63e-04 | 1 s | 9 years |
+| `farm` | 51 | 2,251,799,813,685,248 | $1.30e-03 | 10 s | 71 years |
+| `datacenter` | 54 | 18,014,398,509,481,984 | $1.04e-02 | 77 s | 571 years |
+| `asic` | 58 | 288,230,376,151,711,744 | $1.67e-01 | 21 min | 9,133 years |
+| `meatrider` | 61 | 2,305,843,009,213,693,952 | $1.33e+00 | 2.7 h | 73,062 years |
+
+The browser column is at 1.0 MHash/s, this repo's wasm kernel (measured
+0.76-1.04 on the test laptop); the pure-JS fallback is about 8x slower, so those
+times get worse, not better. Every rung asks ten times more money and ten times
+more work, and the top rung is
+"one dollar of bitcoin" by construction: $1.00 lands on difficulty 61.
+
+```bash
+./betterAnusbis --meatrider-ladder                        # the table above
+./betterAnusbis --algorithm meatrider --difficulty 16     # ~70 ms of browser
+./betterAnusbis --meatrider-usd 1e-10                     # the atom rung, d=28
+python3 tools/meatrider_ref.py --ladder                   # the same table, in Python
+```
+
+The escalation needs no new machinery — the policy file already has a per-rule
+algorithm and difficulty:
+
+```
+challenge default difficulty 11 algorithm meatrider
+challenge ua contains Scrapy difficulty 31 algorithm meatrider
+challenge ua contains HeadlessChrome difficulty 48 algorithm meatrider
+challenge net 203.0.113.0/24 difficulty 61 algorithm meatrider
+```
+
+**What it is not.** No money changes hands anywhere in this repository. The price
+is a label on the hashes: `anubis_meatrider_price_usd()` never contacts a wallet,
+and the gate never asks for an address, an invoice or a preimage. A payment rail
+would slot in at exactly one seam — `anubis_verify_meatrider()` takes a nonce, not
+a preimage — and it is not implemented, because a real one needs a node, invoice
+settlement and a way to verify an amount, none of which belongs behind a
+`challenge` handler. What *is* real is the top rung: at difficulty 61 one full
+sweep of the 32-bit nonce space succeeds with probability 2^-29, so it is a
+paywall that only an ASIC can pass, and the page says so instead of spinning.
+
+The other honest number: the rung a browser can afford in a second is around
+difficulty 20, which is $6e-13 — a picodollar. "An atom of a cent" (1e-10 USD)
+is four minutes of hashing and works out at 0.01 msat, a hundred times below the
+smallest amount Lightning can express. The money ladder and the time ladder are
+the same ladder; it is just that a browser is 2.3e8 times slower than the ASIC
+the prices are quoted against.
+
+```bash
+python3 tests/test_meatrider.py              # 546 checks against tools/meatrider_ref.py
+node wasm/verify-meatrider.mjs               # the wasm kernel against node:crypto
+node betterAnusbis/tests_js_meatrider.mjs    # the page: pure JS, wasm driver, ASIC refusal
+```
 
 ### Protocol eras handled
 

@@ -103,6 +103,52 @@ const char *anubis_fetch_transport(void);
 /* Version of this layer, for MCP serverInfo and API /version. */
 const char *anubis_fetch_version(void);
 
+/* ------------------------------------------------------------- raw challenge
+ *
+ * Solve an Anubis challenge that the caller already has, with no network I/O
+ * at all. The input may be:
+ *
+ *   - the JSON payload Anubis serves ({"rules":{...},"challenge":"<hex>",
+ *     "id":"<uuid>"}, both the string and the nested-challenge spellings),
+ *   - the <script id="anubis_challenge">...</script> element, or
+ *   - the entire challenge page that contains it.
+ *
+ * The output is the raw pass-challenge query parameters, e.g.
+ * "id=<uuid>&response=<hex>&nonce=<n>&elapsedTime=1", plus the parsed fields.
+ * No page is fetched and no HTTPS request is made.
+ *
+ * The algorithms are the ones the fetch layer understands: fast, slow, sha256,
+ * wasm-sha256, argon2id, hashx and tensor (proof of work), plus preact and
+ * metarefresh (which compute the value Anubis expects but have no search).
+ */
+typedef struct {
+    char algorithm[32];
+    char id[128];
+    char random_data[1024];
+    int difficulty;
+} anubis_raw_challenge;
+
+typedef struct {
+    anubis_raw_challenge challenge;
+    unsigned long long nonce;
+    char response[129];   /* lowercase hex digest, "" when the method has none */
+    double elapsed_ms;
+    int wait_ms;          /* time-based methods only; 0 for proof of work */
+    char raw[8192];       /* ready-to-send pass-challenge query parameters */
+} anubis_raw_solution;
+
+/* Parse only; returns 0 on success, -1 with `err` set on malformed input. */
+int anubis_parse_challenge_input(const char *input, size_t len,
+                                 anubis_raw_challenge *out,
+                                 char *err, size_t errcap);
+
+/* Parse, solve, and build out->raw. threads 0 means the library default;
+ * budget_ms <= 0 means no time limit. Returns 0 on success, -1 with `err`
+ * set. This function never opens a socket. */
+int anubis_solve_challenge_input(const char *input, size_t len, int threads,
+                                 double budget_ms, anubis_raw_solution *out,
+                                 char *err, size_t errcap);
+
 #ifdef __cplusplus
 }
 #endif

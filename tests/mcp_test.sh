@@ -13,8 +13,38 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 BIN=${MCP_BIN:-$ROOT/anubis_mcp}
-PORT_BACKEND=8098
-PORT_GATE=8099
+
+# 8098/8099 are the documented defaults, but another dev server on the machine
+# must not turn this into a FAIL. Fall back to ephemeral ports when taken.
+port_free() {
+    python3 -c 'import socket,sys
+s=socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()' "$1"
+}
+
+free_port() {
+    python3 -c 'import socket
+s=socket.socket(); s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1]); s.close()'
+}
+
+PORT_BACKEND=${MCP_PORT_BACKEND:-8098}
+PORT_GATE=${MCP_PORT_GATE:-8099}
+if ! port_free "$PORT_BACKEND"; then
+    PORT_BACKEND="$(free_port)"
+fi
+if [ "$PORT_GATE" = "$PORT_BACKEND" ] || ! port_free "$PORT_GATE"; then
+    PORT_GATE="$(free_port)"
+    while [ "$PORT_GATE" = "$PORT_BACKEND" ]; do
+        PORT_GATE="$(free_port)"
+    done
+fi
 
 PASS=0
 FAIL=0
@@ -132,7 +162,8 @@ def main():
         names = [t["name"] for t in tools]
         assert sorted(names) == ["anubis_backends", "anubis_dump_headers",
                                  "anubis_fetch", "anubis_fetch_raw",
-                                 "anubis_solve", "anubis_version"], names
+                                 "anubis_solve", "anubis_solve_raw",
+                                 "anubis_version"], names
         for tool in tools:
             assert tool["description"], tool["name"]
             schema = tool["inputSchema"]
@@ -150,6 +181,15 @@ def main():
         assert isinstance(inner["nonce"], int)
         assert HEX64.match(inner["response"]), inner["response"]
         assert inner["algorithm"] == "tensor"
+    elif mode == "solve_raw":
+        text = tool_text(ids[9])
+        assert ids[9]["result"]["isError"] is False, text
+        match = re.match(
+            r"^id=([0-9a-f-]+)&response=([0-9a-f]{64})&nonce=([0-9]+)"
+            r"&elapsedTime=1$", text)
+        assert match, text
+        assert match.group(1) == "00000000-0000-0000-0000-000000000001", match.group(1)
+        assert 0 <= int(match.group(3)), text
     elif mode == "version":
         inner = json.loads(tool_text(ids[5]))
         assert inner["version"] == "2.0.2", inner["version"]
@@ -168,8 +208,8 @@ def main():
     elif mode == "ping":
         assert ids[7]["result"] == {}
     elif mode == "one_response_per_request":
-        assert len(lines) == 8, [r.get("id") for r in lines]
-        assert sorted(ids) == [1, 2, 3, 4, 5, 6, 7, 8]
+        assert len(lines) == 9, [r.get("id") for r in lines]
+        assert sorted(ids) == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     elif mode == "malformed":
         assert lines[0]["id"] is None
         assert lines[0]["error"]["code"] == -32700
@@ -224,6 +264,7 @@ run_requests "$OUT1" \
     '{"jsonrpc":"2.0","id":6,"method":"does/not/exist"}' \
     '{"jsonrpc":"2.0","id":7,"method":"ping"}' \
     '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"anubis_backends","arguments":{}}}' \
+    '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"anubis_solve_raw","arguments":{"input":"{\"rules\":{\"algorithm\":\"fast\",\"difficulty\":1},\"challenge\":\"0123456789abcdef\",\"id\":\"00000000-0000-0000-0000-000000000001\"}"}}}' \
     ''
 
 check() { # mode description
@@ -232,14 +273,15 @@ check() { # mode description
 
 check valid "stdout lines are all JSON-RPC 2.0 objects"
 check init "initialize returns protocolVersion 2024-11-05 and serverInfo.name anubis"
-check tools "tools/list lists exactly anubis_backends, anubis_dump_headers, anubis_fetch, anubis_fetch_raw, anubis_solve, anubis_version"
+check tools "tools/list lists exactly anubis_backends, anubis_dump_headers, anubis_fetch, anubis_fetch_raw, anubis_solve, anubis_solve_raw, anubis_version"
 check solve_sha256 "anubis_solve sha256 difficulty 4 returns nonce and 64-hex response"
 check solve_tensor "anubis_solve tensor difficulty 2 returns nonce and 64-hex response"
+check solve_raw "anubis_solve_raw takes the raw challenge and returns the raw pass-challenge query"
 check version "anubis_version returns version 2.0.2 and codename shaoogle"
 check backends "anubis_backends agrees with the library inventory"
 check unknown "unknown method returns JSON-RPC error -32601"
 check ping "ping returns an empty result"
-check one_response_per_request "notifications get no response (8 responses for 9 requests)"
+check one_response_per_request "notifications get no response (9 responses for 10 requests)"
 
 # --------------------------------------------------------------- parse error batch
 OUT2=$TMP/out2.jsonl
@@ -287,10 +329,11 @@ else
     GATE_PID=$!
     if wait_port "$PORT_BACKEND" 5 && wait_port "$PORT_GATE" 5; then
         OUT3=$TMP/out3.jsonl
+        GATE_URL="http://127.0.0.1:$PORT_GATE/"
         run_requests "$OUT3" \
-            '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"anubis_fetch","arguments":{"url":"http://127.0.0.1:8099/"}}}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"anubis_fetch_raw","arguments":{"url":"http://127.0.0.1:8099/"}}}' \
-            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"anubis_dump_headers","arguments":{"url":"http://127.0.0.1:8099/"}}}'
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"anubis_fetch\",\"arguments\":{\"url\":\"$GATE_URL\"}}}" \
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"anubis_fetch_raw\",\"arguments\":{\"url\":\"$GATE_URL\"}}}" \
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"anubis_dump_headers\",\"arguments\":{\"url\":\"$GATE_URL\"}}}"
         if python3 "$TMP/check.py" fetch "$OUT3"; then
             pass "anubis_fetch through the local gate returns isError false and PAST THE WALL"
             FETCH_OK=1

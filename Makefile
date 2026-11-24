@@ -97,7 +97,7 @@ LDFLAGS    += $(ENTRY_FLAG)
 LIB      := libanubis_solver.so
 BUILD    := build
 CORE_SRC := src/core/anubis_solver.c src/core/nvidia_boost.c src/core/direct_run.c \
-            src/hashx/hashx.c
+            src/hashx/hashx.c src/meatrider/meatrider.c
 
 # Optional Vulkan backend (SHA-256 challenges). Auto-detects the headers;
 # the library dlopen()s libvulkan.so.1 at runtime, so there is no hard

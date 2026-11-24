@@ -6,6 +6,7 @@
  *   GET  /healthz
  *   GET  /v1/version
  *   POST /v1/solve
+ *   POST /v1/solve_raw      raw Anubis challenge in, raw result out (no I/O)
  *   POST /v1/verify
  *   POST /v1/fetch          JSON envelope, body as a string
  *   POST /v1/fetch_raw      the body bytes verbatim, origin Content-Type
@@ -872,6 +873,11 @@ static void handle_solve(int fd, const char *body, size_t blen) {
         rc = anubis_solve_hashx(challenge, difficulty_i, threads_i, budget_ms,
                                 &n, hex, &ms);
         nonce = n;
+    } else if (strcmp(alg, "meatrider") == 0) {
+        uint32_t n = 0;
+        rc = anubis_solve_meatrider(challenge, difficulty_i, threads_i,
+                                    budget_ms, &n, hex, &ms);
+        nonce = n;
     } else if (strcmp(alg, "tensor") == 0) {
         uint32_t n = 0;
         rc = anubis_solve_tensor(challenge, difficulty_i, threads_i,
@@ -906,6 +912,119 @@ static void handle_solve(int fd, const char *body, size_t blen) {
     sb_printf(&b, ",\"elapsed_ms\":%.3f}", ms);
     http_reply(fd, 200, b.data);
     sb_free(&b);
+}
+
+/* Find key=value in a query string. Values are simple (numbers, "json"), so
+ * no percent-decoding is needed here. Returns 1 and copies the value when the
+ * key is present. */
+static int query_value(const char *query, const char *key, char *out,
+                       size_t cap) {
+    size_t klen = strlen(key);
+    const char *p = query;
+    if (p == NULL) {
+        return 0;
+    }
+    while (*p != '\0') {
+        const char *end = strchr(p, '&');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        if (len > klen && strncmp(p, key, klen) == 0 && p[klen] == '=') {
+            size_t vlen = len - klen - 1;
+            if (vlen >= cap) {
+                vlen = cap - 1;
+            }
+            memcpy(out, p + klen + 1, vlen);
+            out[vlen] = '\0';
+            return 1;
+        }
+        if (end == NULL) {
+            break;
+        }
+        p = end + 1;
+    }
+    return 0;
+}
+
+/* /v1/solve_raw takes the challenge itself, not a JSON envelope: the body is
+ * the anubis_challenge JSON, its <script> element, or the whole page. It
+ * solves locally and returns the raw pass-challenge query. No fetch, no
+ * socket, no cookie jar. */
+static void handle_solve_raw(int fd, const char *body, size_t blen,
+                             const char *query) {
+    anubis_raw_solution sol;
+    char err[256] = "";
+    char value[64];
+    long threads = 0;
+    double budget_ms = 0.0;
+    int json_out = 0;
+
+    if (blen == 0) {
+        reply_error(fd, 400, "empty challenge input");
+        return;
+    }
+    if (query_value(query, "threads", value, sizeof value)) {
+        char *end = NULL;
+        errno = 0;
+        threads = strtol(value, &end, 10);
+        if (errno != 0 || end == value || *end != '\0' || threads < 0 ||
+            threads > 4096) {
+            reply_error(fd, 400, "bad threads");
+            return;
+        }
+    }
+    if (query_value(query, "budget_ms", value, sizeof value)) {
+        char *end = NULL;
+        errno = 0;
+        budget_ms = strtod(value, &end);
+        if (errno != 0 || end == value || *end != '\0' || budget_ms < 0.0 ||
+            !isfinite(budget_ms)) {
+            reply_error(fd, 400, "bad budget_ms");
+            return;
+        }
+    }
+    if (query_value(query, "format", value, sizeof value) &&
+        strcmp(value, "json") == 0) {
+        json_out = 1;
+    }
+
+    if (anubis_solve_challenge_input(body, blen, (int)threads, budget_ms, &sol,
+                                     err, sizeof err) != 0) {
+        reply_error(fd, 400, err[0] ? err : "cannot solve challenge");
+        return;
+    }
+
+    if (json_out) {
+        strbuf b = {0};
+        sb_puts(&b, "{\"algorithm\":");
+        sb_json_string(&b, sol.challenge.algorithm,
+                       strlen(sol.challenge.algorithm));
+        sb_printf(&b, ",\"difficulty\":%d,\"id\":", sol.challenge.difficulty);
+        sb_json_string(&b, sol.challenge.id, strlen(sol.challenge.id));
+        sb_printf(&b, ",\"nonce\":%llu,\"response\":",
+                  (unsigned long long)sol.nonce);
+        sb_json_string(&b, sol.response, strlen(sol.response));
+        sb_printf(&b,
+                  ",\"elapsed_ms\":%.3f,\"wait_ms\":%d,\"raw\":",
+                  sol.elapsed_ms, sol.wait_ms);
+        sb_json_string(&b, sol.raw, strlen(sol.raw));
+        sb_puts(&b, "}");
+        http_reply(fd, 200, b.data);
+        sb_free(&b);
+        return;
+    }
+
+    {
+        char extra[768];
+        snprintf(extra, sizeof extra,
+                 "X-Anubis-Algorithm: %s\r\n"
+                 "X-Anubis-Difficulty: %d\r\n"
+                 "X-Anubis-Nonce: %llu\r\n"
+                 "X-Anubis-Response: %s\r\n"
+                 "X-Anubis-Wait-Ms: %d\r\n",
+                 sol.challenge.algorithm, sol.challenge.difficulty,
+                 (unsigned long long)sol.nonce, sol.response, sol.wait_ms);
+        http_reply_raw(fd, 200, "text/plain; charset=utf-8", extra, sol.raw,
+                       strlen(sol.raw));
+    }
 }
 
 static void handle_verify(int fd, const char *body, size_t blen) {
@@ -962,6 +1081,9 @@ static void handle_verify(int fd, const char *body, size_t blen) {
                                     hex);
     } else if (strcmp(alg, "hashx") == 0) {
         rc = anubis_verify_hashx(challenge, (uint32_t)nonce, difficulty_i, hex);
+    } else if (strcmp(alg, "meatrider") == 0) {
+        rc = anubis_verify_meatrider(challenge, (uint32_t)nonce, difficulty_i,
+                                     hex);
     } else if (strcmp(alg, "tensor") == 0) {
         rc = anubis_verify_tensor(challenge, (uint32_t)nonce, difficulty_i,
                                   hex);
@@ -1330,14 +1452,18 @@ static void handle_client(int fd) {
 
     char *path = target;
     char *q = strchr(path, '?');
+    const char *query = "";
     if (q != NULL) {
         *q = '\0';
+        query = q + 1;
     }
 
     int is_get = strcmp(method, "GET") == 0;
     int is_post = strcmp(method, "POST") == 0;
 
-    if (is_get && strcmp(path, "/healthz") == 0) {
+    if (is_post && strcmp(path, "/v1/solve_raw") == 0) {
+        handle_solve_raw(fd, body, content_length, query);
+    } else if (is_get && strcmp(path, "/healthz") == 0) {
         handle_healthz(fd);
     } else if (is_get && strcmp(path, "/v1/version") == 0) {
         handle_version(fd);

@@ -37,6 +37,9 @@ TIERS = {
     "slow": [(2, "light"), (4, "medium"), (6, "hard")],
     "sha256": [(8, "light"), (16, "medium"), (24, "hard")],
     "hashx": [(7, "light"), (15, "medium"), (20, "hard")],
+    # meatrider needs a 32-byte randomData: its header has a fixed 32-byte
+    # prev-block field, so the tier cannot take an arbitrary-length challenge
+    "meatrider": [(11, "light"), (16, "medium"), (20, "hard")],
     "argon2id": [(2, "light"), (4, "medium"), (6, "hard")],
 }
 
@@ -48,7 +51,7 @@ def expected_hashes(algorithm: str, difficulty: int) -> int:
 
 
 def solve_once(solver: AnubisSolver, algorithm: str, difficulty: int, threads: int):
-    challenge = os.urandom(64).hex()
+    challenge = os.urandom(32 if algorithm == "meatrider" else 64).hex()
     if algorithm in ("fast", "slow"):
         return solver._native.solve_nibbles(challenge, difficulty, threads, 0)
     if algorithm == "sha256":
@@ -57,6 +60,8 @@ def solve_once(solver: AnubisSolver, algorithm: str, difficulty: int, threads: i
         return solver._native.solve_hashx(challenge, difficulty, threads, 0)
     if algorithm == "argon2id":
         return solver._native.solve_argon2id(challenge, difficulty, threads, 0)
+    if algorithm == "meatrider":
+        return solver._native.solve_meatrider(challenge, difficulty, threads, 0)
     raise ValueError(algorithm)
 
 

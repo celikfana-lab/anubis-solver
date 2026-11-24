@@ -208,6 +208,47 @@ else
     ck "/v1/verify sha256 returns the digest" 0
 fi
 
+# ---- POST /v1/solve_raw (raw challenge in, raw result out, no network) ---
+
+RAW_ID="00000000-0000-0000-0000-000000000001"
+RAW_JSON="{\"rules\":{\"algorithm\":\"fast\",\"difficulty\":1},\"challenge\":\"0123456789abcdef\",\"id\":\"$RAW_ID\"}"
+CODE="$(curl -sS --max-time 20 -D "$TMP/solve_raw.head" -o "$BODY" -w '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' --data-binary "$RAW_JSON" \
+    "$API/v1/solve_raw" 2>/dev/null || echo 000)"
+ck "POST /v1/solve_raw raw JSON -> 200" "$(code_is "$CODE" 200)"
+ck "/v1/solve_raw returns the raw pass-challenge query" \
+   "$(grep -Eq "^id=$RAW_ID&response=[0-9a-f]{64}&nonce=[0-9]+&elapsedTime=1$" "$BODY" && echo 1 || echo 0)"
+ck "/v1/solve_raw reports the algorithm header" \
+   "$(grep -qi '^X-Anubis-Algorithm: fast' "$TMP/solve_raw.head" 2>/dev/null && echo 1 || echo 0)"
+
+CODE="$(http POST "$API/v1/solve_raw?format=json" "$RAW_JSON")"
+ck "POST /v1/solve_raw?format=json -> 200" "$(code_is "$CODE" 200)"
+ck "/v1/solve_raw JSON has the parsed fields" \
+   "$(has '"algorithm":"fast","difficulty":1,"id":"'"$RAW_ID"'"')"
+ck "/v1/solve_raw JSON raw field is the query" \
+   "$(grep -Eq '"raw":"id='"$RAW_ID"'&response=[0-9a-f]{64}&nonce=[0-9]+&elapsedTime=1"' "$BODY" && echo 1 || echo 0)"
+RAW_RESPONSE="$(jget response)"
+printf '%s' "$RAW_RESPONSE" | grep -Eq '^[0-9a-f]{64}$' \
+    && ck "/v1/solve_raw JSON response is 64 lowercase hex digits" 1 \
+    || ck "/v1/solve_raw JSON response is 64 lowercase hex digits" 0
+
+# The nested spelling newer Anubis pages use.
+RAW_NESTED="{\"rules\":{\"algorithm\":\"fast\",\"difficulty\":1},\"challenge\":{\"id\":\"$RAW_ID\",\"randomData\":\"0123456789abcdef\"}}"
+CODE="$(http POST "$API/v1/solve_raw?format=json" "$RAW_NESTED")"
+ck "POST /v1/solve_raw nested challenge object -> 200" "$(code_is "$CODE" 200)"
+ck "/v1/solve_raw nested challenge keeps the id" \
+   "$(has '"id":"'"$RAW_ID"'"')"
+
+# The whole page, not just the payload: the script element is found for us.
+RAW_PAGE='<html><body><script type="application/json" id="anubis_challenge">{"rules":{"algorithm":"sha256","difficulty":2},"challenge":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff","id":"page-id"}</script></body></html>'
+CODE="$(http POST "$API/v1/solve_raw?format=json" "$RAW_PAGE")"
+ck "POST /v1/solve_raw whole challenge page -> 200" "$(code_is "$CODE" 200)"
+ck "/v1/solve_raw page picks sha256 from the script" "$(has '"algorithm":"sha256"')"
+
+CODE="$(http POST "$API/v1/solve_raw" 'this is not an anubis challenge')"
+ck "POST /v1/solve_raw non-challenge -> 400" "$(code_is "$CODE" 400)"
+ck "/v1/solve_raw non-challenge error body" "$(has '"error":"input is not an Anubis challenge')"
+
 # ---- POST /v1/solve + /v1/verify (tensor, difficulty 2) -----------------
 
 TCHALLENGE="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
@@ -317,9 +358,9 @@ ck "/v1/fetch cold call returns a cookie jar" \
    "$([ -n "$COOKIES" ] && echo 1 || echo 0)"
 
 # Whitespace after the comma on purpose: the JSON walker used to stop there.
-BODY="$(python3 -c 'import json,sys; print(json.dumps({"url": sys.argv[1], "cookies": sys.argv[2]}))' \
+PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"url": sys.argv[1], "cookies": sys.argv[2]}))' \
     "$GATE/" "$COOKIES")"
-CODE="$(http POST "$API/v1/fetch" "$BODY")"
+CODE="$(http POST "$API/v1/fetch" "$PAYLOAD")"
 ck "/v1/fetch with returned cookies skips the challenge" "$(has '"solved":false')"
 ck "/v1/fetch with returned cookies reports no expiry" "$(has '"expired":false')"
 ck "/v1/fetch with returned cookies returns the same jar" \

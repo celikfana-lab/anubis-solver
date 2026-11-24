@@ -99,6 +99,7 @@ static int anubis_cpu_count(void) {
 #include "anubis-solver.h"
 #include "argon2.h"
 #include "hashx.h"
+#include "meatrider/meatrider.h"
 
 #if defined(ANUBIS_HAVE_VULKAN)
 extern int anubis_vulkan_available(void);
@@ -2325,6 +2326,176 @@ int anubis_verify_hashx(const char *challenge_hex, uint32_t nonce, int difficult
 
     to_hex(digest, 32, out_hex);
     return bits_ok(digest, difficulty) ? ANUBIS_OK : ANUBIS_ERR_UNSOLVED;
+}
+
+/* ------------------------------------------------------------------ */
+/* Public API: meatrider challenge (SHA-256d over a Bitcoin header)    */
+/* ------------------------------------------------------------------ */
+
+/* The header, the SHA-256d and the price ladder live in
+ * src/meatrider/meatrider.c, which is also compiled into wasm/, so the browser
+ * kernel and this library cannot drift. This file only carries the search and
+ * the verification policy. */
+
+typedef struct {
+    meatrider_ctx ctx;
+} meatrider_job_ctx;
+
+static int hash_meatrider(void *vctx, uint64_t nonce, uint8_t out[32]) {
+    meatrider_job_ctx *c = (meatrider_job_ctx *)vctx;
+    if (nonce > 0xffffffffull) {
+        return 1;
+    }
+    meatrider_hash(&c->ctx, (uint32_t)nonce, out);
+    return 0;
+}
+
+static int meatrider_random_data(const char *challenge_hex, uint8_t rd[32]) {
+    uint8_t raw[64];
+    size_t raw_len = 0;
+    int rc;
+
+    if (challenge_hex == NULL) {
+        return ANUBIS_ERR_ARG;
+    }
+    rc = hex_decode(challenge_hex, raw, sizeof raw, &raw_len);
+    if (rc != ANUBIS_OK) {
+        return rc;
+    }
+    /* every Anubis tier is handed a 32-byte randomData; meatrider needs exactly
+     * that because the header has a 32-byte prev-block field and no room for
+     * an arbitrary-length message. */
+    if (raw_len != 32) {
+        return ANUBIS_ERR_ARG;
+    }
+    memcpy(rd, raw, 32);
+    return ANUBIS_OK;
+}
+
+ANUBIS_EXPORT
+int anubis_solve_meatrider(const char *challenge_hex, int difficulty, int threads,
+                           double budget_ms, uint32_t *out_nonce, char *out_hex,
+                           double *out_ms) {
+    solve_job job;
+    meatrider_job_ctx ctx;
+    uint8_t rd[32];
+    uint64_t nonce64 = 0;
+    int rc;
+
+    if (!challenge_hex || !out_nonce || !out_hex) {
+        return ANUBIS_ERR_ARG;
+    }
+    if (difficulty < 1 || difficulty > 255) {
+        return ANUBIS_ERR_ARG;
+    }
+    if (threads < 1) {
+        threads = 1;
+    }
+    if (threads > 256) {
+        threads = 256;
+    }
+
+    rc = meatrider_random_data(challenge_hex, rd);
+    if (rc != ANUBIS_OK) {
+        return rc;
+    }
+    if (meatrider_ctx_init(&ctx.ctx, rd, difficulty) != 0) {
+        return ANUBIS_ERR_INTERNAL;
+    }
+
+    memset(&job, 0, sizeof(job));
+    job.mode = MODE_BITS;
+    job.hash = hash_meatrider;
+    job.hash_ctx = &ctx;
+    job.check_mask = 0x3ffu;
+    job.difficulty = difficulty;
+    job.threads = threads;
+    /* No batch kernel: the nonce is the last field of an 80-byte header, not a
+     * tail appended to a 64-byte block, so the vectorised SHA-256 paths do not
+     * apply. Two compressions per nonce, one of them constant midstate. */
+    if (budget_ms > 0.0) {
+        job.deadline = now_seconds() + budget_ms / 1000.0;
+    }
+
+    rc = run_search(&job, &nonce64, out_hex, out_ms);
+    if (rc == ANUBIS_OK) {
+        *out_nonce = (uint32_t)nonce64;
+    }
+    return rc;
+}
+
+ANUBIS_EXPORT
+int anubis_verify_meatrider(const char *challenge_hex, uint32_t nonce,
+                            int difficulty, char *out_hex) {
+    uint8_t rd[32];
+    uint8_t digest[32];
+    int rc;
+
+    if (!challenge_hex || !out_hex) {
+        return ANUBIS_ERR_ARG;
+    }
+    if (difficulty < 1 || difficulty > 255) {
+        return ANUBIS_ERR_ARG;
+    }
+
+    rc = meatrider_random_data(challenge_hex, rd);
+    if (rc != ANUBIS_OK) {
+        return rc;
+    }
+    if (meatrider_digest(rd, difficulty, nonce, digest) != 0) {
+        return ANUBIS_ERR_INTERNAL;
+    }
+    to_hex(digest, 32, out_hex);
+
+    return bits_ok(digest, difficulty) ? ANUBIS_OK : ANUBIS_ERR_UNSOLVED;
+}
+
+ANUBIS_EXPORT
+int anubis_meatrider_header(const char *challenge_hex, int difficulty,
+                            uint32_t nonce, char *out_hex) {
+    meatrider_ctx ctx;
+    uint8_t rd[32];
+    uint8_t header[MEATRIDER_HEADER_LEN];
+    int rc;
+
+    if (!challenge_hex || !out_hex) {
+        return ANUBIS_ERR_ARG;
+    }
+    rc = meatrider_random_data(challenge_hex, rd);
+    if (rc != ANUBIS_OK) {
+        return rc;
+    }
+    if (meatrider_ctx_init(&ctx, rd, difficulty) != 0) {
+        return ANUBIS_ERR_ARG;
+    }
+    meatrider_header(&ctx, nonce, header);
+    to_hex(header, MEATRIDER_HEADER_LEN, out_hex);
+    return ANUBIS_OK;
+}
+
+ANUBIS_EXPORT
+unsigned anubis_meatrider_bits(int difficulty) {
+    return meatrider_bits(difficulty);
+}
+
+ANUBIS_EXPORT
+double anubis_meatrider_price_usd(int difficulty, double usd_per_th_day) {
+    return meatrider_price_usd(difficulty, usd_per_th_day);
+}
+
+ANUBIS_EXPORT
+double anubis_meatrider_asic_seconds(int difficulty, double hashrate) {
+    return meatrider_asic_seconds(difficulty, hashrate);
+}
+
+ANUBIS_EXPORT
+const char *anubis_meatrider_tier(int difficulty) {
+    return meatrider_tier_name(difficulty);
+}
+
+ANUBIS_EXPORT
+int anubis_meatrider_difficulty_for_usd(double usd, double usd_per_th_day) {
+    return meatrider_difficulty_for_usd(usd, usd_per_th_day);
 }
 
 /* ------------------------------------------------------------------ */

@@ -36,10 +36,10 @@ extern "C" {
  * Introspection
  * ------------------------------------------------------------------ */
 
-/* Library version, e.g. "2.40". */
+/* Library version, e.g. "2.50". */
 ANUBIS_API const char *anubis_solver_version(void);
 
-/* Release codename, e.g. "shyleaf". */
+/* Release codename, e.g. "mule". */
 ANUBIS_API const char *anubis_solver_codename(void);
 
 /* ------------------------------------------------------------------ *

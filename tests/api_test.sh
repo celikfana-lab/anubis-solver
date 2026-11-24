@@ -158,7 +158,7 @@ if ! wait_http_200 "$API/healthz"; then
     cat "$TMP/api.log"
     exit 1
 fi
-head -1 "$TMP/api.log" | grep -q '^anubis_api 2.40 "shyleaf" listening on ' \
+head -1 "$TMP/api.log" | grep -q '^anubis_api 2.50 "mule" listening on ' \
     && ck "startup line names version and codename" 1 \
     || ck "startup line names version and codename" 0
 
@@ -167,14 +167,14 @@ head -1 "$TMP/api.log" | grep -q '^anubis_api 2.40 "shyleaf" listening on ' \
 CODE="$(http GET "$API/healthz")"
 ck "GET /healthz -> 200" "$(code_is "$CODE" 200)"
 ck "/healthz has ok:true" "$(has '"ok":true')"
-ck "/healthz has version 2.40" "$(has '"version":"2.40"')"
-ck "/healthz has codename shyleaf" "$(has '"codename":"shyleaf"')"
+ck "/healthz has version 2.50" "$(has '"version":"2.50"')"
+ck "/healthz has codename mule" "$(has '"codename":"mule"')"
 
 # ---- GET /v1/version ----------------------------------------------------
 
 CODE="$(http GET "$API/v1/version")"
 ck "GET /v1/version -> 200" "$(code_is "$CODE" 200)"
-ck "/v1/version version+codename" "$(has '"version":"2.40","codename":"shyleaf"')"
+ck "/v1/version version+codename" "$(has '"version":"2.50","codename":"mule"')"
 ck "/v1/version lists the algorithms" \
    "$(has '"algorithms":\["fast","slow","sha256","wasm-sha256","argon2id","hashx","tensor"\]')"
 

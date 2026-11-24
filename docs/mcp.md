@@ -56,7 +56,7 @@ under `/usr/local/bin` + `/usr/local/lib`).
 | `anubis_dump_headers` | `url` (required), `impersonate` optional | `status:`, `url:`, `transport:`, `headers: <n> bytes`, then the raw header block of every response seen, in order |
 | `anubis_solve` | `algorithm`, `challenge` (hex), `difficulty`, `threads` optional | JSON `{"nonce":n,"response":"<hex>","algorithm":"..."}` |
 | `anubis_solve_raw` | `input` (required), `threads` optional, `budget_ms` optional | the raw `pass-challenge` query, e.g. `id=<uuid>&response=<hex>&nonce=<n>&elapsedTime=1`; no network I/O |
-| `anubis_version` | none | JSON `{"version":"2.40","codename":"shyleaf","algorithms":[...],"impersonate":"chrome116","impersonate_available":true}` |
+| `anubis_version` | none | JSON `{"version":"2.50","codename":"mule","algorithms":[...],"impersonate":"chrome116","impersonate_available":true}` |
 | `anubis_backends` | none | JSON `{"compiled":["cpu","vulkan","opencl"],"available":["cpu","vulkan","opencl"]}`; `available` probes the drivers and can take a second on a cold stack |
 
 `anubis_solve_raw` is for the case where the challenge is already in hand: paste

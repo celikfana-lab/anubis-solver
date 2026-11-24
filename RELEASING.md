@@ -286,5 +286,5 @@ anywhere. It needs a one-time *pending publisher* on PyPI (project name
 `libanubis-solver`, this repository, workflow `pypi.yml`, environment `pypi`)
 and the same on TestPyPI for `workflow_dispatch` runs.
 
-Push a tag (`git tag v2.40 && git push origin v2.40`) or run the workflow
+Push a tag (`git tag v2.50 && git push origin v2.50`) or run the workflow
 manually with `test: true` first.

@@ -757,9 +757,12 @@ challenge, so their midstate is compressed once and a hash costs **two**
 compressions afterwards: the 16-byte block holding `time`, `nBits` and the nonce,
 then the second SHA-256 over the 32-byte digest.
 
-That shape is the standard Bitcoin miner loop, so the tier carries one kernel per
-optimisation the rest of this repository already has — and because every kernel
-recomputes the same header, the table below is also the test:
+As of **2.50 "mule"** every kernel below has run on real hardware — a laptop, a
+Colab T4, two Kaggle T4s, a Colab TPU and an Intel Iris Xe — and been checked
+against an independent Python implementation of the header, not merely against
+itself. That shape is the standard Bitcoin miner loop, so the tier carries one
+kernel per optimisation the rest of this repository already has — and because
+every kernel recomputes the same header, the table below is also the test:
 
 | backend | hashes/second | vs portable C |
 |---|---:|---:|

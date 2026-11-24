@@ -192,8 +192,8 @@ def main():
         assert 0 <= int(match.group(3)), text
     elif mode == "version":
         inner = json.loads(tool_text(ids[5]))
-        assert inner["version"] == "2.40", inner["version"]
-        assert inner["codename"] == "shyleaf", inner["codename"]
+        assert inner["version"] == "2.50", inner["version"]
+        assert inner["codename"] == "mule", inner["codename"]
         for alg in ("fast", "slow", "sha256", "wasm-sha256", "argon2id", "hashx",
                     "tensor"):
             assert alg in inner["algorithms"], alg
@@ -277,7 +277,7 @@ check tools "tools/list lists exactly anubis_backends, anubis_dump_headers, anub
 check solve_sha256 "anubis_solve sha256 difficulty 4 returns nonce and 64-hex response"
 check solve_tensor "anubis_solve tensor difficulty 2 returns nonce and 64-hex response"
 check solve_raw "anubis_solve_raw takes the raw challenge and returns the raw pass-challenge query"
-check version "anubis_version returns version 2.40 and codename shyleaf"
+check version "anubis_version returns version 2.50 and codename mule"
 check backends "anubis_backends agrees with the library inventory"
 check unknown "unknown method returns JSON-RPC error -32601"
 check ping "ping returns an empty result"

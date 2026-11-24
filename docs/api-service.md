@@ -25,13 +25,13 @@ can reach it can spend your CPU on proofs of work.
 ### `GET /healthz`
 
 ```json
-{"ok":true,"version":"2.40","codename":"shyleaf"}
+{"ok":true,"version":"2.50","codename":"mule"}
 ```
 
 ### `GET /v1/version`
 
 ```json
-{"version":"2.40","codename":"shyleaf",
+{"version":"2.50","codename":"mule",
  "algorithms":["fast","slow","sha256","wasm-sha256","argon2id","hashx","tensor"],
  "impersonate":"chrome116","impersonate_available":true,
  "backends_compiled":["cpu","levelzero","vulkan","opencl","tpu"]}

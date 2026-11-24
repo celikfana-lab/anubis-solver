@@ -20,7 +20,7 @@ You need a C compiler and `make`. Python 3.9+ for the library.
 git clone https://github.com/celikfana-lab/anubis-solver.git
 cd anubis-solver
 make                 # builds ./libanubis_solver.so
-python3 -c "import anubis_solver; print(anubis_solver.__version__)"   # 2.40
+python3 -c "import anubis_solver; print(anubis_solver.__version__)"   # 2.50
 ```
 
 `libanubis_solver.so` is a library, not a program — running it directly just
@@ -213,7 +213,7 @@ curl -s localhost:8088/v1/solve -d '{
 
 ```bash
 curl -s localhost:8088/v1/version
-# {"version":"2.40","codename":"shyleaf","algorithms":[...]}
+# {"version":"2.50","codename":"mule","algorithms":[...]}
 ```
 
 **There is no authentication.** Bind it to loopback, or put it behind auth you

@@ -67,23 +67,39 @@ rendered die shot. It has never been fabricated. It is in the repository because
 the question "what would this cost in silicon" has a numerical answer, and
 because `SPEED.md` is more interesting when the top row is hardware nobody has.
 
-## 5. "HashX and Argon2id can't run on a GPU" (`11-12` → `11-15`)
+## 5. "Argon2id on a GPU is capped" — and by how much (`11-12` → `11-15`)
 
-The maintainer asked Google Gemini whether the two memory-hard-ish tiers could
-run on a GPU. The answer was that they could not, or that it would be very slow.
-Half of that was wrong, and the half that was right is the point of the
-repository — both rows below are measured, and both are in `SPEED.md`:
+On 2026-11-12 the maintainer asked Google Gemini whether Argon2id can run on a
+GPU. The answer was not the usual yes-or-no, and it has aged well: CUDA and
+OpenCL implementations exist; the algorithm is *designed* to limit the win; each
+thread wants its own 19 MiB, so a card runs out of VRAM long before it runs out
+of cores; a GPU only wins when it can batch thousands of guesses; and at high
+memory settings a big server CPU can come close to a multi-GPU rig.
 
-| claim | measurement | verdict |
+The two sentences worth quoting, because they are the whole argument:
+
+> Argon2id's high memory requirements prevent graphics cards from utilizing all
+> their cores at once.
+
+> a high-end server CPU with large system RAM can nearly match the hashing speed
+> of an eight-GPU rig running RTX 5090 cards when high memory costs are used
+
+What the answer did not have was a number for this algorithm at this memory cost.
+On the same day the first measurements came out of a Kaggle T4
+(`results/argon2id-cuda-t4.json`), and they are the same claim with units:
+
+| the answer's claim | measured here | verdict |
 |---|---|---|
-| Argon2id on a GPU is slow | **20.7x** the 4-vCPU host at d8 (2x Tesla T4, `results/argon2id-cuda-t4.json`) | wrong |
-| HashX on a GPU is slow | **8-12x** one CPU thread, program interpreted on the GPU | wrong |
-| Argon2id scales with arithmetic | 3.8x **slower** than one CPU core on a TPU | right, for the reason it gave |
+| capacity, not cores, is the limit | 128 concurrent hashes per T4, 19 MiB each (2.5 GiB per card) | right |
+| ... so throughput is bandwidth-bound | 20.7x the 4-vCPU host at d8 (1,759 vs 85 h/s) | right, and small |
+| ... and a big CPU can come close | ~4.3x the 28-thread Xeon (1,759 vs 411 h/s) | right |
+| ... and it can lose outright | 3.8x **slower** than one CPU core on a TPU | right, past the wall |
 
-The one that came true did so for the reason that makes this project worth
-running: Argon2id is memory-hard, so the dependency chain, not the multiplier
-count, is the wall. Which is why `SPEED.md` publishes the losing rows next to the
-winning ones.
+So the useful form of "a GPU won't help much" is **4x**, not 4000x — and on the
+TPU it is a slowdown, because Argon2id's wall is a dependency chain through
+memory, not the multiplier count. HashX, which is not memory-hard, is the other
+half of the story: 8-12x one CPU thread on the same card. The losing rows are
+published next to the winning ones, which is why `SPEED.md` is worth reading.
 
 ## 6. Kaggle, age verification, and the TPU (`11-15` → `11-22`)
 

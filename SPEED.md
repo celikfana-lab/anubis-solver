@@ -424,7 +424,7 @@ Measured on Kaggle (4 vCPU host), 2026-11-12:
 | difficulty | CPU (4 vCPU) | 2x T4 | speedup |
 |---|---:|---:|---:|
 | d6 (64 hashes) | 718 ms | 204 ms | 3.5× |
-| d8 (256 hashes) | 1752 ms | 146 ms | **20.7×** |
+| d8 (256 hashes) | 3012 ms | 146 ms | **20.7×** |
 
 d8 works out to ~1750 h/s on the two T4s vs ~85 h/s on the 4-vCPU host, and
 is ~4× the 28-thread Xeon (411 h/s) from the earlier benchmark.
@@ -443,9 +443,9 @@ Iris Xe (ADL GT2), 2026-11-12, CPU column is one laptop thread:
 | difficulty | CPU (1 thread) | Iris Xe (L0) | speedup |
 |---|---:|---:|---:|
 | d6 (64 hashes) | 1498 ms | 319 ms | 4.7× |
-| d8 (256 hashes) | 3934 ms | 1310 ms | 5.1× |
+| d8 (256 hashes) | 6737 ms | 1310 ms | 5.1× |
 
-That is ~200 h/s on the iGPU vs ~43 h/s for one CPU thread. Raising the
+That is ~200 h/s on the iGPU against 38-43 h/s for one CPU thread. Raising the
 concurrency to 128 hashes made it slower (2.55 GB working set thrashes the
 shared memory), so 64 is the default.
 
@@ -463,10 +463,10 @@ Iris Xe (ADL GT2), 2026-11-12, CPU column is one laptop thread:
 | difficulty | CPU (1 thread) | Iris Xe (Vulkan) | speedup |
 |---|---:|---:|---:|
 | d6 (64 hashes) | 1498 ms | 279 ms | 5.4× |
-| d8 (256 hashes) | 3934 ms | 784 ms | 8.6× |
+| d8 (256 hashes) | 6737 ms | 784 ms | 8.6× |
 
 On this GPU the Vulkan path is slightly ahead of Level Zero (229/326 h/s vs
-207/288 h/s), because the BLAKE2b prefix work is offloaded to the host.
+201/196 h/s), because the BLAKE2b prefix work is offloaded to the host.
 
 Raw data: [`results/argon2id-vulkan-irisxe.json`](results/argon2id-vulkan-irisxe.json).
 

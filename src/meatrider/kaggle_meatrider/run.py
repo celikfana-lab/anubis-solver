@@ -128,7 +128,7 @@ EOF""")
         path = f"/tmp/{label}.json"
         rc, out = sh(
             f"CUDA_VISIBLE_DEVICES={visible} python3 tools/meatrider_backends.py "
-            f"--threads 1 --reps 5 --difficulty 26 --json {path}",
+            f"--threads 1 --reps 5 --difficulty 26 --cpu-difficulty 20 --json {path}",
             env={"CUDA_VISIBLE_DEVICES": visible}, timeout=2400)
         rates, avail = parse_harness(out)
         try:
@@ -146,7 +146,8 @@ EOF""")
         path = f"/tmp/{label}.json"
         rc, out = sh(
             f"CUDA_VISIBLE_DEVICES={visible} ANUBIS_MEATRIDER_PTX=1 "
-            f"python3 tools/meatrider_backends.py --threads 1 --reps 5 --difficulty 26 --json {path}",
+            f"python3 tools/meatrider_backends.py --threads 1 --reps 5 --difficulty 26 "
+            f"--cpu-difficulty 20 --json {path}",
             env={"CUDA_VISIBLE_DEVICES": visible, "ANUBIS_MEATRIDER_PTX": "1"},
             timeout=2400)
         rates, avail = parse_harness(out)

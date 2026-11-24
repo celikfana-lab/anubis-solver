@@ -173,7 +173,11 @@ def main() -> int:
     ap.add_argument("--reps", type=int, default=0,
                     help="solves per rate row (default: scaled so each row runs ~1 s)")
     ap.add_argument("--difficulty", type=int, default=0,
-                    help="search difficulty for the rate rows (default 12 CPU, 20 GPU)")
+                    help="search difficulty for the ACCELERATOR rows (default 23; a "
+                         "deep rung makes the per-device chunk estimate less noisy)")
+    ap.add_argument("--cpu-difficulty", type=int, default=20,
+                    help="search difficulty for the CPU rows (default 20; raising it "
+                         "with --difficulty would make a 2 MHash/s kernel grind 2^d)")
     ap.add_argument("--budget-ms", type=float, default=3000.0,
                     help="give up on a rate row after this long (default 3000)")
     ap.add_argument("--json", type=Path, default=None, help="write the rows as JSON")
@@ -218,7 +222,7 @@ def main() -> int:
         chunk = int(env_chunk, 0)
     rows = []
     for backend in available:
-        d = args.difficulty or (23 if backend >= OPENCL else 20)
+        d = (args.difficulty or 23) if backend >= OPENCL else args.cpu_difficulty
         reps = args.reps
         if reps <= 0:
             # aim at ~1 s of work: 2^d hashes per solve

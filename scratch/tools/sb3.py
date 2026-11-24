@@ -97,6 +97,7 @@ class Target:
         self._top = 0
         self._col = 0
         self.layer_order = 0
+        self.size = 100
 
     # ---- declarations ---------------------------------------------------
     def var(self, name, value=0):
@@ -430,7 +431,7 @@ class Target:
                     "visible": True,
                     "x": 0,
                     "y": 0,
-                    "size": 100,
+                    "size": self.size,
                     "direction": 90,
                     "draggable": False,
                     "rotationStyle": "all around",
@@ -443,6 +444,7 @@ class Project:
     def __init__(self):
         self.ids = _Ids()
         self.layer_order = 0
+        self.size = 100
         self.targets = []
         self.monitors = []
         self.extensions = []
@@ -468,6 +470,25 @@ class Project:
         t.layer_order = self.layer_order
         self.layer_order += 1
         return t
+
+    def costume_png(self, target, name, path, rcx=None, rcy=None, bitmap_resolution=1):
+        """A bitmap costume. The rotation centre defaults to the middle."""
+        with open(path, "rb") as fh:
+            data = fh.read()
+        w, h = _png_size(data)
+        md5 = hashlib.md5(data).hexdigest()
+        self._assets[md5 + ".png"] = data
+        target.costumes.append(
+            {
+                "name": name,
+                "bitmapResolution": bitmap_resolution,
+                "dataFormat": "png",
+                "assetId": md5,
+                "md5ext": md5 + ".png",
+                "rotationCenterX": w / 2.0 / bitmap_resolution if rcx is None else rcx,
+                "rotationCenterY": h / 2.0 / bitmap_resolution if rcy is None else rcy,
+            }
+        )
 
     def costume(self, target, name, svg, rcx=0, rcy=0):
         data = svg.encode("utf-8")
@@ -519,6 +540,15 @@ class Project:
             for name, data in sorted(self._assets.items()):
                 z.writestr(_zipinfo(name), data)
         return len(blob)
+
+
+def _png_size(data):
+    """(width, height) from a PNG's IHDR, without decoding the image."""
+    import struct
+
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise ValueError("not a PNG")
+    return struct.unpack(">II", data[16:24])
 
 
 def _zipinfo(name):

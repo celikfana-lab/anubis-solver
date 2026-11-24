@@ -309,10 +309,10 @@ def gen(limb=4, out_path=None):
     # they live in, and a sprite cannot call the stage's custom blocks.  So the
     # variables stay global (declared above, on the stage) and every block below
     # is emitted into the sprite, which borrows the stage's name -> id maps.
-    cat = p.sprite("Cat")
+    cat = p.sprite("Mascot")
+    cat.size = 55  # the costume is 360 px tall; the stage is 360 px
     here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "assets", "cat.svg"), encoding="utf-8") as fh:
-        p.costume(cat, "cat", fh.read(), 47, 50)
+    p.costume_png(cat, "mascot", os.path.join(here, "assets", "mascot.png"))
     cat._varname = st._varname
     cat._listname = st._listname
     st = cat
@@ -446,7 +446,7 @@ def gen(limb=4, out_path=None):
     inner.do(st.if_else(ok,
                         st.setv("FOUND", 1),
                         st.changev("NONCE", 1)))
-    # every 1024 tries: rate, progress and ETA into the cat's speech bubble
+    # every 1024 tries: rate, progress and ETA into the mascot's speech bubble
     # (256 spams the renderer once TurboWarp is doing thousands per second)
     prog = Fn(st)
     # floor the elapsed time at 10 ms: a difficulty-0 solve finishes inside one
@@ -475,7 +475,7 @@ def gen(limb=4, out_path=None):
     st.chain(d, *f.out)
     st.script(d)
 
-    # ---- entry point: the cat asks, then hashes ---------------------------
+    # ---- entry point: the mascot asks, then hashes ------------------------
     flag = st.when_flag()
 
     msg = Fn(st)
@@ -537,7 +537,7 @@ def gen(limb=4, out_path=None):
              st.setv("NONCE", 0),
              st.setv("OUT_HEX", ""),
              st.setv("HPS", 0),
-             st.say("Hi! I'm the Scratch cat and I do the hashing in blocks."),
+             st.say("I'm the anti-anti-AI mascot and I do the hashing in blocks."),
              st.ask("challenge hex? (or press Enter to just hash MSG)"),
              st.setv("ANS", st.answer()),
              st.if_else(st.eq(st.length(st.getv("ANS")), 0),

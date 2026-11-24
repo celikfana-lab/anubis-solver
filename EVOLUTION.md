@@ -181,6 +181,18 @@ project**. The honest limits are in the README next to the ladder: the gate does
 not detect the payment, the operator mints the receipt, and nothing pays at all
 unless an address is published.
 
+## 12. 2.40 "shyleaf" (`11-24`)
+
+The release that names all of it. `meatrider` became a real tier — a price
+ladder, escalation driven by the honeypot, and a receipt that lets a payer skip
+the rungs only an ASIC can mine. This file was written down. The Argon2id GPU
+tables were re-derived from their JSONs after three cells were found quoting
+milliseconds their own hashes disagreed with, and the Gemini answer they belong
+to turned out to have been right, which is a better ending than being wrong.
+
+The version string moves for the first time since 2.0.2, to **2.40** — said
+"two-point-forty", because 2.4.0 would understate the jump.
+
 ## What it is now
 
 - One `.so`, nine tiers (`fast`, `slow`, `sha256`, `argon2id`, `hashx`,

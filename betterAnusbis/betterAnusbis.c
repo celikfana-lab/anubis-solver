@@ -72,8 +72,8 @@
 
 /* ----------------------------------------------------------------- config */
 
-#define VERSION "2.0.2"
-#define CODENAME "shaoogle"
+#define VERSION "2.40"
+#define CODENAME "shyleaf"
 #define API_PREFIX "/.within.website/x/cmd/anubis/api/"
 #define DEFAULT_COOKIE_PREFIX "techaro.lol-anubis"
 #define MAX_HEADER 32768

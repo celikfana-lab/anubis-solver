@@ -30,7 +30,7 @@
 #include "anubis_fetch.h"
 
 #define SERVER_NAME "anubis"
-#define SERVER_VERSION "2.0.2"
+#define SERVER_VERSION "2.40"
 
 /* ------------------------------------------------------------------ strings */
 
@@ -1017,7 +1017,7 @@ static void tool_version(const json_value *id) {
     char text[1024];
     char compiled[256];
     if (!version || !*version) version = SERVER_VERSION;
-    if (!codename || !*codename) codename = "shaoogle";
+    if (!codename || !*codename) codename = "shyleaf";
     backend_json(compiled, sizeof compiled, anubis_backends_compiled());
     snprintf(text, sizeof text,
              "{\"version\":\"%s\",\"codename\":\"%s\",\"algorithms\":[\"fast\","

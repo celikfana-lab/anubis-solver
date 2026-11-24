@@ -44,7 +44,7 @@
 
 #define MAX_HEADER 65536
 #define MAX_BODY (32u << 20)
-#define UA "anubis-c/2.0.2"
+#define UA "anubis-c/2.40"
 
 /* ------------------------------------------------------------------ util */
 
@@ -1134,7 +1134,7 @@ static int open_transport(xport *x, const char *target, anubis_page *out) {
 }
 
 const char *anubis_fetch_version(void) {
-    return "2.0.2 \"shaoogle\"";
+    return "2.40 \"shyleaf\"";
 }
 
 void anubis_page_free(anubis_page *page) {

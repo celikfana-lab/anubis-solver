@@ -312,7 +312,7 @@ $(LIB): $(OBJ)
 	$(LINK) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)
 
 # ---------------------------------------------------------------------------
-# The C services (2.0.2 "shaoogle"): an MCP server and an HTTP API service,
+# The C services (2.40 "shyleaf"): an MCP server and an HTTP API service,
 # both thin layers over libanubis_solver.so plus the shared fetch client. They
 # are separate binaries on purpose - a gate operator should not have to install
 # a JSON-RPC server, and an agent should not have to run a gate.

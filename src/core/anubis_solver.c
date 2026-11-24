@@ -3566,12 +3566,12 @@ int anubis_sha256_hex(const char *data, size_t len, char *out_hex) {
 
 ANUBIS_EXPORT
 const char *anubis_solver_version(void) {
-    return "2.0.2";
+    return "2.40";
 }
 
 ANUBIS_EXPORT
 const char *anubis_solver_codename(void) {
-    return "shaoogle";
+    return "shyleaf";
 }
 
 /* The sentence the chip answers with when BAR0 0x0FC is probed, kept here

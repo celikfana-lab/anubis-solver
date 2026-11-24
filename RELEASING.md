@@ -262,8 +262,20 @@ Two caveats before the first upload:
    current Fedora have them. `auditwheel show dist/*.whl` lists them if in
    doubt.
 
-The version lives in two places - `__version__` in `anubis_solver.py` and
-`project.version` in `pyproject.toml`. Bump both, and `git tag v<version>`.
+The version lives in five places, and they have to agree or `--version` lies
+depending on which binary you ask:
+
+| where | what |
+|---|---|
+| `anubis_solver.py` | `__version__` |
+| `pyproject.toml` | `project.version` |
+| `src/core/anubis_solver.c` | `anubis_solver_version()` and `anubis_solver_codename()` |
+| `betterAnusbis/betterAnusbis.c` | `VERSION` and `CODENAME` (the Windows/MSI build reads `VERSION` from here) |
+| `src/mcp/anubis_mcp.c` | `SERVER_VERSION` and its codename fallback |
+
+Plus the examples that are meant to show the current build: the README, MIGRATE,
+BEGINNER, `docs/mcp.md`, `docs/api-service.md`, and `version=` in
+`betterAnusbis/test_parity.py`. Then `git tag v<version>` and push the tag.
 
 ### Publishing without a token
 
@@ -274,5 +286,5 @@ anywhere. It needs a one-time *pending publisher* on PyPI (project name
 `libanubis-solver`, this repository, workflow `pypi.yml`, environment `pypi`)
 and the same on TestPyPI for `workflow_dispatch` runs.
 
-Push a tag (`git tag v2.0.2 && git push origin v2.0.2`) or run the workflow
+Push a tag (`git tag v2.40 && git push origin v2.40`) or run the workflow
 manually with `test: true` first.

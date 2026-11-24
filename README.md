@@ -816,13 +816,13 @@ is the directory's own guide):
 | portable C | `src/meatrider/meatrider.c` | 2.14 | 1x |
 | SHA-NI | `meatrider_shani.s` | 6.27 | 2.9x |
 | AVX2, 8 lanes | `meatrider_avx2.s` | 6.91 | 3.2x |
-| AVX-512, 16 lanes | `meatrider_avx512.s` | assembles, not run | no AVX-512 on this CPU or on Kaggle's Xeon |
+| AVX-512, 16 lanes | `meatrider_avx512.s` | 8.69 | on a Colab Ice Lake; 1.25x the AVX2 kernel |
 | OpenCL | `meatrider_opencl.cl` | 154-168 | 72-78x |
 | Vulkan | `meatrider_vulkan.comp` | 56-80 | 26-37x |
 | WebGPU | `webgpu/meatrider.wgsl` | 43-62 | 20-29x |
 | WASM, 4-lane SIMD | `wasm/meatrider_simd.c` | 4.0-4.5 | 1.9x |
 | WASM, scalar | `wasm/meatrider_pow.c` | 1.75-1.93 | — |
-| PTX | `src/meatrider/meatrider.ptx` | simulator-verified | no NVIDIA device here |
+| PTX | `src/meatrider/meatrider.ptx` | 994.7 | Colab T4, driver-JITed; the fastest one there |
 
 All of them agree on the digest: `tests/test_meatrider_backends.py` asks each
 available kernel for the digest of the same nonces and compares it with
@@ -831,7 +831,9 @@ are one run on an i7-1260P with an Iris Xe; the commands and the caveats are in
 [SPEED.md](SPEED.md#meatrider-two-compressions-and-a-price-tag).
 
 `ANUBIS_MEATRIDER_BACKEND=cpu|shani|avx2|avx512|opencl|vulkan|levelzero|cuda|tpu`
-pins the solver to one kernel, which is how those rows were measured. Below
+pins the solver to one kernel, which is how those rows were measured, and
+`ANUBIS_MEATRIDER_PTX=1` makes the CUDA slot run the generated PTX instead of the
+`.cu` kernel (the faster of the two on a T4). Below
 2^20 hashes the CPU kernel is used even when a GPU is present — a dispatch costs
 about 60 ms where the AVX2 path does a `grain` rung in a millisecond — and
 `ANUBIS_MEATRIDER_MIN_WORK` moves that crossover. On the Intel iGPU here OpenCL

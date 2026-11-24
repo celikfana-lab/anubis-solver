@@ -35,6 +35,15 @@ int anubis_l0_meatrider_solve(const meatrider_ctx *ctx, uint32_t start,
                               uint32_t count, double budget_ms,
                               uint32_t *nonce, uint8_t digest[32]);
 #endif
+/* The generated PTX is always compiled in: it needs only libcuda.so.1, which
+ * the loader dlopen()s, so it works on a box with a driver and no toolkit. */
+int anubis_meatrider_ptx_available(void);
+const char *anubis_meatrider_ptx_info(void);
+int anubis_meatrider_ptx_solve(const uint32_t mid[8], const uint32_t tail[3],
+                               int difficulty, uint32_t start, uint32_t count,
+                               double budget_ms, uint32_t *nonce,
+                               uint32_t hashes[8], int *dispatches);
+
 #if defined(ANUBIS_MEATRIDER_CUDA)
 int anubis_cuda_meatrider_available(void);
 int anubis_cuda_meatrider_solve(const meatrider_ctx *ctx, uint32_t start,
@@ -103,9 +112,12 @@ int meatrider_backend_available(int id) {
     case MR_BACKEND_L0:
         return anubis_l0_meatrider_available();
 #endif
-#if defined(ANUBIS_MEATRIDER_CUDA)
     case MR_BACKEND_CUDA:
-        return anubis_cuda_meatrider_available();
+#if defined(ANUBIS_MEATRIDER_CUDA)
+        return anubis_cuda_meatrider_available() || anubis_meatrider_ptx_available();
+#else
+        /* no nvcc at build time, but the driver can still JIT the PTX */
+        return anubis_meatrider_ptx_available();
 #endif
 #if defined(ANUBIS_MEATRIDER_TPU)
     case MR_BACKEND_TPU:
@@ -184,11 +196,53 @@ int meatrider_backend_gpu_solve(int id, const meatrider_ctx *ctx,
     (void)nonce;
     (void)digest;
     switch (id) {
+    case MR_BACKEND_CUDA: {
+        /* ANUBIS_MEATRIDER_PTX=1 asks for the generated PTX instead of the .cu
+         * kernel. On a T4 the PTX path measured 994.7 MHash/s against the
+         * kernel's 785.8 (SPEED.md), because the whole schedule is unrolled in
+         * registers; the .cu stays the default because it needs no data file. */
+        const char *want_ptx = getenv("ANUBIS_MEATRIDER_PTX");
+        int prefer_ptx = want_ptx != NULL && want_ptx[0] != '\0' &&
+                         want_ptx[0] != '0';
 #if defined(ANUBIS_MEATRIDER_CUDA)
-    case MR_BACKEND_CUDA:
-        return anubis_cuda_meatrider_solve(ctx, start, count, budget_ms, nonce,
-                                           digest);
+        if (!prefer_ptx && anubis_cuda_meatrider_available()) {
+            int rc = anubis_cuda_meatrider_solve(ctx, start, count, budget_ms,
+                                                 nonce, digest);
+            if (rc >= 0) {
+                return rc;
+            }
+        }
 #endif
+        if (!anubis_meatrider_ptx_available()) {
+            return -1;
+        }
+        {
+            uint32_t tail[3];
+            uint32_t hashes[8];
+            int i;
+            for (i = 0; i < 3; i++) {
+                tail[i] = (uint32_t)ctx->tail[4 * i] |
+                          ((uint32_t)ctx->tail[4 * i + 1] << 8) |
+                          ((uint32_t)ctx->tail[4 * i + 2] << 16) |
+                          ((uint32_t)ctx->tail[4 * i + 3] << 24);
+            }
+            {
+                int rc = anubis_meatrider_ptx_solve(ctx->mid, tail, ctx->difficulty,
+                                                    start, count, budget_ms, nonce,
+                                                    hashes, NULL);
+                if (rc != 0) {
+                    return rc;
+                }
+            }
+            for (i = 0; i < 8; i++) {
+                digest[4 * i + 0] = (uint8_t)(hashes[i] >> 24);
+                digest[4 * i + 1] = (uint8_t)(hashes[i] >> 16);
+                digest[4 * i + 2] = (uint8_t)(hashes[i] >> 8);
+                digest[4 * i + 3] = (uint8_t)hashes[i];
+            }
+        }
+        return 0;
+    }
 #if defined(ANUBIS_MEATRIDER_L0)
     case MR_BACKEND_L0:
         return anubis_l0_meatrider_solve(ctx, start, count, budget_ms, nonce,

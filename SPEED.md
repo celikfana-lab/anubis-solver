@@ -766,14 +766,14 @@ recomputes the same header, the table below is also the test:
 | portable C, one core (`src/meatrider/meatrider.c`) | **2.14 M** | 1x |
 | SHA-NI, one core (`meatrider_shani.s`) | **6.27 M** | 2.9x |
 | AVX2, 8 nonces per pass (`meatrider_avx2.s`) | **6.91 M** | 3.2x |
-| AVX-512, 16 nonces per pass (`meatrider_avx512.s`) | assembles, not run | this CPU has AVX-512 fused off |
+| AVX-512, 16 nonces per pass (`meatrider_avx512.s`) | not run here | this CPU has AVX-512 fused off; see the Colab table below |
 | WebGPU (`webgpu/meatrider.wgsl`, Iris Xe) | **43-62 M** | 20-29x |
 | Vulkan (`src/vulkan/meatrider_comp.comp`, Iris Xe) | **56-80 M** | 26-37x |
 | OpenCL (`src/meatrider/meatrider_opencl.cl`, Iris Xe) | **154-168 M** | 72-78x |
 | wasm32, 4-lane SIMD128 (`wasm/meatrider_simd.wasm`) | **4.0-4.5 M** | 1.9x |
 | wasm32, scalar (`wasm/meatrider_pow.wasm`) | **1.75-1.93 M** | — |
 | pure JavaScript (browser fallback) | **0.12 M** | 0.05x |
-| PTX (`src/meatrider/meatrider.ptx`) | 51 checks in the simulator | no NVIDIA device on this machine |
+| PTX (`src/meatrider/meatrider.ptx`) | 51 checks in the simulator | no NVIDIA device on this machine; see the Colab table below |
 | Antminer S21 Pro, for scale | 234 T | 1.0e8x |
 
 ```bash
@@ -831,14 +831,41 @@ Four things are worth being precise about:
   it says has to price the client it is aimed at; a bot with a GPU pays 1/73rd of
   the browser column.
 
-**AVX-512 has not been run anywhere yet.** The i7-1260P fuses it off, and the
-Kaggle CPU that was supposed to have it does not: `Intel(R) Xeon(R) CPU @
-2.20GHz`, `flags: avx2` — no `avx512f`, and no `sha_ni` either, so that box ran
-the portable C and AVX2 kernels only (`src/meatrider/kaggle_meatrider_cpu/`, 14
-checks passed, 68 digests correct). The 16-lane row is assembly-checked, linked
-and reachable through `ANUBIS_MEATRIDER_BACKEND=avx512`, not measured; a Sapphire
-Rapids or Ice Lake host running `python3 tools/meatrider_backends.py` fills it in
-without a code change.
+### On a Colab T4
+
+A free Colab T4 is the NVIDIA hardware this project has run on, and its CPU turned
+out to have the AVX-512 the Kaggle box did not:
+
+| kernel | Colab T4 box | this laptop |
+|---|---:|---:|
+| portable C | 1.44 M | 2.14 M |
+| AVX2 ×8 | 6.94 M | 6.91 M |
+| AVX-512 ×16 | **8.69 M** | not run (fused off) |
+| OpenCL (on the T4) | 654.6 M | 154-168 M (Iris Xe) |
+| CUDA, the `.cu` kernel | **785.8 M** | — |
+| PTX, driver-JITed | **994.7 M** | — |
+
+`python3 tools/meatrider_backends.py` after `make CUDA_ARCH=sm_75` gives the
+first five rows; `python3 src/meatrider/test_meatrider_ptx_gpu.py` gives the last.
+The whole run is [`colab/meatrider-colab.ipynb`](colab/meatrider-colab.ipynb), and
+the digests were checked per kernel: 60/60 for cpu, avx2 and avx512, and a real
+mine whose nonce the C reference re-derived for opencl, cuda and ptx.
+
+Two things that run only there, and their numbers:
+
+- **AVX-512 works.** The 16-lane kernel passes all 60 digest checks and does
+  8.69 MHash/s against 6.94 for AVX2 — 1.25x, not the 2x the lane count suggests,
+  because one hash is two compressions through a stack-spilled schedule.
+- **The generated PTX is the fastest thing on a T4.** 994.7 MHash/s against the
+  `.cu` kernel's 785.8 (1.27x): both compressions are fully unrolled and the
+  whole message schedule lives in registers, where nvcc keeps a loop. The driver
+  JITs the checked-in `meatrider.ptx` directly — no nvcc, no ptxas, no cubin — and
+  `ANUBIS_MEATRIDER_PTX=1` makes the library's CUDA slot use it.
+
+**The Kaggle CPU that was supposed to have AVX-512 does not**: `Intel(R) Xeon(R)
+CPU @ 2.20GHz`, `flags: avx2` — no `avx512f`, and no `sha_ni` either, so that box
+ran the portable C and AVX2 kernels only (`src/meatrider/kaggle_meatrider_cpu/`,
+14 checks passed, 68 digests correct).
 
 The browser column in the README ladder is at 1.0 M/s (the original scalar wasm
 kernel). With the 4-lane SIMD kernel the gate now serves, those times shrink by

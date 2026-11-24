@@ -52,14 +52,14 @@ header.
 | portable C | `meatrider.c` | `meatrider_hash()` | 2.14 |
 | SHA-NI | `meatrider_shani.s` | `meatrider_block_shani()` | 6.27 |
 | AVX2 ×8 | `meatrider_avx2.s` | `meatrider_compress8_avx2()` | 6.91 |
-| AVX-512 ×16 | `meatrider_avx512.s` | `meatrider_compress16_avx512()` | assembles; this CPU has it fused off |
+| AVX-512 ×16 | `meatrider_avx512.s` | `meatrider_compress16_avx512()` | 8.69 (Colab Ice Lake; this CPU fuses it off) |
 | OpenCL | `meatrider_opencl.cl` | `meatrider_pow()` | 154–168 |
 | Vulkan | [`src/vulkan/meatrider_comp.comp`](../vulkan/meatrider_comp.comp) | `main()` | 56–80 |
-| CUDA | `meatrider_cuda.cu` | `meatrider_pow_kernel()` | needs nvcc; see [`kaggle_meatrider/`](kaggle_meatrider) |
+| CUDA | `meatrider_cuda.cu` | `meatrider_pow_kernel()` | 785.8 (Colab T4) |
 | WebGPU | [`webgpu/meatrider.wgsl`](../../webgpu/meatrider.wgsl) | `main()` | 43–62 |
 | wasm SIMD128 ×4 | [`wasm/meatrider_simd.c`](../../wasm/meatrider_simd.c) | `anubis_work()` | 4.0–4.5 |
 | wasm scalar | [`wasm/meatrider_pow.c`](../../wasm/meatrider_pow.c) | `anubis_work()` | 1.75–1.93 |
-| PTX | `meatrider.ptx` | `meatrider_kernel` | `test_meatrider_ptx.py` (ptxsim) or `test_meatrider_ptx_gpu.py` (hardware) |
+| PTX | `meatrider.ptx` | `meatrider_kernel` | 994.7 (Colab T4, driver-JITed) |
 
 Numbers are one run on an i7-1260P with an Iris Xe, one thread; the machine
 readable copy is [`results/meatrider-backends.json`](../../results/meatrider-backends.json)
@@ -80,6 +80,8 @@ and block 2, calls the compression twice, and reverses the result — and
   pins one; an unavailable name falls back instead of failing.
 - otherwise the first available accelerator in the library's dispatch order
   (CUDA → Level Zero → Vulkan → OpenCL), else the widest CPU kernel.
+- `ANUBIS_MEATRIDER_PTX=1` makes the CUDA slot run the generated PTX instead of
+  the `.cu` kernel; on a T4 that is 994.7 against 785.8 MHash/s.
 - an accelerator is only asked above **2^20 hashes** (`ANUBIS_MEATRIDER_MIN_WORK`):
   a dispatch costs about 60 ms, where the AVX2 kernel does a `grain` rung in a
   millisecond. Below the threshold the CPU wins.

@@ -78,21 +78,7 @@ jobs:
         with:
           name: dist
           path: dist/
-
-      # Trusted publishing (OIDC) needs a one-time "pending publisher" on PyPI
-      # for THIS owner/repository pair -- if the repo moved, the old registration
-      # no longer matches and this step fails with an OIDC error. A
-      # PYPI_API_TOKEN secret is the other way in, so use whichever exists;
-      # nothing is printed and no password is stored in the repository.
-      - name: publish with a token, when one is configured
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-
-      - name: publish with trusted publishing (OIDC)
-        if: ${{ secrets.PYPI_API_TOKEN == '' }}
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
 

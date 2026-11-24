@@ -95,6 +95,13 @@ On the same day the first measurements came out of a Kaggle T4
 | ... and a big CPU can come close | ~4.3x the 28-thread Xeon (1,759 vs 411 h/s) | right |
 | ... and it can lose outright | 3.8x **slower** than one CPU core on a TPU | right, past the wall |
 
+Read the 20.7x with its baseline, because that is where the confusion lives:
+85 h/s is a four-vCPU Kaggle VM, and each vCPU manages 21 h/s because four
+threads filling 19 MiB each share one memory system — a single laptop core does
+38-43 h/s. The same pair of T4s is 4.3x the 28-thread Xeon, and **46x one laptop
+core**, which is the honest way to say "20x faster": 1,759 hashes/second is the
+hardware, the ratio is the thing you compared it to. Per card it is ~880 h/s.
+
 So the useful form of "a GPU won't help much" is **4x**, not 4000x — and on the
 TPU it is a slowdown, because Argon2id's wall is a dependency chain through
 memory, not the multiplier count. HashX, which is not memory-hard, is the other

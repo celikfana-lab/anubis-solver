@@ -197,7 +197,8 @@ make test-impersonate         # local TLS server: GREASE present/absent per prof
 - **A ninth, `meatrider`**: SHA-256, twice, over a real 80-byte Bitcoin block
   header rebuilt from the challenge, with the work priced in bitcoin — from a
   femtocent (two milliseconds of browser) to **$1.33, which is 2.7 hours of an
-  Antminer S21 Pro and 73,000 years of one browser tab**. See
+  Antminer S21 Pro and 73,000 years of one browser tab**. The address it pays is
+  **yours**: no fee, no subscription, no cut to anyone. See
   [the ladder below](#meatrider-proof-of-work-priced-in-bitcoin).
 - **CPU kernels**: hand-written AVX2, SHA-NI, AVX-512 and AArch64 NEON/SHA-2
   assembly, with runtime dispatch down to a portable C fallback.
@@ -848,6 +849,38 @@ money lands. `libanubis_solver.so` has no address, no key and no wallet: its
 meatrider entry points take a challenge and return a nonce. The solving clients
 never see a payment instruction either — the `pay` object lives in the challenge
 page that betterAnusbis renders.
+
+#### Who gets paid: you do
+
+The address on `--meatrider-pay` is yours, the gate is the only component that
+holds it, and the money lands in it directly. There is no invoice, no account and
+no intermediary between the payer and that address.
+
+- **Never a subscription.** Nothing to buy, no licence key, no metering, no
+  monthly fee, nothing to unlock. The gate is a C file you compile.
+- **Never a dime to celikfana.** No fee, no cut, no revenue share, no payment
+  relay: no code path in this repository pays celikfana or the project. The MIT
+  + attribution licence asks for a credit line in your README, not a transfer.
+- **100% open source.** Everything that runs is in this repository — the gate,
+  the kernels, the wasm modules and the receipt derivation. The vendored
+  third-party parts keep their own licences (HashX is LGPL-3.0; the full list is
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). You can read every line that
+  touches the address: one `snprintf` and one HMAC.
+- **Paid in bitcoin.** The rung's price becomes a `bitcoin:` URI
+  (`--meatrider-btc-usd`), so the payer opens it in their own wallet; the gate
+  never touches a key.
+
+And the traffic that pays is the traffic that was not invited. A crawler that
+follows the honeypot link is the one thing that cannot talk its way out: its own
+hit count sets the rung, the rung sets the price, and past 32 bits of difficulty
+a browser cannot do it, a GPU trades seconds to hours for it, and the top of the
+ladder is an ASIC or the payment. A polite browser never sees a price at all — it gets a
+cheap rung, solves it in milliseconds, and the bitcoin path is never rendered.
+
+Two honest limits, because they are the whole contract: the gate does not detect
+the payment (you confirm it and mint the receipt), and none of this pays anything
+unless you publish an address — with `--meatrider-pay` unset the rungs are just
+expensive, and nobody gets paid.
 
 **Suspicion buys a rung.** `--meatrider-escalate` wires the rung to the honeypot
 the gate already runs: a network that follows the trap link gets a meatrider

@@ -165,8 +165,7 @@ EOF""")
     # and count twice the hashes, so the ratio is the parallelism itself -- free
     # of the harness's per-slice arithmetic.
     for label, visible in (("ptx_standalone_one", "0"), ("ptx_standalone_two", "0,1")):
-        rc, out = sh("python3 src/meatrider/test_meatrider_ptx_gpu.py --reps 5 "
-                     "--difficulty 24 --budget 300000",
+        rc, out = sh("python3 src/meatrider/test_meatrider_ptx_gpu.py --reps 5",
                      env={"CUDA_VISIBLE_DEVICES": visible}, timeout=1200)
         RESULT[label] = {"rc": rc, "visible": visible, "tail": out[-2500:]}
 

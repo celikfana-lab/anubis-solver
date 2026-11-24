@@ -21,6 +21,21 @@ replaced the challenge page with a black-whale screen, and handed the challenge
 JSON over native messaging. On `git.ffmpeg.org` the C host took 0.30 s where the
 page's own solver took 31 s. That ratio is the whole reason any of this exists.
 
+Mechanically it is already the engine this repository ships, in 560 lines:
+`anubis_pass_url()` finds the `<script id="anubis_challenge">` block, hex-decodes
+`randomData`, picks the nonce byte order from the challenge's last byte, and
+folds every whole 64-byte block of the constant prefix into one midstate that
+each lane copies — so a `sha256` candidate costs one compression. The `fast`
+tier's decimal nonce is assembly (`mapple_solve.s`, written first for
+mapple.fun): an odometer over the digits instead of `snprintf`, eight nonces per
+AVX2 compression, SHA-NI for Atoms, CPUID/XGETBV dispatch. The portable C it
+replaced cost ~2,500 cycles per nonce, most of it in `snprintf`; this
+repository's `fast`/`slow` path is ~420 cycles per candidate, which is that idea
+regenerated and widened.
+
+The gaps are equally instructive: it had no `anubis_verify_*`, no GPU, no wasm,
+no tests, and it sent `elapsedTime=1200` because the server did not check.
+
 ## 2. Posted to GitHub with half of it missing
 
 The first public posting was that extension. The add-on was public; the engine

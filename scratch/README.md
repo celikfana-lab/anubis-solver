@@ -193,9 +193,22 @@ cd scratch && make deps && make test
   measured by the user in a browser); see "Solving real Anubis challenges".
 - The 65,536-entry lists make the editor's list monitor unusable. Functional,
   not pleasant. Use the 4-bit build if you want to read the project.
-- Only SHA-256 so far. Argon2id needs a 32x32 -> 64-bit multiply, which Scratch's
-  doubles cannot do directly (limbs, again); HashX is an interpreter, so that
-  port is a different and larger problem.
+- **HashX is next, and it is a second port of the same size.** It is a RandomX-style
+  VM: the challenge seeds a generator that emits up to 512 instructions over eight
+  64-bit registers, and a hash is *initialise from the nonce, run the program,
+  sipmix, output*. The interpreter is 11 integer opcodes with no memory
+  (`MUL_R`, `UMULH_R`, `SMULH_R`, `SUB_R`, `XOR_R`, `ADD_RS`, `ROR_C`, `ADD_C`,
+  `XOR_C`, `TARGET`, `BRANCH`), so it is portable; the generator is RandomX's
+  superscalar scheduler and is not, so it stays in C.
+
+  What already exists here: [`tools/hashx_program.c`](tools/hashx_program.c) dumps
+  the key vector and the 512-instruction program for any challenge, plus the C
+  library's own digests as ground truth, and the 16-bit-limb 64x64 -> 128-bit
+  multiply that the blocks need was checked against bigints (40,000 random pairs,
+  low and high halves, and signed-high, all exact). What is missing is the
+  interpreter loop and the sipmix in blocks.
+- **Argon2id is the same wall as HashX multiplied**: it needs the same 64-bit
+  arithmetic plus a 1 MiB fill, so it is worse in every dimension.
 - Solver mode assumes the challenge length Anubis currently uses (any length
   works; the nonce rule is implemented, the padding is not length-specific).
   The 23 h figure is an extrapolation from the measured 25.3 H/s, not a run.

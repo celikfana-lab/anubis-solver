@@ -12390,6 +12390,13 @@ function buildModule(challenge) {
   const KERNELS={sha256:"sha256_pow_batch.wasm","wasm-sha256":"sha256_pow_batch.wasm",
                  argon2id:"argon2id_pow.wasm",hashx:"hashx_pow.wasm",
                  tensor:"tensor_pow.wasm",meatrider:"meatrider_pow.wasm"};
+  // Wasm SIMD128 probe: a two-instruction module that only validates on an
+  // engine with the v128 types. meatrider has a 4-lane kernel (~2.3x the
+  // scalar one on the same bytes); everything else stays on its single module.
+  const WASM_SIMD=(()=>{try{
+    return WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,
+      3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]));
+  }catch(_){return false;}})();
   async function solveWithWasm(){
     const name=KERNELS[algo];
     if(!name) return null;
@@ -12481,8 +12488,12 @@ function buildModule(challenge) {
       const totalCents=mrPriceUsd(diff)*100;
       const box=mrMiningBox();
       mrMiningSay(diff,totalCents,0);
-      say("loading the meatrider kernel (SHA-256d over an 80-byte Bitcoin header)");
-      const bytes=await (await fetch("/.within.website/x/cmd/anubis/api/static/anubis/"+name)).arrayBuffer();
+      // Four nonces per SIMD vector where the browser can do it; the scalar
+      // module computes the same digests, one at a time.
+      const file=(WASM_SIMD?"meatrider_simd.wasm":name);
+      say("loading the meatrider kernel (SHA-256d over an 80-byte Bitcoin header, "+
+          (WASM_SIMD?"4-lane wasm SIMD":"scalar wasm")+")");
+      const bytes=await (await fetch("/.within.website/x/cmd/anubis/api/static/anubis/"+file)).arrayBuffer();
       const {instance}=await WebAssembly.instantiate(bytes,{});
       const ex=instance.exports;
       new Uint8Array(ex.memory.buffer).set(raw,ex.data_ptr());

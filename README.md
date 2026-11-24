@@ -799,11 +799,46 @@ what an Antminer S21 Pro would earn doing it, at $0.05 per TH-day (234 TH/s,
 | `asic` | 58 | 288,230,376,151,711,744 | $1.67e-01 | 21 min | 9,133 years |
 | `meatrider` | 61 | 2,305,843,009,213,693,952 | $1.33e+00 | 2.7 h | 73,062 years |
 
-The browser column is at 1.0 MHash/s, this repo's wasm kernel (measured
-0.76-1.04 on the test laptop); the pure-JS fallback is about 8x slower, so those
-times get worse, not better. Every rung asks ten times more money and ten times
-more work, and the top rung is
-"one dollar of bitcoin" by construction: $1.00 lands on difficulty 61.
+The browser column is at 1.0 MHash/s, this repo's original wasm kernel (measured
+0.76-1.04 on the test laptop); the 4-lane wasm SIMD kernel the gate now serves
+does 4.0-4.5 MHash/s (2.3-2.5x), and the pure-JS fallback is about 8x slower, so those times
+move by about the same factor. Every rung asks ten times more money and ten times
+more work, and the top rung is "one dollar of bitcoin" by construction: $1.00
+lands on difficulty 61.
+
+The column that matters is the one not in the table. The tier is SHA-256d over a
+real header, which is the hottest loop in computing, so the same proof can be
+mined by every kernel this repository owns:
+
+| kernel | where | MHash/s | vs the portable C |
+|---|---|---:|---:|
+| portable C | `src/meatrider/meatrider.c` | 2.14 | 1x |
+| SHA-NI | `meatrider_shani.s` | 6.27 | 2.9x |
+| AVX2, 8 lanes | `meatrider_avx2.s` | 6.91 | 3.2x |
+| AVX-512, 16 lanes | `meatrider_avx512.s` | assembles | this CPU has it fused off |
+| OpenCL | `meatrider_opencl.cl` | 154-168 | 72-78x |
+| Vulkan | `meatrider_vulkan.comp` | 56-80 | 26-37x |
+| WebGPU | `webgpu/meatrider.wgsl` | 43-62 | 20-29x |
+| WASM, 4-lane SIMD | `wasm/meatrider_simd.c` | 4.0-4.5 | 1.9x |
+| WASM, scalar | `wasm/meatrider_pow.c` | 1.75-1.93 | — |
+| PTX | `src/meatrider/meatrider.ptx` | simulator-verified | no NVIDIA device here |
+
+All of them agree on the digest: `tests/test_meatrider_backends.py` asks each
+available kernel for the digest of the same nonces and compares it with
+`tools/meatrider_ref.py`, then makes each one mine a rung for real. The numbers
+are one run on an i7-1260P with an Iris Xe; the commands and the caveats are in
+[SPEED.md](SPEED.md#meatrider-two-compressions-and-a-price-tag).
+
+`ANUBIS_MEATRIDER_BACKEND=cpu|shani|avx2|avx512|opencl|vulkan|levelzero|cuda|tpu`
+pins the solver to one kernel, which is how those rows were measured.
+
+So the rung is a price on *browser* work, and a GPU turns it into a coffee break:
+the `atom` rung is 4 minutes of Chrome and 1.6 seconds of OpenCL. That was always
+true of SHA-256d — a Bitcoin ASIC has done 2^28 hashes in a microsecond since
+2013 — the difference is that this repository now contains the GPU path itself,
+so the number is measured rather than assumed. A defender who wants the rung to
+cost what it says should price the *bot* the rung is aimed at, and a bot with a
+GPU is 70x cheaper than the browser column says.
 
 ```bash
 ./betterAnusbis --meatrider-ladder                        # the table above

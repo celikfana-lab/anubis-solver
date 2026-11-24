@@ -100,6 +100,8 @@ static int anubis_cpu_count(void) {
 #include "argon2.h"
 #include "hashx.h"
 #include "meatrider/meatrider.h"
+#include "meatrider/meatrider_backend.h"
+#include "meatrider/meatrider_simd.h"
 
 #if defined(ANUBIS_HAVE_VULKAN)
 extern int anubis_vulkan_available(void);
@@ -1123,12 +1125,14 @@ typedef struct {
     const uint32_t *mid;   /* midstate after the shared prefix */
     size_t prefix_len;     /* bytes already folded into mid */
     int use_le;            /* WASM nonce byte order */
+    const meatrider_ctx *mr; /* BATCH_MEATRIDER: the tier's header half */
 } batch_ctx;
 
 enum {
     BATCH_NONE = 0,
     BATCH_DECIMALS = 1,    /* fast/slow: prefix + decimal nonce */
-    BATCH_FIXED4 = 2       /* wasm sha256: prefix + 4-byte nonce */
+    BATCH_FIXED4 = 2,      /* wasm sha256: prefix + 4-byte nonce */
+    BATCH_MEATRIDER = 3    /* meatrider: the nonce is in the header */
 };
 
 #if defined(__x86_64__) && !defined(_WIN32) && (defined(__GNUC__) || defined(__clang__))
@@ -1268,6 +1272,22 @@ static int batch_fixed4(const batch_ctx *c, uint64_t nonce, uint32_t stride,
 
 #endif /* x86-64 */
 
+/* meatrider: unlike the two above, nothing here is x86-64 specific. The nonce
+ * sits inside the 80-byte header, so the lanes' block 1 and block 2 are built
+ * by the tier's own layer (meatrider_simd.c), and the result comes back in
+ * Bitcoin display order. Returns 0 when no batch kernel is available, which
+ * sends the worker back to one nonce at a time. */
+static int batch_meatrider(const batch_ctx *c, uint64_t nonce, uint32_t stride,
+                           int lanes, uint8_t out[16][32]) {
+    if (c->mr == NULL) {
+        return 0;
+    }
+    if (nonce + (uint64_t)(lanes - 1) * (uint64_t)stride > 0xffffffffull) {
+        return 0;
+    }
+    return meatrider_hash_batch(c->mr, (uint32_t)nonce, stride, lanes, out) == 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Threaded search                                                     */
 /* ------------------------------------------------------------------ */
@@ -1380,6 +1400,34 @@ static void worker_loop(solve_job *job, int tid) {
                 uint8_t outs[16][32];
                 if (batch_fixed4(&job->bctx, nonce, (uint32_t)job->threads,
                                  job->batch_lanes, outs)) {
+                    int k;
+                    for (k = 0; k < job->batch_lanes; k++) {
+                        if (bits_ok(outs[k], job->difficulty)) {
+                            pthread_mutex_lock(&job->mu);
+                            if (!job->found) {
+                                job->found = 1; job->stop = 1;
+                                job->nonce = nonce +
+                                             (uint64_t)k * (uint64_t)job->threads;
+                                memcpy(job->digest, outs[k], 32);
+                            }
+                            pthread_mutex_unlock(&job->mu);
+                            return;
+                        }
+                    }
+                    nonce += (uint64_t)job->batch_lanes *
+                             (uint64_t)job->threads;
+                    if (job->deadline > 0.0 && now_seconds() > job->deadline) {
+                        job->stop = 1;
+                        return;
+                    }
+                    continue;
+                }
+            }
+
+            if (job->batch_kind == BATCH_MEATRIDER) {
+                uint8_t outs[16][32];
+                if (batch_meatrider(&job->bctx, nonce, (uint32_t)job->threads,
+                                    job->batch_lanes, outs)) {
                     int k;
                     for (k = 0; k < job->batch_lanes; k++) {
                         if (bits_ok(outs[k], job->difficulty)) {
@@ -2350,6 +2398,19 @@ static int hash_meatrider(void *vctx, uint64_t nonce, uint8_t out[32]) {
     return 0;
 }
 
+#if defined(MEATRIDER_HAVE_SIMD)
+/* The same search with SHA-NI doing the two compressions: ~80 cycles per block
+ * instead of ~940. Chosen once per call, never branched on per hash. */
+static int hash_meatrider_shani(void *vctx, uint64_t nonce, uint8_t out[32]) {
+    meatrider_job_ctx *c = (meatrider_job_ctx *)vctx;
+    if (nonce > 0xffffffffull) {
+        return 1;
+    }
+    meatrider_hash_shani(&c->ctx, (uint32_t)nonce, out);
+    return 0;
+}
+#endif
+
 static int meatrider_random_data(const char *challenge_hex, uint8_t rd[32]) {
     uint8_t raw[64];
     size_t raw_len = 0;
@@ -2372,14 +2433,19 @@ static int meatrider_random_data(const char *challenge_hex, uint8_t rd[32]) {
     return ANUBIS_OK;
 }
 
-ANUBIS_EXPORT
-int anubis_solve_meatrider(const char *challenge_hex, int difficulty, int threads,
-                           double budget_ms, uint32_t *out_nonce, char *out_hex,
-                           double *out_ms) {
+/* One search on a named backend, or on whatever this machine has when
+ * `backend` is negative. The accelerators get first refusal and the CPU is
+ * always the fallback, which is the library's rule everywhere else. */
+static int meatrider_solve_on(int backend, const char *challenge_hex,
+                              int difficulty, int threads, double budget_ms,
+                              uint32_t *out_nonce, char *out_hex,
+                              double *out_ms) {
     solve_job job;
     meatrider_job_ctx ctx;
+    anubis_hash_fn hash = hash_meatrider;
     uint8_t rd[32];
     uint64_t nonce64 = 0;
+    int lanes = 0;
     int rc;
 
     if (!challenge_hex || !out_nonce || !out_hex) {
@@ -2403,16 +2469,81 @@ int anubis_solve_meatrider(const char *challenge_hex, int difficulty, int thread
         return ANUBIS_ERR_INTERNAL;
     }
 
+    if (backend < 0) {
+        backend = meatrider_backend_active();
+    }
+
+    /* An accelerator covers the whole 32-bit space in one dispatch, so it is
+     * asked first and the thread pool is not started at all. */
+    if (backend >= MR_BACKEND_OPENCL) {
+        double started = now_seconds();
+        uint32_t accel_nonce = 0;
+        uint8_t accel_digest[32];
+        uint8_t check[32];
+
+        rc = meatrider_backend_gpu_solve(backend, &ctx.ctx, 0, 0, budget_ms,
+                                         &accel_nonce, accel_digest);
+        if (rc == 0) {
+            /* Every GPU hit is re-derived here before it is believed: a kernel
+             * bug costs a wasted dispatch, never a wrong answer. */
+            meatrider_digest(rd, difficulty, accel_nonce, check);
+            if (memcmp(check, accel_digest, 32) == 0 &&
+                bits_ok(check, difficulty)) {
+                *out_nonce = accel_nonce;
+                to_hex(check, 32, out_hex);
+                if (out_ms != NULL) {
+                    *out_ms = (now_seconds() - started) * 1000.0;
+                }
+                return ANUBIS_OK;
+            }
+        } else if (rc > 0) {
+            /* The kernel ran and the range or the budget ran out. */
+            return ANUBIS_ERR_UNSOLVED;
+        }
+        /* -1: not compiled in, no device, or the dispatch failed. The CPU is
+         * the fallback, as it is for every other tier. */
+        backend = MR_BACKEND_SCALAR;
+    }
+
+#if defined(MEATRIDER_HAVE_SIMD)
+    if (backend != MR_BACKEND_SCALAR && meatrider_shani_available()) {
+        hash = hash_meatrider_shani;
+    }
+#endif
+    switch (backend) {
+    case MR_BACKEND_AVX512:
+        lanes = 16;
+        break;
+    case MR_BACKEND_AVX2:
+        lanes = 8;
+        break;
+    default:
+        /* Not a CPU kernel we can name (a pinned accelerator that was not
+         * usable, or "auto" with none): take the widest thing this CPU has. */
+        if (backend != MR_BACKEND_SCALAR && backend != MR_BACKEND_SHANI) {
+            lanes = meatrider_batch_width();
+#if defined(MEATRIDER_HAVE_SIMD)
+            if (lanes == 0 && meatrider_shani_available()) {
+                hash = hash_meatrider_shani;
+            }
+#endif
+        }
+        break;
+    }
+
     memset(&job, 0, sizeof(job));
     job.mode = MODE_BITS;
-    job.hash = hash_meatrider;
+    job.hash = hash;
     job.hash_ctx = &ctx;
     job.check_mask = 0x3ffu;
     job.difficulty = difficulty;
     job.threads = threads;
-    /* No batch kernel: the nonce is the last field of an 80-byte header, not a
-     * tail appended to a 64-byte block, so the vectorised SHA-256 paths do not
-     * apply. Two compressions per nonce, one of them constant midstate. */
+    /* The tier's vector kernels hash 8 or 16 nonces per pair of compressions;
+     * the nonce sits inside the header, so the lanes' block 1 and block 2 come
+     * from meatrider_simd.c rather than from the sha256 tier's padding code. */
+    job.batch_kind = lanes != 0 ? BATCH_MEATRIDER : BATCH_NONE;
+    job.batch_lanes = lanes;
+    job.bctx.mr = &ctx.ctx;
     if (budget_ms > 0.0) {
         job.deadline = now_seconds() + budget_ms / 1000.0;
     }
@@ -2422,6 +2553,71 @@ int anubis_solve_meatrider(const char *challenge_hex, int difficulty, int thread
         *out_nonce = (uint32_t)nonce64;
     }
     return rc;
+}
+
+ANUBIS_EXPORT
+int anubis_solve_meatrider(const char *challenge_hex, int difficulty, int threads,
+                           double budget_ms, uint32_t *out_nonce, char *out_hex,
+                           double *out_ms) {
+    return meatrider_solve_on(-1, challenge_hex, difficulty, threads, budget_ms,
+                              out_nonce, out_hex, out_ms);
+}
+
+ANUBIS_EXPORT
+int anubis_meatrider_backend_count(void) {
+    return MR_BACKEND_COUNT;
+}
+
+ANUBIS_EXPORT
+const char *anubis_meatrider_backend_name(int backend) {
+    return meatrider_backend_name(backend);
+}
+
+ANUBIS_EXPORT
+int anubis_meatrider_backend_available(int backend) {
+    return meatrider_backend_available(backend);
+}
+
+ANUBIS_EXPORT
+int anubis_meatrider_backend_active(void) {
+    return meatrider_backend_active();
+}
+
+ANUBIS_EXPORT
+int anubis_meatrider_backend_solve(const char *challenge_hex, int difficulty,
+                                   int backend, int threads, double budget_ms,
+                                   uint32_t *out_nonce, char *out_hex,
+                                   double *out_ms) {
+    return meatrider_solve_on(backend, challenge_hex, difficulty, threads,
+                              budget_ms, out_nonce, out_hex, out_ms);
+}
+
+ANUBIS_EXPORT
+int anubis_meatrider_backend_digest(const char *challenge_hex, int difficulty,
+                                    int backend, uint32_t nonce, char *out_hex) {
+    meatrider_ctx ctx;
+    uint8_t rd[32];
+    uint8_t digest[32];
+    int rc;
+
+    if (challenge_hex == NULL || out_hex == NULL) {
+        return ANUBIS_ERR_ARG;
+    }
+    if (difficulty < 1 || difficulty > 255) {
+        return ANUBIS_ERR_ARG;
+    }
+    rc = meatrider_random_data(challenge_hex, rd);
+    if (rc != ANUBIS_OK) {
+        return rc;
+    }
+    if (meatrider_ctx_init(&ctx, rd, difficulty) != 0) {
+        return ANUBIS_ERR_INTERNAL;
+    }
+    if (meatrider_backend_digest(backend, &ctx, nonce, digest) != 0) {
+        return ANUBIS_ERR_INTERNAL;
+    }
+    to_hex(digest, 32, out_hex);
+    return ANUBIS_OK;
 }
 
 ANUBIS_EXPORT

@@ -14,6 +14,17 @@ split verdict:
 
 That is the honest state. Details, including what is ruled out, are below.
 
+## The other tier in this directory: `meatrider`
+
+`meatrider.wgsl` + `meatrider.html` are the `meatrider` tier (SHA-256d over an
+80-byte Bitcoin header). It is the opposite verdict from HashX: **bit-exact on
+this machine's Intel GPU**. `deno run --allow-all tools/meatrider-webgpu.mjs`
+compares 203 digests against `tools/meatrider_ref.py` with zero mismatches, and
+its `anubis_work`-style scans match the CPU's hit sets exactly. Four nonces per
+invocation, 43-62 MHash/s on the Iris Xe against 1.75-1.93 M/s for the scalar
+wasm kernel — 25-30x, and the number moves with machine load, which the script
+prints as a min/max band.
+
 ## The page checks before it trusts
 
 `hashx.html` does not assume the GPU is right. Before using it, it hashes eight

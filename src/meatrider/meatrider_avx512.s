@@ -1,0 +1,783 @@
+/*
+ * meatrider_avx512.s — 16-way AVX-512 SHA-256 compression, for `meatrider`.
+ *
+ * Re-emitted from tools/gen_avx512_s.py by tools/gen_meatrider_s.py: the same
+ * hand-written sequence the `sha256` tier runs, under the meatrider symbol.
+ * One hash of the tier is two compressions, so meatrider_hash16_avx512() calls
+ * this once for the header's block 1 and once for block 2. Requires AVX-512F;
+ * the driver checks the CPU before choosing it.
+ *
+ *   void meatrider_compress16_avx512(const uint32_t mid[8],
+ *                                    const uint8_t tails[16][64],
+ *                                    uint8_t out[16][32]);
+ *
+ * Each lane compresses one padded 64-byte block from a shared midstate and
+ * writes the 32-byte big-endian digest. The message schedule lives in
+ * zmm16..zmm31, so the round loop touches no stack at all.
+ */
+
+    .section .rodata
+    .align 64
+.Lavx512_kb:
+
+    .long 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98, 0x428a2f98
+    .long 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491, 0x71374491
+    .long 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf, 0xb5c0fbcf
+    .long 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5, 0xe9b5dba5
+    .long 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b, 0x3956c25b
+    .long 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1, 0x59f111f1
+    .long 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4, 0x923f82a4
+    .long 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5, 0xab1c5ed5
+    .long 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98, 0xd807aa98
+    .long 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01, 0x12835b01
+    .long 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be, 0x243185be
+    .long 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3, 0x550c7dc3
+    .long 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74, 0x72be5d74
+    .long 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe, 0x80deb1fe
+    .long 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7, 0x9bdc06a7
+    .long 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174, 0xc19bf174
+    .long 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1, 0xe49b69c1
+    .long 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786, 0xefbe4786
+    .long 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6, 0x0fc19dc6
+    .long 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc, 0x240ca1cc
+    .long 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f, 0x2de92c6f
+    .long 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa, 0x4a7484aa
+    .long 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc, 0x5cb0a9dc
+    .long 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da, 0x76f988da
+    .long 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152, 0x983e5152
+    .long 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d, 0xa831c66d
+    .long 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8, 0xb00327c8
+    .long 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7, 0xbf597fc7
+    .long 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3, 0xc6e00bf3
+    .long 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147, 0xd5a79147
+    .long 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351, 0x06ca6351
+    .long 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967, 0x14292967
+    .long 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85, 0x27b70a85
+    .long 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138, 0x2e1b2138
+    .long 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc, 0x4d2c6dfc
+    .long 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13, 0x53380d13
+    .long 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354, 0x650a7354
+    .long 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb, 0x766a0abb
+    .long 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e, 0x81c2c92e
+    .long 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85, 0x92722c85
+    .long 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1, 0xa2bfe8a1
+    .long 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b, 0xa81a664b
+    .long 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70, 0xc24b8b70
+    .long 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3, 0xc76c51a3
+    .long 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819, 0xd192e819
+    .long 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624, 0xd6990624
+    .long 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585, 0xf40e3585
+    .long 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070, 0x106aa070
+    .long 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116, 0x19a4c116
+    .long 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08, 0x1e376c08
+    .long 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c, 0x2748774c
+    .long 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5, 0x34b0bcb5
+    .long 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3, 0x391c0cb3
+    .long 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a, 0x4ed8aa4a
+    .long 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f, 0x5b9cca4f
+    .long 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3, 0x682e6ff3
+    .long 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee, 0x748f82ee
+    .long 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f, 0x78a5636f
+    .long 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814, 0x84c87814
+    .long 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208, 0x8cc70208
+    .long 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa, 0x90befffa
+    .long 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb, 0xa4506ceb
+    .long 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7, 0xbef9a3f7
+    .long 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2, 0xc67178f2
+
+    .text
+    .globl meatrider_compress16_avx512
+    .hidden meatrider_compress16_avx512
+    .type meatrider_compress16_avx512, @function
+
+/* One SHA-256 round. Afterwards \h holds the new a and \d the new e, so
+ * the next round's arguments are rotated right by one. \w is a register
+ * holding this round's message word (W+K is the memory operand). */
+.macro ROUND a,b,c,d,e,f,g,h,w,ko
+    vprord  $6, \e, %zmm8
+    vprord  $11, \e, %zmm9
+    vprord  $25, \e, %zmm10
+    vpternlogd $0x96, %zmm10, %zmm9, %zmm8   /* S1 = ror6^ror11^ror25 */
+
+    vmovdqa32 \e, %zmm9
+    vpternlogd $0xCA, \g, \f, %zmm9        /* Ch */
+
+    vpaddd  \h, %zmm8, %zmm8
+    vpaddd  %zmm9, %zmm8, %zmm8
+    vpaddd  .Lavx512_kb+\ko(%rip), %zmm8, %zmm8
+    vpaddd  \w, %zmm8, %zmm8                 /* T1 */
+
+    vprord  $2, \a, %zmm10
+    vprord  $13, \a, %zmm11
+    vprord  $22, \a, %zmm12
+    vpternlogd $0x96, %zmm12, %zmm11, %zmm10 /* S0 */
+    vmovdqa32 \a, %zmm11
+    vpternlogd $0xE8, \c, \b, %zmm11       /* Maj */
+    vpaddd  %zmm11, %zmm10, %zmm10           /* T2 */
+
+    vpaddd  \d, %zmm8, \d
+    vpaddd  %zmm10, %zmm8, \h
+.endm
+
+/* w[i] = w[i-16] + s0(w[i-15]) + w[i-7] + s1(w[i-2]); dst is the register
+ * that held w[i-16] and becomes w[i]. */
+.macro SCHED dst, w15, w7, w2
+    vprord  $7, \w15, %zmm8
+    vprord  $18, \w15, %zmm9
+    vpsrld  $3, \w15, %zmm10
+    vpternlogd $0x96, %zmm10, %zmm9, %zmm8   /* s0 */
+
+    vprord  $17, \w2, %zmm9
+    vprord  $19, \w2, %zmm10
+    vpsrld  $10, \w2, %zmm11
+    vpternlogd $0x96, %zmm11, %zmm10, %zmm9  /* s1 */
+
+    vpaddd  \dst, %zmm8, %zmm8
+    vpaddd  \w7, %zmm8, %zmm8
+    vpaddd  %zmm9, %zmm8, \dst
+.endm
+
+/* Build one message word across the sixteen lanes into \dst. */
+.macro LOADW off, dst
+    movl    \off+0(%rsi), %eax
+    bswap   %eax
+    vmovd   %eax, %xmm8
+    movl    \off+64(%rsi), %eax
+    bswap   %eax
+    vpinsrd $1, %eax, %xmm8, %xmm8
+    movl    \off+128(%rsi), %eax
+    bswap   %eax
+    vpinsrd $2, %eax, %xmm8, %xmm8
+    movl    \off+192(%rsi), %eax
+    bswap   %eax
+    vpinsrd $3, %eax, %xmm8, %xmm8
+
+    movl    \off+256(%rsi), %eax
+    bswap   %eax
+    vmovd   %eax, %xmm9
+    movl    \off+320(%rsi), %eax
+    bswap   %eax
+    vpinsrd $1, %eax, %xmm9, %xmm9
+    movl    \off+384(%rsi), %eax
+    bswap   %eax
+    vpinsrd $2, %eax, %xmm9, %xmm9
+    movl    \off+448(%rsi), %eax
+    bswap   %eax
+    vpinsrd $3, %eax, %xmm9, %xmm9
+
+    movl    \off+512(%rsi), %eax
+    bswap   %eax
+    vmovd   %eax, %xmm10
+    movl    \off+576(%rsi), %eax
+    bswap   %eax
+    vpinsrd $1, %eax, %xmm10, %xmm10
+    movl    \off+640(%rsi), %eax
+    bswap   %eax
+    vpinsrd $2, %eax, %xmm10, %xmm10
+    movl    \off+704(%rsi), %eax
+    bswap   %eax
+    vpinsrd $3, %eax, %xmm10, %xmm10
+
+    movl    \off+768(%rsi), %eax
+    bswap   %eax
+    vmovd   %eax, %xmm11
+    movl    \off+832(%rsi), %eax
+    bswap   %eax
+    vpinsrd $1, %eax, %xmm11, %xmm11
+    movl    \off+896(%rsi), %eax
+    bswap   %eax
+    vpinsrd $2, %eax, %xmm11, %xmm11
+    movl    \off+960(%rsi), %eax
+    bswap   %eax
+    vpinsrd $3, %eax, %xmm11, %xmm11
+
+    vpxord  %zmm12, %zmm12, %zmm12
+    vinserti32x4 $0, %xmm8, %zmm12, %zmm12
+    vinserti32x4 $1, %xmm9, %zmm12, %zmm12
+    vinserti32x4 $2, %xmm10, %zmm12, %zmm12
+    vinserti32x4 $3, %xmm11, %zmm12, %zmm12
+    vmovdqa32 %zmm12, \dst
+.endm
+
+meatrider_compress16_avx512:
+    pushq   %rbp
+    movq    %rsp, %rbp
+    andq    $-64, %rsp
+    subq    $1024, %rsp
+
+    LOADW 0, %zmm16
+    LOADW 4, %zmm17
+    LOADW 8, %zmm18
+    LOADW 12, %zmm19
+    LOADW 16, %zmm20
+    LOADW 20, %zmm21
+    LOADW 24, %zmm22
+    LOADW 28, %zmm23
+    LOADW 32, %zmm24
+    LOADW 36, %zmm25
+    LOADW 40, %zmm26
+    LOADW 44, %zmm27
+    LOADW 48, %zmm28
+    LOADW 52, %zmm29
+    LOADW 56, %zmm30
+    LOADW 60, %zmm31
+
+    /* initial state */
+    vmovd   0(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm0
+    vmovd   4(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm1
+    vmovd   8(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm2
+    vmovd   12(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm3
+    vmovd   16(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm4
+    vmovd   20(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm5
+    vmovd   24(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm6
+    vmovd   28(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm7
+
+    /* 64 rounds: schedule updated in place, roles rotated */
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm16,0
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm17,64
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm18,128
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm19,192
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm20,256
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm21,320
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm22,384
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm23,448
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm24,512
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm25,576
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm26,640
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm27,704
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm28,768
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm29,832
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm30,896
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm31,960
+    SCHED %zmm16, %zmm17, %zmm25, %zmm30
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm16,1024
+    SCHED %zmm17, %zmm18, %zmm26, %zmm31
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm17,1088
+    SCHED %zmm18, %zmm19, %zmm27, %zmm16
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm18,1152
+    SCHED %zmm19, %zmm20, %zmm28, %zmm17
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm19,1216
+    SCHED %zmm20, %zmm21, %zmm29, %zmm18
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm20,1280
+    SCHED %zmm21, %zmm22, %zmm30, %zmm19
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm21,1344
+    SCHED %zmm22, %zmm23, %zmm31, %zmm20
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm22,1408
+    SCHED %zmm23, %zmm24, %zmm16, %zmm21
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm23,1472
+    SCHED %zmm24, %zmm25, %zmm17, %zmm22
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm24,1536
+    SCHED %zmm25, %zmm26, %zmm18, %zmm23
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm25,1600
+    SCHED %zmm26, %zmm27, %zmm19, %zmm24
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm26,1664
+    SCHED %zmm27, %zmm28, %zmm20, %zmm25
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm27,1728
+    SCHED %zmm28, %zmm29, %zmm21, %zmm26
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm28,1792
+    SCHED %zmm29, %zmm30, %zmm22, %zmm27
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm29,1856
+    SCHED %zmm30, %zmm31, %zmm23, %zmm28
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm30,1920
+    SCHED %zmm31, %zmm16, %zmm24, %zmm29
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm31,1984
+    SCHED %zmm16, %zmm17, %zmm25, %zmm30
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm16,2048
+    SCHED %zmm17, %zmm18, %zmm26, %zmm31
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm17,2112
+    SCHED %zmm18, %zmm19, %zmm27, %zmm16
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm18,2176
+    SCHED %zmm19, %zmm20, %zmm28, %zmm17
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm19,2240
+    SCHED %zmm20, %zmm21, %zmm29, %zmm18
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm20,2304
+    SCHED %zmm21, %zmm22, %zmm30, %zmm19
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm21,2368
+    SCHED %zmm22, %zmm23, %zmm31, %zmm20
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm22,2432
+    SCHED %zmm23, %zmm24, %zmm16, %zmm21
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm23,2496
+    SCHED %zmm24, %zmm25, %zmm17, %zmm22
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm24,2560
+    SCHED %zmm25, %zmm26, %zmm18, %zmm23
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm25,2624
+    SCHED %zmm26, %zmm27, %zmm19, %zmm24
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm26,2688
+    SCHED %zmm27, %zmm28, %zmm20, %zmm25
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm27,2752
+    SCHED %zmm28, %zmm29, %zmm21, %zmm26
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm28,2816
+    SCHED %zmm29, %zmm30, %zmm22, %zmm27
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm29,2880
+    SCHED %zmm30, %zmm31, %zmm23, %zmm28
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm30,2944
+    SCHED %zmm31, %zmm16, %zmm24, %zmm29
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm31,3008
+    SCHED %zmm16, %zmm17, %zmm25, %zmm30
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm16,3072
+    SCHED %zmm17, %zmm18, %zmm26, %zmm31
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm17,3136
+    SCHED %zmm18, %zmm19, %zmm27, %zmm16
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm18,3200
+    SCHED %zmm19, %zmm20, %zmm28, %zmm17
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm19,3264
+    SCHED %zmm20, %zmm21, %zmm29, %zmm18
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm20,3328
+    SCHED %zmm21, %zmm22, %zmm30, %zmm19
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm21,3392
+    SCHED %zmm22, %zmm23, %zmm31, %zmm20
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm22,3456
+    SCHED %zmm23, %zmm24, %zmm16, %zmm21
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm23,3520
+    SCHED %zmm24, %zmm25, %zmm17, %zmm22
+    ROUND %zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm24,3584
+    SCHED %zmm25, %zmm26, %zmm18, %zmm23
+    ROUND %zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm25,3648
+    SCHED %zmm26, %zmm27, %zmm19, %zmm24
+    ROUND %zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm26,3712
+    SCHED %zmm27, %zmm28, %zmm20, %zmm25
+    ROUND %zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm4,%zmm27,3776
+    SCHED %zmm28, %zmm29, %zmm21, %zmm26
+    ROUND %zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm3,%zmm28,3840
+    SCHED %zmm29, %zmm30, %zmm22, %zmm27
+    ROUND %zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm2,%zmm29,3904
+    SCHED %zmm30, %zmm31, %zmm23, %zmm28
+    ROUND %zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm1,%zmm30,3968
+    SCHED %zmm31, %zmm16, %zmm24, %zmm29
+    ROUND %zmm1,%zmm2,%zmm3,%zmm4,%zmm5,%zmm6,%zmm7,%zmm0,%zmm31,4032
+
+    /* add the prefix midstate */
+    vmovd   0(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm8
+    vpaddd  %zmm8, %zmm0, %zmm0
+    vmovd   4(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm8
+    vpaddd  %zmm8, %zmm1, %zmm1
+    vmovd   8(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm8
+    vpaddd  %zmm8, %zmm2, %zmm2
+    vmovd   12(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm8
+    vpaddd  %zmm8, %zmm3, %zmm3
+    vmovd   16(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm8
+    vpaddd  %zmm8, %zmm4, %zmm4
+    vmovd   20(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm8
+    vpaddd  %zmm8, %zmm5, %zmm5
+    vmovd   24(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm8
+    vpaddd  %zmm8, %zmm6, %zmm6
+    vmovd   28(%rdi), %xmm8
+    vpbroadcastd %xmm8, %zmm8
+    vpaddd  %zmm8, %zmm7, %zmm7
+
+    /* spill the state and write big-endian lane digests */
+    vmovdqa32 %zmm0, 0(%rsp)
+    vmovdqa32 %zmm1, 64(%rsp)
+    vmovdqa32 %zmm2, 128(%rsp)
+    vmovdqa32 %zmm3, 192(%rsp)
+    vmovdqa32 %zmm4, 256(%rsp)
+    vmovdqa32 %zmm5, 320(%rsp)
+    vmovdqa32 %zmm6, 384(%rsp)
+    vmovdqa32 %zmm7, 448(%rsp)
+    movl    0(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 0(%rdx)
+    movl    64(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 4(%rdx)
+    movl    128(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 8(%rdx)
+    movl    192(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 12(%rdx)
+    movl    256(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 16(%rdx)
+    movl    320(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 20(%rdx)
+    movl    384(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 24(%rdx)
+    movl    448(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 28(%rdx)
+    movl    4(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 32(%rdx)
+    movl    68(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 36(%rdx)
+    movl    132(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 40(%rdx)
+    movl    196(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 44(%rdx)
+    movl    260(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 48(%rdx)
+    movl    324(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 52(%rdx)
+    movl    388(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 56(%rdx)
+    movl    452(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 60(%rdx)
+    movl    8(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 64(%rdx)
+    movl    72(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 68(%rdx)
+    movl    136(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 72(%rdx)
+    movl    200(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 76(%rdx)
+    movl    264(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 80(%rdx)
+    movl    328(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 84(%rdx)
+    movl    392(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 88(%rdx)
+    movl    456(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 92(%rdx)
+    movl    12(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 96(%rdx)
+    movl    76(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 100(%rdx)
+    movl    140(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 104(%rdx)
+    movl    204(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 108(%rdx)
+    movl    268(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 112(%rdx)
+    movl    332(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 116(%rdx)
+    movl    396(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 120(%rdx)
+    movl    460(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 124(%rdx)
+    movl    16(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 128(%rdx)
+    movl    80(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 132(%rdx)
+    movl    144(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 136(%rdx)
+    movl    208(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 140(%rdx)
+    movl    272(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 144(%rdx)
+    movl    336(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 148(%rdx)
+    movl    400(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 152(%rdx)
+    movl    464(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 156(%rdx)
+    movl    20(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 160(%rdx)
+    movl    84(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 164(%rdx)
+    movl    148(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 168(%rdx)
+    movl    212(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 172(%rdx)
+    movl    276(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 176(%rdx)
+    movl    340(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 180(%rdx)
+    movl    404(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 184(%rdx)
+    movl    468(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 188(%rdx)
+    movl    24(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 192(%rdx)
+    movl    88(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 196(%rdx)
+    movl    152(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 200(%rdx)
+    movl    216(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 204(%rdx)
+    movl    280(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 208(%rdx)
+    movl    344(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 212(%rdx)
+    movl    408(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 216(%rdx)
+    movl    472(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 220(%rdx)
+    movl    28(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 224(%rdx)
+    movl    92(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 228(%rdx)
+    movl    156(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 232(%rdx)
+    movl    220(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 236(%rdx)
+    movl    284(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 240(%rdx)
+    movl    348(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 244(%rdx)
+    movl    412(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 248(%rdx)
+    movl    476(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 252(%rdx)
+    movl    32(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 256(%rdx)
+    movl    96(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 260(%rdx)
+    movl    160(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 264(%rdx)
+    movl    224(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 268(%rdx)
+    movl    288(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 272(%rdx)
+    movl    352(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 276(%rdx)
+    movl    416(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 280(%rdx)
+    movl    480(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 284(%rdx)
+    movl    36(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 288(%rdx)
+    movl    100(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 292(%rdx)
+    movl    164(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 296(%rdx)
+    movl    228(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 300(%rdx)
+    movl    292(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 304(%rdx)
+    movl    356(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 308(%rdx)
+    movl    420(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 312(%rdx)
+    movl    484(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 316(%rdx)
+    movl    40(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 320(%rdx)
+    movl    104(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 324(%rdx)
+    movl    168(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 328(%rdx)
+    movl    232(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 332(%rdx)
+    movl    296(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 336(%rdx)
+    movl    360(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 340(%rdx)
+    movl    424(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 344(%rdx)
+    movl    488(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 348(%rdx)
+    movl    44(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 352(%rdx)
+    movl    108(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 356(%rdx)
+    movl    172(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 360(%rdx)
+    movl    236(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 364(%rdx)
+    movl    300(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 368(%rdx)
+    movl    364(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 372(%rdx)
+    movl    428(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 376(%rdx)
+    movl    492(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 380(%rdx)
+    movl    48(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 384(%rdx)
+    movl    112(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 388(%rdx)
+    movl    176(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 392(%rdx)
+    movl    240(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 396(%rdx)
+    movl    304(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 400(%rdx)
+    movl    368(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 404(%rdx)
+    movl    432(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 408(%rdx)
+    movl    496(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 412(%rdx)
+    movl    52(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 416(%rdx)
+    movl    116(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 420(%rdx)
+    movl    180(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 424(%rdx)
+    movl    244(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 428(%rdx)
+    movl    308(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 432(%rdx)
+    movl    372(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 436(%rdx)
+    movl    436(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 440(%rdx)
+    movl    500(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 444(%rdx)
+    movl    56(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 448(%rdx)
+    movl    120(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 452(%rdx)
+    movl    184(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 456(%rdx)
+    movl    248(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 460(%rdx)
+    movl    312(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 464(%rdx)
+    movl    376(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 468(%rdx)
+    movl    440(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 472(%rdx)
+    movl    504(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 476(%rdx)
+    movl    60(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 480(%rdx)
+    movl    124(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 484(%rdx)
+    movl    188(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 488(%rdx)
+    movl    252(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 492(%rdx)
+    movl    316(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 496(%rdx)
+    movl    380(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 500(%rdx)
+    movl    444(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 504(%rdx)
+    movl    508(%rsp), %eax
+    bswap   %eax
+    movl    %eax, 508(%rdx)
+
+    movq    %rbp, %rsp
+    popq    %rbp
+    vzeroupper
+    ret
+    .size meatrider_compress16_avx512, .-meatrider_compress16_avx512
+
+    .section .note.GNU-stack,"",@progbits

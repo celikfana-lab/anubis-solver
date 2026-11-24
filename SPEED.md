@@ -757,42 +757,78 @@ challenge, so their midstate is compressed once and a hash costs **two**
 compressions afterwards: the 16-byte block holding `time`, `nBits` and the nonce,
 then the second SHA-256 over the 32-byte digest.
 
-| backend | hashes/second | vs the `sha256` tier |
+That shape is the standard Bitcoin miner loop, so the tier carries one kernel per
+optimisation the rest of this repository already has — and because every kernel
+recomputes the same header, the table below is also the test:
+
+| backend | hashes/second | vs portable C |
 |---|---:|---:|
-| native, one core (`taskset -c 0`) | **0.91 M** | 0.24x |
-| wasm32 (`wasm/meatrider_pow.wasm`) | **0.76-1.04 M** | 0.10-0.13x |
-| pure JavaScript (browser fallback) | **0.12 M** | 0.13x |
-| Antminer S21 Pro, for scale | 234 T | 2.6e8x |
+| portable C, one core (`src/meatrider/meatrider.c`) | **2.14 M** | 1x |
+| SHA-NI, one core (`meatrider_shani.s`) | **6.27 M** | 2.9x |
+| AVX2, 8 nonces per pass (`meatrider_avx2.s`) | **6.91 M** | 3.2x |
+| AVX-512, 16 nonces per pass (`meatrider_avx512.s`) | assembles, not run | this CPU has AVX-512 fused off |
+| WebGPU (`webgpu/meatrider.wgsl`, Iris Xe) | **43-62 M** | 20-29x |
+| Vulkan (`src/vulkan/meatrider_comp.comp`, Iris Xe) | **56-80 M** | 26-37x |
+| OpenCL (`src/meatrider/meatrider_opencl.cl`, Iris Xe) | **154-168 M** | 72-78x |
+| wasm32, 4-lane SIMD128 (`wasm/meatrider_simd.wasm`) | **4.0-4.5 M** | 1.9x |
+| wasm32, scalar (`wasm/meatrider_pow.wasm`) | **1.75-1.93 M** | — |
+| pure JavaScript (browser fallback) | **0.12 M** | 0.05x |
+| PTX (`src/meatrider/meatrider.ptx`) | 51 checks in the simulator | no NVIDIA device on this machine |
+| Antminer S21 Pro, for scale | 234 T | 1.0e8x |
 
-`python3 tools/bench_tiers.py --reps 5` (the `meatrider` rows: 0.84-0.93 M/s
-across difficulties 11, 16 and 20) and `node wasm/verify-meatrider.mjs` (its
-`rate:` line, 0.76-1.04 M/s across runs on this laptop's unstable governor) are
-the commands.
+```bash
+python3 tools/meatrider_backends.py            # every kernel, on the same header
+node wasm/verify-meatrider-simd.mjs            # the 4-lane browser kernel, 1,993 checks
+node wasm/verify-meatrider.mjs                 # the scalar browser kernel, 426 checks
+deno run --allow-all tools/meatrider-webgpu.mjs  # WebGPU, 203 digest comparisons
+python3 src/meatrider/test_meatrider_ptx.py    # the PTX kernel, in ptxsim
+python3 src/nvidia/ptx/...                     # see "PTX: hand-written kernels, no nvcc"
+```
 
-Two things are worth being precise about, because both are easy to get wrong:
+`tools/meatrider_backends.py` is the one to run: it asks every available kernel
+for the digest of the same nonces and compares against an independent Python
+implementation of the header (`tools/meatrider_ref.py`), then makes each kernel
+mine a real rung and re-verifies the winning nonce in C. The rates above are one
+run on an i7-1260P with an Iris Xe, one thread, and are recorded in
+[`results/meatrider-backends.json`](results/meatrider-backends.json); the
+accelerators are measured on whole 2^22-nonce dispatches, which is why their
+column moves in steps, and the same laptop gives ±10% between runs (Vulkan's
+spread is wider because ANV recompiles the pipeline on some dispatches).
 
-- **The 4x gap to `sha256` is not a bug and not a tuning opportunity.** One
-  `sha256` hash on this laptop is one compression *and* runs through the SHA-NI
-  assembly kernel: 3.74 M/s. `meatrider` is two compressions of portable C with
-  no SHA-NI path: 0.91 M/s, i.e. 1.8 M compressions/s. Per compression the two
-  are within 2x, and the remaining factor is that `src/meatrider/meatrider.c`
-  is compiled into the wasm module too, where SHA-NI does not exist. Making the
-  native path use `sha256_block_shani()` would roughly double it and make the
-  two backends disagree in speed but not in output; not worth the split for a
-  tier that is not on a hot path.
-- **There is no batching.** The `sha256` tier appends the nonce to the message,
-  which is why AVX2 can do 8 candidates per compression by keeping eight
-  midstates. `meatrider` puts the nonce *inside* the header's last four bytes, so
-  the varying block is the same block for every lane and the eight compressed
-  candidates would have to be built anyway. A Vector bit-slicing kernel could
-  still do it; nothing in the repo does.
+Four things are worth being precise about:
 
-The ladder, at the measured browser rate (1.0 M/s for the wasm kernel), is the
-table in the README. The short version: the two-millisecond rung is
-**1.19e-15 USD** and the dollar rung is **2.7 hours of an S21 Pro**, or 73,062
-years of one browser tab. That is the whole point of the tier: the money column
-and the time column are the same column, and one of them is quoted against
-hardware the client does not have.
+- **The kernel is byte-identical across the tier, the *driver* is not.** The
+  SHA-256 compression in `src/cpu/avx2.s` does not care which bytes it is
+  compressing, so `tools/gen_meatrider_s.py` re-emits the `sha256` tier's
+  assembly under `meatrider` symbols and `meatrider_simd.c` feeds it Bitcoin
+  blocks. The two copies exist so the tiers can diverge — fusing both
+  compressions of a Bitcoin hash into one kernel is a `meatrider` change.
+- **Batching works here, and that used to be wrong.** The `sha256` tier appends
+  the nonce to the message, which is why AVX2 can hash 8 candidates at once;
+  `meatrider` puts the nonce *inside* the header, and an earlier version of this
+  file claimed that made batching impossible. It does not: block 1 differs only
+  in its fourth word and block 2 is built from the first digest, so the batch
+  path runs the compression kernel twice per lane group. 8 lanes at 3.2x rather
+  than 8x because the portable C reference keeps the whole message schedule in
+  registers with a rolling window while the vector kernels spill it to a stack
+  frame — the win is bounded by memory traffic, not by the rounds.
+- **SHA-NI is now used, and the wasm module stays portable.** `2.9x` for the
+  native path; `src/meatrider/meatrider.c` remains the single implementation the
+  wasm module compiles, so the browser and the server still agree bit for bit.
+  The native library picks the fastest kernel per call, `ANUBIS_MEATRIDER_BACKEND`
+  overrides it, and `anubis_meatrider_backend_digest()` asks one kernel directly.
+- **The ladder is priced for a browser, and a GPU laughs at it.** The `atom` rung
+  is 2^28 hashes: 4 minutes for the browser column, 1.6 seconds for OpenCL on an
+  integrated GPU. This was always true of SHA-256d — Bitcoin ASICs have done it in
+  microseconds since 2013 — but the repository now contains the GPU path, so the
+  number is measured rather than assumed. A gate that wants its rung to cost what
+  it says has to price the client it is aimed at; a bot with a GPU pays 1/73rd of
+  the browser column.
+
+The browser column in the README ladder is at 1.0 M/s (the original scalar wasm
+kernel). With the 4-lane SIMD kernel the gate now serves, those times shrink by
+2.3x; the pure-JS fallback is 8x worse. The money column does not move at all —
+it is `2^difficulty` hashes at the ASIC's price, whatever device does them.
 
 ## TPU: Argon2id, the chain is the wall
 

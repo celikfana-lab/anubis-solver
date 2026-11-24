@@ -1,0 +1,65 @@
+{
+  "generated_by": "tools/meatrider_backends.py",
+  "machine": "x86_64 / Linux 6.17.0-41-generic",
+  "cpu": "",
+  "threads": 1,
+  "digest_checks": {
+    "cpu": {
+      "passed": 60,
+      "attempted": 60
+    },
+    "shani": {
+      "passed": 60,
+      "attempted": 60
+    },
+    "avx2": {
+      "passed": 60,
+      "attempted": 60
+    },
+    "opencl": {
+      "passed": 0,
+      "attempted": 0
+    },
+    "vulkan": {
+      "passed": 0,
+      "attempted": 0
+    }
+  },
+  "rows": [
+    {
+      "backend": "cpu",
+      "difficulty": 20,
+      "hashes_per_second": 2141412.2,
+      "solves": 5,
+      "threads": 1
+    },
+    {
+      "backend": "shani",
+      "difficulty": 20,
+      "hashes_per_second": 6268394.5,
+      "solves": 5,
+      "threads": 1
+    },
+    {
+      "backend": "avx2",
+      "difficulty": 20,
+      "hashes_per_second": 6906721.0,
+      "solves": 5,
+      "threads": 1
+    },
+    {
+      "backend": "opencl",
+      "difficulty": 23,
+      "hashes_per_second": 153636166.4,
+      "solves": 5,
+      "threads": 1
+    },
+    {
+      "backend": "vulkan",
+      "difficulty": 23,
+      "hashes_per_second": 56354401.4,
+      "solves": 5,
+      "threads": 1
+    }
+  ]
+}

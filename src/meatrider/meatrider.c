@@ -58,7 +58,7 @@ static inline void store_le32(uint8_t *p, uint32_t v) {
  * keeps w in registers. The first version of this file used a 64-word array
  * and a rolled loop; it measured 1.34 us per hash (two compressions), about
  * 4x slower than this shape. */
-static void meatrider_compress(uint32_t h[8], const uint8_t blk[64]) {
+void meatrider_compress(uint32_t h[8], const uint8_t blk[64]) {
     uint32_t w[16];
     uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
     uint32_t e = h[4], f = h[5], g = h[6], hh = h[7];
@@ -95,7 +95,7 @@ static void meatrider_compress(uint32_t h[8], const uint8_t blk[64]) {
     h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
 }
 
-static void meatrider_iv(uint32_t h[8]) {
+void meatrider_iv(uint32_t h[8]) {
     h[0] = 0x6a09e667; h[1] = 0xbb67ae85; h[2] = 0x3c6ef372; h[3] = 0xa54ff53a;
     h[4] = 0x510e527f; h[5] = 0x9b05688c; h[6] = 0x1f83d9ab; h[7] = 0x5be0cd19;
 }
@@ -158,12 +158,21 @@ int meatrider_ctx_init(meatrider_ctx *ctx, const uint8_t rd[32], int difficulty)
     for (i = 0; i < 28; i++) ctx->first[36 + i] = merkle[i];
 
     ctx->bits = meatrider_bits(difficulty);
+    ctx->difficulty = difficulty;
     for (i = 0; i < 4; i++) ctx->tail[i] = merkle[28 + i];
     store_le32(ctx->tail + 4, MEATRIDER_TIME);
     store_le32(ctx->tail + 8, ctx->bits);
 
     meatrider_iv(ctx->mid);
     meatrider_compress(ctx->mid, ctx->first);
+
+    /* block 1 never changes except in its four nonce bytes */
+    for (i = 0; i < 12; i++) ctx->tail_block[i] = ctx->tail[i];
+    for (i = 12; i < 16; i++) ctx->tail_block[i] = 0;
+    ctx->tail_block[16] = 0x80;
+    for (i = 17; i < 62; i++) ctx->tail_block[i] = 0;
+    ctx->tail_block[62] = 0x02;            /* 80 bytes * 8 = 640 */
+    ctx->tail_block[63] = 0x80;
     return 0;
 }
 
@@ -174,38 +183,66 @@ void meatrider_header(const meatrider_ctx *ctx, uint32_t nonce, uint8_t out[80])
     store_le32(out + 76, nonce);
 }
 
-void meatrider_hash(const meatrider_ctx *ctx, uint32_t nonce, uint8_t out[32]) {
-    uint8_t blk[64];
-    uint8_t d1[32];
-    uint32_t h[8];
+void meatrider_block1(const meatrider_ctx *ctx, uint32_t nonce, uint8_t blk[64]) {
     uint32_t i;
 
     /* header bytes 64..79 are the last 16 bytes of the 80-byte message; the
-     * block's tail is the standard 0x80, zeros, and the 640-bit length. */
-    for (i = 0; i < 12; i++) blk[i] = ctx->tail[i];
+     * block's tail is the standard 0x80, zeros, and the 640-bit length, all of
+     * which the context already holds. So this is one 64-byte copy and four
+     * nonce bytes -- and the copy is four vector moves, not 45 stores. */
+    for (i = 0; i < 64; i++) blk[i] = ctx->tail_block[i];
     store_le32(blk + 12, nonce);
-    blk[16] = 0x80;
-    for (i = 17; i < 62; i++) blk[i] = 0;
-    blk[62] = 0x02;                        /* 80 bytes * 8 = 640 = 0x0280 */
-    blk[63] = 0x80;
+}
 
-    for (i = 0; i < 8; i++) h[i] = ctx->mid[i];
-    meatrider_compress(h, blk);
-    for (i = 0; i < 8; i++) store_be32(d1 + 4 * i, h[i]);
+/* The second block's constant half: 0x80, zeros, and the 256-bit length. */
+static const uint8_t MEATRIDER_PAD2[32] = {
+    0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00,
+};
+
+void meatrider_block2(const uint32_t h1[8], uint8_t blk[64]) {
+    uint32_t i;
 
     /* the second SHA-256: 32 bytes, one padded block, 256-bit length */
-    for (i = 0; i < 32; i++) blk[i] = d1[i];
-    blk[32] = 0x80;
-    for (i = 33; i < 62; i++) blk[i] = 0;
-    blk[62] = 0x01;
-    blk[63] = 0x00;
-    meatrider_iv(h);
-    meatrider_compress(h, blk);
+    for (i = 0; i < 8; i++) store_be32(blk + 4 * i, h1[i]);
+    for (i = 0; i < 32; i++) blk[32 + i] = MEATRIDER_PAD2[i];
+}
+
+void meatrider_finish(const uint32_t h2[8], uint8_t out[32]) {
+    uint32_t i;
 
     /* Bitcoin shows the digest reversed; that reversed order is also the
      * big-endian integer the target comparison uses, so reversing whole words
      * and storing them little-endian reverses all 32 bytes. */
-    for (i = 0; i < 8; i++) store_le32(out + 4 * i, h[7 - i]);
+    for (i = 0; i < 8; i++) store_le32(out + 4 * i, h2[7 - i]);
+}
+
+int meatrider_meets(const uint8_t digest[32], int difficulty) {
+    int full, rem, i;
+
+    if (difficulty <= 0) return 1;
+    if (difficulty > 256) return 0;
+    full = difficulty / 8;
+    rem = difficulty % 8;
+    for (i = 0; i < full && i < 32; i++)
+        if (digest[i] != 0) return 0;
+    if (rem != 0 && full < 32)
+        return (digest[full] & (uint8_t)(0xFFu << (8 - rem))) == 0;
+    return 1;
+}
+
+void meatrider_hash(const meatrider_ctx *ctx, uint32_t nonce, uint8_t out[32]) {
+    uint8_t blk[64];
+    uint32_t h[8];
+    uint32_t i;
+
+    meatrider_block1(ctx, nonce, blk);
+    for (i = 0; i < 8; i++) h[i] = ctx->mid[i];
+    meatrider_compress(h, blk);
+    meatrider_block2(h, blk);
+    meatrider_iv(h);
+    meatrider_compress(h, blk);
+    meatrider_finish(h, out);
 }
 
 int meatrider_digest(const uint8_t rd[32], int difficulty, uint32_t nonce,

@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "hashx.h"
+#include "meatrider/meatrider.h"
 #include <time.h>
 
 #include <vulkan/vulkan.h>
@@ -38,6 +39,7 @@
 #include "sha256_comp.spv.h"
 #include "argon2id.spv.h"
 #include "hashx.spv.h"
+#include "meatrider_comp.spv.h"
 
 #define VK_FUNCS(X)                                                            \
     X(vkCreateInstance)                                                        \
@@ -106,6 +108,24 @@ typedef struct {
     uint32_t hashes[8][8];
 } vk_results;
 
+/* Mirror of the buffers in src/vulkan/meatrider_comp.comp. */
+typedef struct {
+    uint32_t midstate[8];
+    uint32_t tail[3];
+    uint32_t difficulty;
+    uint32_t base_nonce;
+    uint32_t chunk;
+} vk_mr_params;
+
+typedef struct {
+    uint32_t count;
+    uint32_t pad0;
+    uint32_t pad1;
+    uint32_t pad2;
+    uint32_t nonces[8];
+    uint32_t hashes[8][8];
+} vk_mr_results;
+
 static struct {
     int state; /* 0 = untouched, 1 = ready, -1 = unavailable */
     void *lib;
@@ -126,6 +146,15 @@ static struct {
     VkShaderModule smod;
     vk_params *params;
     vk_results *results;
+    /* the meatrider tier: its own pipeline and buffers, same binding layout */
+    VkBuffer mr_params_buf, mr_results_buf;
+    VkDeviceMemory mr_params_mem, mr_results_mem;
+    VkPipeline mr_pipe;
+    VkDescriptorPool mr_dpool;
+    VkDescriptorSet mr_dset;
+    VkShaderModule mr_smod;
+    vk_mr_params *mr_params;
+    vk_mr_results *mr_results;
     pthread_mutex_t mu;
     char name[256];
     int is_cpu;
@@ -422,6 +451,91 @@ static int vk_init(void) {
         return 0;
     }
 
+    /* ---- the meatrider tier ------------------------------------------
+     * Same two-binding layout, so the descriptor set layout and pipeline
+     * layout above are reused; only the shader, the pipeline, the buffers and
+     * the descriptor set are its own. A failure here leaves the other tiers
+     * working and simply reports the meatrider path as unavailable. */
+    {
+        VkShaderModuleCreateInfo mci = {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = meatrider_comp_spv_bytes,
+            .pCode = meatrider_comp_spv,
+        };
+        int ok = 0;
+
+        g_vk.mr_params = NULL;
+        g_vk.mr_results = NULL;
+        g_vk.mr_pipe = VK_NULL_HANDLE;
+        g_vk.mr_params_buf = make_buffer(sizeof(vk_mr_params), &g_vk.mr_params_mem,
+                                         (void **)&g_vk.mr_params);
+        g_vk.mr_results_buf = make_buffer(sizeof(vk_mr_results), &g_vk.mr_results_mem,
+                                          (void **)&g_vk.mr_results);
+        if (g_vk.mr_params_buf != VK_NULL_HANDLE &&
+            g_vk.mr_results_buf != VK_NULL_HANDLE && g_vk.mr_params != NULL &&
+            g_vk.mr_results != NULL &&
+            p_vkCreateShaderModule(g_vk.device, &mci, NULL, &g_vk.mr_smod) == VK_SUCCESS) {
+            VkComputePipelineCreateInfo mcp = {
+                .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                .stage = {.sType =
+                              VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                          .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                          .module = g_vk.mr_smod,
+                          .pName = "main"},
+                .layout = g_vk.pl,
+            };
+            if (p_vkCreateComputePipelines(g_vk.device, VK_NULL_HANDLE, 1, &mcp,
+                                           NULL, &g_vk.mr_pipe) == VK_SUCCESS) {
+                ok = 1;
+            }
+        }
+        if (ok) {
+            VkDescriptorPoolSize ps = {
+                .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 2,
+            };
+            VkDescriptorPoolCreateInfo dp = {
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                .maxSets = 1,
+                .poolSizeCount = 1,
+                .pPoolSizes = &ps,
+            };
+            if (p_vkCreateDescriptorPool(g_vk.device, &dp, NULL, &g_vk.mr_dpool) ==
+                VK_SUCCESS) {
+                VkDescriptorSetAllocateInfo ai = {
+                    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                    .descriptorPool = g_vk.mr_dpool,
+                    .descriptorSetCount = 1,
+                    .pSetLayouts = &g_vk.dsl,
+                };
+                if (p_vkAllocateDescriptorSets(g_vk.device, &ai, &g_vk.mr_dset) ==
+                    VK_SUCCESS) {
+                    VkDescriptorBufferInfo pi = {g_vk.mr_params_buf, 0, VK_WHOLE_SIZE};
+                    VkDescriptorBufferInfo ri = {g_vk.mr_results_buf, 0, VK_WHOLE_SIZE};
+                    VkWriteDescriptorSet wr[2] = {
+                        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                         .dstSet = g_vk.mr_dset,
+                         .dstBinding = 0,
+                         .descriptorCount = 1,
+                         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                         .pBufferInfo = &pi},
+                        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                         .dstSet = g_vk.mr_dset,
+                         .dstBinding = 1,
+                         .descriptorCount = 1,
+                         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                         .pBufferInfo = &ri},
+                    };
+                    p_vkUpdateDescriptorSets(g_vk.device, 2, wr, 0, NULL);
+                } else {
+                    g_vk.mr_pipe = VK_NULL_HANDLE;
+                }
+            } else {
+                g_vk.mr_pipe = VK_NULL_HANDLE;
+            }
+        }
+    }
+
     pthread_mutex_init(&g_vk.mu, NULL);
     g_vk.state = 1;
     return 1;
@@ -593,6 +707,142 @@ int anubis_vulkan_solve(const uint32_t mid[8], uint32_t prefix_len, int mode,
             *out_nonce = nonce;
             if (out_ms != NULL) {
                 *out_ms = (now_seconds() - t0) * 1000.0;
+            }
+            rc = 0;
+            break;
+        }
+        base += this_chunk;
+        if (budget_ms > 0.0 && (now_seconds() - t0) * 1000.0 > budget_ms) {
+            rc = 1;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&g_vk.mu);
+    return rc;
+}
+
+/* ==================== meatrider (Vulkan) ==================== */
+
+static int dispatch_mr_chunk(uint32_t base, uint32_t chunk) {
+    g_vk.mr_params->base_nonce = base;
+    g_vk.mr_params->chunk = chunk;
+    g_vk.mr_results->count = 0;
+
+    VkCommandBufferBeginInfo bi = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    p_vkResetCommandPool(g_vk.device, g_vk.cpool, 0);
+    if (p_vkBeginCommandBuffer(g_vk.cmd, &bi) != VK_SUCCESS) {
+        return -1;
+    }
+    VkMemoryBarrier hb = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+    };
+    p_vkCmdPipelineBarrier(g_vk.cmd, VK_PIPELINE_STAGE_HOST_BIT,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &hb, 0,
+                           NULL, 0, NULL);
+    p_vkCmdBindPipeline(g_vk.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.mr_pipe);
+    p_vkCmdBindDescriptorSets(g_vk.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_vk.pl,
+                              0, 1, &g_vk.mr_dset, 0, NULL);
+    p_vkCmdDispatch(g_vk.cmd, (chunk + 63u) / 64u, 1, 1);
+
+    VkMemoryBarrier mb = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+    };
+    p_vkCmdPipelineBarrier(g_vk.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0,
+                           NULL);
+    if (p_vkEndCommandBuffer(g_vk.cmd) != VK_SUCCESS) {
+        return -1;
+    }
+    VkSubmitInfo si = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &g_vk.cmd,
+    };
+    if (p_vkQueueSubmit(g_vk.queue, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS) {
+        return -1;
+    }
+    if (p_vkQueueWaitIdle(g_vk.queue) != VK_SUCCESS) {
+        return -1;
+    }
+    return 0;
+}
+
+int anubis_vulkan_meatrider_available(void) {
+    return vk_init() && g_vk.mr_pipe != VK_NULL_HANDLE;
+}
+
+static uint32_t mr_le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+int anubis_vulkan_meatrider_solve(const meatrider_ctx *ctx, uint32_t start,
+                                  uint32_t count, double budget_ms,
+                                  uint32_t *out_nonce, uint8_t out_digest[32]) {
+    uint32_t chunk;
+    uint64_t base, maxn;
+    double t0;
+    int rc = 1;
+    int i;
+
+    if (ctx == NULL || out_nonce == NULL || out_digest == NULL) {
+        return -1;
+    }
+    if (!anubis_vulkan_meatrider_available()) {
+        return -1;
+    }
+    pthread_mutex_lock(&g_vk.mu);
+    t0 = now_seconds();
+
+    memcpy(g_vk.mr_params->midstate, ctx->mid, sizeof ctx->mid);
+    g_vk.mr_params->tail[0] = mr_le32(ctx->tail + 0);
+    g_vk.mr_params->tail[1] = mr_le32(ctx->tail + 4);
+    g_vk.mr_params->tail[2] = mr_le32(ctx->tail + 8);
+    g_vk.mr_params->difficulty = (uint32_t)ctx->difficulty;
+
+    chunk = env_u32("ANUBIS_VULKAN_CHUNK", 1u << 22);
+    if (chunk < 64u) {
+        chunk = 64u;
+    }
+    if (chunk > (1u << 24)) {
+        chunk = 1u << 24;
+    }
+
+    base = start;
+    maxn = 0xFFFFFFFFull;
+    if (count > 0) {
+        uint64_t last = (uint64_t)start + (uint64_t)count - 1u;
+        if (last < maxn) {
+            maxn = last;
+        }
+    }
+    while (base <= maxn) {
+        uint64_t remaining = maxn - base + 1u;
+        uint32_t this_chunk =
+            (uint32_t)(remaining < (uint64_t)chunk ? remaining : (uint64_t)chunk);
+        if (this_chunk == 0) {
+            break;
+        }
+        if (dispatch_mr_chunk((uint32_t)base, this_chunk) != 0) {
+            rc = -1;
+            break;
+        }
+        if (g_vk.mr_results->count > 0) {
+            *out_nonce = g_vk.mr_results->nonces[0];
+            for (i = 0; i < 8; i++) {
+                uint32_t w = g_vk.mr_results->hashes[0][i];
+                out_digest[4 * i + 0] = (uint8_t)(w >> 24);
+                out_digest[4 * i + 1] = (uint8_t)(w >> 16);
+                out_digest[4 * i + 2] = (uint8_t)(w >> 8);
+                out_digest[4 * i + 3] = (uint8_t)w;
             }
             rc = 0;
             break;

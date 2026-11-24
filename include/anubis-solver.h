@@ -217,6 +217,60 @@ ANUBIS_API int anubis_meatrider_difficulty_for_usd(double usd,
                                                    double usd_per_th_day);
 
 /* ------------------------------------------------------------------ *
+ * The meatrider backends
+ *
+ * Every one of them computes the same digest: the tier's promise is that a
+ * proof does not care which kernel produced it. These exist so that promise is
+ * checkable — ask a named kernel for the digest of one nonce, or search with
+ * only that kernel, and compare against the portable reference. That is what
+ * tools/meatrider_backends.py does.
+ *
+ * ANUBIS_MEATRIDER_BACKEND=cpu|shani|avx2|avx512|opencl|vulkan|levelzero|cuda|tpu
+ * pins anubis_solve_meatrider() to one kernel; a name that is compiled out or
+ * has no device falls back to the next available kernel, and
+ * anubis_meatrider_backend_available() says which of those would happen.
+ *
+ * The CPU kernels (cpu, shani, avx2, avx512) hash one nonce at a time here;
+ * the search uses the widest of them. The accelerators report only hits, so
+ * their digest is a hit digest: ask for one nonce and a miss means "this
+ * kernel reports nothing for that nonce", not "the digest is unknown".
+ * ------------------------------------------------------------------ */
+
+#define ANUBIS_MR_SCALAR 0   /* portable C, always present */
+#define ANUBIS_MR_SHANI 1    /* Intel SHA extensions */
+#define ANUBIS_MR_AVX2 2     /* 8 nonces per pass */
+#define ANUBIS_MR_AVX512 3   /* 16 nonces per pass */
+#define ANUBIS_MR_OPENCL 4
+#define ANUBIS_MR_VULKAN 5
+#define ANUBIS_MR_L0 6       /* Intel Level Zero */
+#define ANUBIS_MR_CUDA 7     /* CUDA C and the generated PTX */
+#define ANUBIS_MR_TPU 8      /* Google PJRT */
+
+ANUBIS_API int anubis_meatrider_backend_count(void);
+ANUBIS_API const char *anubis_meatrider_backend_name(int backend);
+/* 1 when the kernel is compiled in and this machine can run it now. */
+ANUBIS_API int anubis_meatrider_backend_available(int backend);
+/* What anubis_solve_meatrider() will pick: the ANUBIS_MEATRIDER_BACKEND pin,
+ * else the first available accelerator (CUDA, Level Zero, Vulkan, OpenCL),
+ * else the widest CPU kernel. */
+ANUBIS_API int anubis_meatrider_backend_active(void);
+
+/* anubis_solve_meatrider() on one named kernel. Same return codes and same
+ * contract: threads and budget_ms as above. */
+ANUBIS_API int anubis_meatrider_backend_solve(const char *challenge_hex,
+                                              int difficulty, int backend,
+                                              int threads, double budget_ms,
+                                              uint32_t *out_nonce,
+                                              char *out_hex, double *out_ms);
+
+/* One nonce's digest (65-byte hex buffer) from one named kernel. Returns
+ * ANUBIS_OK, ANUBIS_ERR_ARG for an unknown challenge, or ANUBIS_ERR_INTERNAL
+ * when that kernel is unavailable or does not report a digest for that nonce. */
+ANUBIS_API int anubis_meatrider_backend_digest(const char *challenge_hex,
+                                               int difficulty, int backend,
+                                               uint32_t nonce, char *out_hex);
+
+/* ------------------------------------------------------------------ *
  * Verification (re-check a nonce; returns ANUBIS_OK when valid)
  * ------------------------------------------------------------------ */
 

@@ -23,8 +23,9 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "src" / "opencl" / "opencl_kernels.h"
 KERNELS = [
     ("ocl_sha256_src", ROOT / "src" / "opencl" / "sha256_pow.cl"),
-    ("ocl_argon2_src", ROOT / "src" / "levelzero" / "argon2id_l0.cl"),
-    ("ocl_hashx_src", ROOT / "src" / "levelzero" / "hashx_l0.cl"),
+    ("ocl_argon2_src", ROOT / "src" / "intel" / "levelzero" / "argon2id_l0.cl"),
+    ("ocl_hashx_src", ROOT / "src" / "intel" / "levelzero" / "hashx_l0.cl"),
+    ("ocl_meatrider_src", ROOT / "src" / "meatrider" / "meatrider_opencl.cl"),
 ]
 
 

@@ -97,7 +97,8 @@ LDFLAGS    += $(ENTRY_FLAG)
 LIB      := libanubis_solver.so
 BUILD    := build
 CORE_SRC := src/core/anubis_solver.c src/core/nvidia_boost.c src/core/direct_run.c \
-            src/hashx/hashx.c src/meatrider/meatrider.c
+            src/hashx/hashx.c src/meatrider/meatrider.c \
+            src/meatrider/meatrider_simd.c src/meatrider/meatrider_backend.c
 
 # Optional Vulkan backend (SHA-256 challenges). Auto-detects the headers;
 # the library dlopen()s libvulkan.so.1 at runtime, so there is no hard
@@ -107,7 +108,7 @@ HAVE_VULKAN :=
 ifneq ($(VULKAN),0)
 ifneq ($(wildcard /usr/include/vulkan/vulkan.h),)
 CORE_SRC += src/vulkan/vulkan.c
-CFLAGS  += -DANUBIS_HAVE_VULKAN
+CFLAGS  += -DANUBIS_HAVE_VULKAN -DANUBIS_MEATRIDER_VULKAN
 LDFLAGS += -ldl
 HAVE_VULKAN := 1
 else ifeq ($(VULKAN),1)
@@ -123,7 +124,7 @@ HAVE_OPENCL :=
 ifneq ($(OPENCL),0)
 ifneq ($(wildcard /usr/include/CL/cl.h),)
 CORE_SRC += src/opencl/opencl_backend.c
-CFLAGS   += -DANUBIS_HAVE_OPENCL
+CFLAGS   += -DANUBIS_HAVE_OPENCL -DANUBIS_MEATRIDER_OPENCL
 LDFLAGS  += -ldl
 HAVE_OPENCL := 1
 else ifeq ($(OPENCL),1)
@@ -175,7 +176,9 @@ ARCH     ?= $(shell uname -m)
 # Assembly kernels: x86-64 (AVX2 + SHA-NI) or AArch64 (NEON + SHA-2).
 # The portable C fallbacks are always compiled.
 ifeq ($(ARCH),x86_64)
-ASM_SRC  := src/cpu/avx2.s src/cpu/shani.s src/cpu/avx512.s
+ASM_SRC  := src/cpu/avx2.s src/cpu/shani.s src/cpu/avx512.s \
+            src/meatrider/meatrider_avx2.s src/meatrider/meatrider_shani.s \
+            src/meatrider/meatrider_avx512.s
 else ifeq ($(ARCH),aarch64)
 ASM_SRC  := src/cpu/neon.s
 CFLAGS   += -DANUBIS_HAVE_NEON_ASM

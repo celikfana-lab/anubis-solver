@@ -10,6 +10,7 @@ OFFICIAL ?= /media/miku6/kubuntu_2404/home/miku/DOWN/pyani/anubis/web/static/was
 
 all: hashx_jit.wasm demo/hashx_jit.wasm argon2_fill.wasm argon2_fill_simd.wasm argon2_fill_c.wasm sha256_pow.wasm
 all: argon2id_pow.wasm hashx_pow.wasm tensor_pow.wasm meatrider_pow.wasm
+all: meatrider_simd.wasm
 
 # Two flags bite the Argon2id module, and both were measured before they were
 # believed:
@@ -104,6 +105,23 @@ meatrider_pow.wasm: meatrider_pow.c $(REPO)/src/meatrider/meatrider.c \
 verify-meatrider: meatrider_pow.wasm
 	node verify-meatrider.mjs
 
+# the 4-lane SIMD128 meatrider kernel: same ABI and same digests, four nonces
+# per SHA-256 round. The reference src/meatrider/meatrider.c is still compiled
+# in (for meatrider_ctx_init); the compressions are the v128 ones in
+# meatrider_simd.c. Needs a wasm-SIMD-capable engine (all current browsers).
+meatrider_simd.wasm: meatrider_simd.c $(REPO)/src/meatrider/meatrider.c \
+                     $(REPO)/src/meatrider/meatrider.h
+	clang --target=wasm32 -O3 -msimd128 -nostdlib -Wl,--no-entry \
+	      -I$(REPO)/src/meatrider \
+	      -Wl,--export-memory -Wl,--export=data_ptr -Wl,--export=set_data_length \
+	      -Wl,--export=result_hash_ptr -Wl,--export=result_hash_size \
+	      -Wl,--export=anubis_work -Wl,--export=anubis_work_limited \
+	      -o meatrider_simd.wasm meatrider_simd.c $(REPO)/src/meatrider/meatrider.c
+	@ls -l meatrider_simd.wasm
+
+verify-meatrider-simd: meatrider_simd.wasm meatrider_pow.wasm
+	node verify-meatrider-simd.mjs
+
 # the `tensor` PoW: A@B of two N*N int8/uint8 matrices, N = 64*clamp(difficulty,2,16).
 # SIMD=1 (default) builds the hand-written i8x16 kernel in tensor_pow.c, which is
 # ~4x the scalar kernel and needs a wasm-SIMD-capable engine (all current
@@ -193,4 +211,4 @@ clean:
 	      argon2_fill_c.wasm
 
 .PHONY: all bench a2i vectors compare live serve clean verify-tensor verify-tensor-v \
-        verify-meatrider
+        verify-meatrider verify-meatrider-simd

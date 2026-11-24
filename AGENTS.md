@@ -31,6 +31,8 @@ python3 tests/test_local.py        # needs a local Anubis checkout (ANUBIS_SRC)
 python3 tests/test_versions.py
 python3 src/nvidia/ptx/test_ptx.py        # SHA-256 PTX via the simulator
 python3 src/nvidia/ptx/test_hashx_ptx.py  # HashX PTX via the simulator + hashx.c
+python3 tools/meatrider_backends.py      # every meatrider kernel: digest parity + rate
+python3 tests/test_meatrider_backends.py # the same, as pass/fail checks
 python3 tools/bench_tiers.py
 python3 tools/bench_tensor_v.py       # tensor-v: client GEMM+tree vs sampled server check
 kaggle kernels push -p src/core/kaggle_tensor_v   # the same on a Kaggle CPU kernel
@@ -46,6 +48,9 @@ node tools/bench-client-resources.mjs     # wasm vs native memory and CPU
 
 cd wasm && make verify-module              # our wasm kernels vs Anubis's own modules
 cd wasm && make verify-jit                 # the runtime HashX compiler, 63 checks
+node wasm/verify-meatrider-simd.mjs        # the 4-lane meatrider browser kernel, 1,993 checks
+deno run --allow-all tools/meatrider-webgpu.mjs  # meatrider on WebGPU, 203 digest comparisons
+python3 src/meatrider/test_meatrider_ptx.py      # the meatrider PTX kernel, in ptxsim
 cd web  && make check                      # the site: links, anchors, layout
 webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see webgpu/README.md)
 gcc -O2 -o /tmp/clrun tools/xe-sha256-opencl.c -lOpenCL && /tmp/clrun   # SHA-256 on Intel Xe, needs intel-opencl-icd
@@ -59,6 +64,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `src/core/anubis_solver.c` | core: hashing, search loop, backend dispatch, verification |
 | `src/hashx/hashx.c/.h` | HashX generator, interpreter, x86-64/AArch64 JITs (LGPL-3.0) |
 | `src/cpu/*.s` | hand-written SHA-256 kernels (AVX2, SHA-NI, AVX-512, NEON) |
+| `src/meatrider/` | the Bitcoin-header tier: the portable reference, `meatrider_*` clones of the CPU kernels, one kernel per accelerator, the backend table, the PTX kernel |
 | `src/nvidia/cuda/*.cu` | CUDA backends (SHA-256, Argon2id, HashX) |
 | `src/intel/xe/` | Intel Xe (gen12lp) assembly for the SHA-256 kernel: a hand-written listing from `tools/gen_xe_sha256.py`, and IGC's own code extracted from a Zebin that ran on the GPU |
 | `src/intel/levelzero/*.c` | Level Zero backends; kernels in `src/intel/levelzero/*.cl` |
@@ -72,7 +78,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `results/` | committed benchmark JSON |
 | `wasm/` | WebAssembly kernels (HashX interpreter and a runtime compiler, SHA-256 4-wide, Argon2id fill) + benchmarks + the module tests |
 | `web/` | the static documentation site: beginner guide, algorithms, comparison, benchmarks. `cd web && make check` |
-| `webgpu/` | HashX, Argon2id and SHA-256 compiled to WGSL and run on WebGPU; SHA-256 is 33x wasm, Argon2id is slower than wasm, HashX is wrong on the Intel backend — see its README before quoting any number from it |
+| `webgpu/` | HashX, Argon2id, SHA-256 and meatrider compiled to WGSL and run on WebGPU; SHA-256 is 33x wasm, Argon2id is slower than wasm, HashX is wrong on the Intel backend — see its README before quoting any number from it |
 | `betterAnusbis/` | an Anubis-compatible PoW gate in one C file; links this library |
 | `firefox-extension/` | native messaging host so the browser uses `libanubis_solver.so` |
 | `beyond/`, `card/` | the hardware half: RTL, testbenches, QEMU PCI device + driver |
@@ -118,6 +124,9 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `src/intel/levelzero/hashx_l0.spv(.h)`, `src/vulkan/hashx.spv(.h)` | clang/llvm-spirv and `glslangValidator` (see `docs/development.md`) |
 | `src/opencl/opencl_kernels.h` | `python3 tools/embed_opencl_kernels.py` |
 | `src/cpu/avx2.s`, `src/cpu/avx512.s` | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` |
+| `src/meatrider/meatrider_{avx2,avx512,shani}.s` | `python3 tools/gen_meatrider_s.py` (re-emits the `sha256` tier's kernels under meatrider symbols; `--check` fails when stale) |
+| `src/vulkan/meatrider_comp.spv(.h)` | `GLSLANG=/path/to/glslangValidator tools/build_meatrider_vk.sh` |
+| `src/meatrider/meatrider.ptx` | `python3 tools/gen_meatrider_ptx.py --ilp 1` |
 | `src/intel/xe/intelXe_sha256.xe` | `tools/gen_xe_sha256.py` (needs `IGA64` to assemble) |
 | `src/intel/xe/intelXe_sha256.igc.xe` | run `tools/xe-sha256-opencl.c`, `dd` the `.text.sha256_pow` section out of the Zebin, `iga64 -p 12p1 -d` |
 | `beyond/rtl/periph/deepseek_egg.v`, `beyond/vectors/deepseek_egg.txt`, `beyond/vectors/deepseek_egg_alt.txt` | `python3 beyond/tools/gen_deepseek_egg.py` (both messages are in the generator) |

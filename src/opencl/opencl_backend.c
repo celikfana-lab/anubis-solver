@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "meatrider/meatrider.h"
 #include "opencl_kernels.h"
 #include "hashx.h"
 
@@ -79,20 +80,39 @@ typedef struct {
     uint32_t hashes[8][8];
 } cl_hx_results;
 
+/* Mirror of mr_params / mr_results in src/meatrider/meatrider_opencl.cl. */
+typedef struct {
+    uint32_t mid[8];
+    uint32_t tail[3];
+    uint32_t difficulty;
+    uint32_t base_nonce;
+    uint32_t chunk;
+} cl_mr_params;
+
+typedef struct {
+    uint32_t count;
+    uint32_t pad[3];
+    uint32_t nonces[8];
+    uint32_t hashes[8][8];
+} cl_mr_results;
+
 static struct {
     int state;
     int dev_count;
     cl_context ctx;
     cl_command_queue queue;
-    cl_program prog_sha, prog_a2, prog_hx;
-    cl_kernel k_sha, k_a2, k_hx;
+    cl_program prog_sha, prog_a2, prog_hx, prog_mr;
+    cl_kernel k_sha, k_a2, k_hx, k_mr;
     cl_mem sha_params, sha_results;
     cl_mem a2_challenge, a2_mem, a2_results;
     cl_mem hx_prog, hx_results;
+    cl_mem mr_params, mr_results;
     cl_sha_params *sha_p;
     cl_sha_results *sha_r;
     cl_a2_results *a2_r;
     cl_hx_results *hx_r;
+    cl_mr_params *mr_p;
+    cl_mr_results *mr_r;
     pthread_mutex_t mu;
     char info[200];
 } g_ocl = { 0 };
@@ -245,6 +265,13 @@ static int ocl_init(void) {
             g_ocl.prog_hx = NULL;
         }
     }
+    g_ocl.prog_mr = ocl_build(ocl_meatrider_src, "meatrider_pow");
+    if (g_ocl.prog_mr) {
+        g_ocl.k_mr = p_clCreateKernel(g_ocl.prog_mr, "meatrider_pow", &err);
+        if (g_ocl.k_mr == NULL) {
+            g_ocl.prog_mr = NULL;
+        }
+    }
     g_ocl.sha_p = (cl_sha_params *)calloc(1, sizeof(cl_sha_params));
     g_ocl.sha_r = (cl_sha_results *)calloc(1, sizeof(cl_sha_results));
     g_ocl.a2_r = (cl_a2_results *)calloc(1, sizeof(cl_a2_results));
@@ -259,6 +286,17 @@ static int ocl_init(void) {
     g_ocl.hx_prog = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE, 512u * 16u, NULL, &err);
     g_ocl.hx_results = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE,
                                          sizeof(cl_hx_results), NULL, &err);
+    if (g_ocl.k_mr != NULL) {
+        g_ocl.mr_p = (cl_mr_params *)calloc(1, sizeof(cl_mr_params));
+        g_ocl.mr_r = (cl_mr_results *)calloc(1, sizeof(cl_mr_results));
+        g_ocl.mr_params = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE,
+                                           sizeof(cl_mr_params), NULL, &err);
+        g_ocl.mr_results = p_clCreateBuffer(g_ocl.ctx, CL_MEM_READ_WRITE,
+                                            sizeof(cl_mr_results), NULL, &err);
+        if (g_ocl.mr_params == NULL || g_ocl.mr_results == NULL) {
+            g_ocl.k_mr = NULL;
+        }
+    }
     if (g_ocl.sha_params == NULL || g_ocl.sha_results == NULL) {
         /* Report the backend as unavailable rather than as "exhausted": a
          * broken device buffer must not look like a finished search. */
@@ -381,6 +419,110 @@ int anubis_opencl_solve(const uint32_t mid[8], const uint8_t *prefix,
         }
         base += count;
         if (budget_ms > 0.0 && (ocl_now() - t0) * 1000.0 > budget_ms) { rc = 1; break; }
+    }
+    pthread_mutex_unlock(&g_ocl.mu);
+    return rc;
+}
+
+/* ------------------------------ meatrider ------------------------------ */
+
+int anubis_opencl_meatrider_available(void) {
+    return ocl_init() && g_ocl.k_mr != NULL && g_ocl.mr_p != NULL;
+}
+
+static uint32_t mr_le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+int anubis_opencl_meatrider_solve(const meatrider_ctx *ctx, uint32_t start,
+                                  uint32_t count, double budget_ms,
+                                  uint32_t *out_nonce,
+                                  uint8_t out_digest[32]) {
+    double t0;
+    uint32_t chunk;
+    size_t lsz = 64;
+    uint64_t base, end;
+    int rc = 1;
+    int i;
+
+    if (ctx == NULL || out_nonce == NULL || out_digest == NULL) {
+        return -1;
+    }
+    if (!anubis_opencl_meatrider_available()) {
+        return -1;
+    }
+    pthread_mutex_lock(&g_ocl.mu);
+    t0 = ocl_now();
+
+    memcpy(g_ocl.mr_p->mid, ctx->mid, sizeof ctx->mid);
+    g_ocl.mr_p->tail[0] = mr_le32(ctx->tail + 0);
+    g_ocl.mr_p->tail[1] = mr_le32(ctx->tail + 4);
+    g_ocl.mr_p->tail[2] = mr_le32(ctx->tail + 8);
+    g_ocl.mr_p->difficulty = (uint32_t)ctx->difficulty;
+
+    chunk = ocl_env_u32("ANUBIS_OPENCL_CHUNK", 1u << 22);
+    if (chunk < 4096u) chunk = 4096u;
+    if (chunk > (1u << 24)) chunk = 1u << 24;
+
+    base = start;
+    end = 0xFFFFFFFFull;
+    if (count > 0) {
+        uint64_t last = (uint64_t)start + (uint64_t)count - 1u;
+        if (last < end) end = last;
+    }
+    memset(g_ocl.mr_r, 0, sizeof(*g_ocl.mr_r));
+    p_clEnqueueWriteBuffer(g_ocl.queue, g_ocl.mr_results, CL_TRUE, 0,
+                           sizeof(*g_ocl.mr_r), g_ocl.mr_r, 0, NULL, NULL);
+
+    while (base <= end) {
+        uint64_t rem = end - base + 1u;
+        uint32_t n = (uint32_t)(rem < (uint64_t)chunk ? rem : (uint64_t)chunk);
+        size_t gsz = ((size_t)n + lsz - 1u) / lsz * lsz;
+        cl_int err;
+
+        g_ocl.mr_p->base_nonce = (uint32_t)base;
+        g_ocl.mr_p->chunk = n;
+        p_clEnqueueWriteBuffer(g_ocl.queue, g_ocl.mr_params, CL_TRUE, 0,
+                               sizeof(*g_ocl.mr_p), g_ocl.mr_p, 0, NULL, NULL);
+        err = p_clSetKernelArg(g_ocl.k_mr, 0, sizeof(cl_mem), &g_ocl.mr_params);
+        err |= p_clSetKernelArg(g_ocl.k_mr, 1, sizeof(cl_mem), &g_ocl.mr_results);
+        if (err != CL_SUCCESS) {
+            rc = -1;
+            break;
+        }
+        err = p_clEnqueueNDRangeKernel(g_ocl.queue, g_ocl.k_mr, 1, NULL, &gsz,
+                                       &lsz, 0, NULL, NULL);
+        if (err != CL_SUCCESS) {
+            rc = -1;
+            break;
+        }
+        {
+            cl_int ferr = p_clFinish(g_ocl.queue);
+            cl_int rd = p_clEnqueueReadBuffer(g_ocl.queue, g_ocl.mr_results,
+                                              CL_TRUE, 0, sizeof(*g_ocl.mr_r),
+                                              g_ocl.mr_r, 0, NULL, NULL);
+            if (ferr != CL_SUCCESS || rd != CL_SUCCESS) {
+                rc = -1;
+                break;
+            }
+        }
+        if (g_ocl.mr_r->count > 0) {
+            *out_nonce = g_ocl.mr_r->nonces[0];
+            for (i = 0; i < 8; i++) {
+                out_digest[4 * i + 0] = (uint8_t)(g_ocl.mr_r->hashes[0][i] >> 24);
+                out_digest[4 * i + 1] = (uint8_t)(g_ocl.mr_r->hashes[0][i] >> 16);
+                out_digest[4 * i + 2] = (uint8_t)(g_ocl.mr_r->hashes[0][i] >> 8);
+                out_digest[4 * i + 3] = (uint8_t)g_ocl.mr_r->hashes[0][i];
+            }
+            rc = 0;
+            break;
+        }
+        base += n;
+        if (budget_ms > 0.0 && (ocl_now() - t0) * 1000.0 > budget_ms) {
+            rc = 1;
+            break;
+        }
     }
     pthread_mutex_unlock(&g_ocl.mu);
     return rc;

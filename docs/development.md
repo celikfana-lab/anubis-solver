@@ -66,12 +66,42 @@ changes.
 | `tools/build_l0_argon2.sh` | `src/intel/levelzero/argon2id_l0.cl` → `src/intel/levelzero/argon2id_l0.spv(.h)` |
 | `tools/build_argon2_vk.sh` | `src/vulkan/argon2id.comp` → `src/vulkan/argon2id.spv` (needs `glslangValidator`) |
 | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` | generate the x86-64 assembly kernels |
+| `tools/gen_meatrider_s.py` | re-emit the `sha256` tier's kernels as `src/meatrider/meatrider_{avx2,avx512,shani}.s` (`--check` fails when stale) |
+| `tools/build_meatrider_vk.sh` | `src/vulkan/meatrider_comp.comp` → `src/vulkan/meatrider_comp.spv(.h)` (needs `glslangValidator`) |
+| `tools/gen_meatrider_ptx.py` | the `meatrider` PTX kernel, `src/meatrider/meatrider.ptx` |
 
 `src/opencl/opencl_kernels.h` embeds the `.cl` sources for the portable OpenCL
 backend; regenerate it with `python3 tools/embed_opencl_kernels.py` after
 editing one (`--check` fails instead of writing if it is stale). The SHA-256
 entry comes from `src/opencl/sha256_pow.cl`, the other two from
-`src/intel/levelzero/`.
+`src/intel/levelzero/`, and the `meatrider` one from
+`src/meatrider/meatrider_opencl.cl`.
+
+## The `meatrider` kernels
+
+The tier is SHA-256d over an 80-byte Bitcoin header, so one hash is two
+compressions and every kernel in the repository's inventory needs the same three
+facts: block 1 is `tail[12] || nonce_le || 0x80 || zeros || 0x280`, block 2 is
+the first digest big-endian plus `0x80` and `0x100`, and the digest is compared
+byte-reversed. `src/meatrider/meatrider.c` is the reference for all three;
+`meatrider_block1()`, `meatrider_block2()` and `meatrider_finish()` are the whole
+of "real Bitcoin" in this codebase.
+
+Adding a kernel means adding it to the inventory in
+`src/meatrider/meatrider_backend.{h,c}` and making
+`tests/test_meatrider_backends.py` pass: it asks every available kernel for the
+same digest and then makes each one mine. `ANUBIS_MEATRIDER_BACKEND` pins one
+kernel for benchmarks.
+
+Two of the slots are deliberately empty and say so:
+
+- **Level Zero.** The shader is verified on this machine's Intel GPU through
+  Vulkan, but `libze_intel_gpu` is not installed here, so an L0 host could not be
+  run once. This repository does not ship device code it has never executed.
+- **TPU.** A PJRT SHA-256 program measures 9.38 MHash/s on a TPU; `meatrider`
+  needs two compressions, so it would land near 4.7 MHash/s — slower than the
+  AVX2 kernel on the same laptop. It is not worth a kernel that loses.
+
 
 Level Zero rejects SPIR-V newer than 1.2, hence
 `llvm-spirv --spirv-max-version=1.2` in the build scripts.

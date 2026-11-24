@@ -939,6 +939,36 @@ class AnubisSolver:
     def supported(self, algorithm: str) -> bool:
         return algorithm in self.ALGORITHMS
 
+    # -- meatrider: the header and the price ladder -----------------------
+    # The tier's own helpers, so a caller does not have to reach for _native.
+    def meatrider_header(self, challenge_hex: str, difficulty: int, nonce: int) -> str:
+        """The 80-byte Bitcoin block header behind a proof, as 160 hex chars."""
+        return self._native.meatrider_header(challenge_hex, difficulty, nonce)
+
+    def meatrider_bits(self, difficulty: int) -> int:
+        """nBits for the exact target 2^(256-difficulty)."""
+        return self._native.meatrider_bits(difficulty)
+
+    def meatrider_price_usd(self, difficulty: int, usd_per_th_day: float = 0.0) -> float:
+        """What an Antminer S21 Pro earns doing 2^difficulty hashes, in USD.
+
+        A label on the work, not a payment: nothing in this library moves money.
+        """
+        return self._native.meatrider_price_usd(difficulty, usd_per_th_day)
+
+    def meatrider_asic_seconds(self, difficulty: int, hashrate: float = 0.0) -> float:
+        """How long an ASIC needs for that rung (234 TH/s unless told otherwise)."""
+        return self._native.meatrider_asic_seconds(difficulty, hashrate)
+
+    def meatrider_tier(self, difficulty: int) -> str | None:
+        """The rung's name: spark, nano, microbit, dust, suspicious, asic, ..."""
+        return self._native.meatrider_tier(difficulty)
+
+    def meatrider_difficulty_for_usd(self, usd: float,
+                                     usd_per_th_day: float = 0.0) -> int:
+        """The first difficulty whose price reaches `usd`."""
+        return self._native.meatrider_difficulty_for_usd(usd, usd_per_th_day)
+
     # -- core -------------------------------------------------------------
     def solve(self, challenge: AnubisChallenge | dict) -> Solution:
         if isinstance(challenge, dict):

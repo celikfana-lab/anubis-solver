@@ -180,6 +180,9 @@ def main() -> int:
                          "with --difficulty would make a 2 MHash/s kernel grind 2^d)")
     ap.add_argument("--budget-ms", type=float, default=3000.0,
                     help="give up on a rate row after this long (default 3000)")
+    ap.add_argument("--only", default="",
+                    help="comma-separated backend names to measure (default: every "
+                         "available one); the digest pass is limited to them too")
     ap.add_argument("--json", type=Path, default=None, help="write the rows as JSON")
     args = ap.parse_args()
 
@@ -196,9 +199,17 @@ def main() -> int:
 
     available = [b for b in range(lib.anubis_meatrider_backend_count())
                  if lib.anubis_meatrider_backend_available(b)]
+    only = {x.strip() for x in args.only.split(",") if x.strip()}
+    if only:
+        unknown = only - {name(lib, b) for b in available}
+        if unknown:
+            print(f"  (not available, so not measured: {', '.join(sorted(unknown))})")
+        available = [b for b in available if name(lib, b) in only]
     missing = [name(lib, b) for b in range(lib.anubis_meatrider_backend_count())
                if b not in available]
     print(f"  available: {', '.join(name(lib, b) for b in available)}")
+    if only:
+        print(f"  measuring: {', '.join(name(lib, b) for b in available)}")
     if missing:
         print(f"  not here:  {', '.join(missing)}")
 

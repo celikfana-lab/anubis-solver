@@ -816,7 +816,7 @@ is the directory's own guide):
 | portable C | `src/meatrider/meatrider.c` | 2.14 | 1x |
 | SHA-NI | `meatrider_shani.s` | 6.27 | 2.9x |
 | AVX2, 8 lanes | `meatrider_avx2.s` | 6.91 | 3.2x |
-| AVX-512, 16 lanes | `meatrider_avx512.s` | assembles | this CPU has it fused off |
+| AVX-512, 16 lanes | `meatrider_avx512.s` | assembles, not run | no AVX-512 on this CPU or on Kaggle's Xeon |
 | OpenCL | `meatrider_opencl.cl` | 154-168 | 72-78x |
 | Vulkan | `meatrider_vulkan.comp` | 56-80 | 26-37x |
 | WebGPU | `webgpu/meatrider.wgsl` | 43-62 | 20-29x |

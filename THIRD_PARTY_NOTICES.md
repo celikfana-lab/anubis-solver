@@ -14,6 +14,15 @@ fetches it from the gate instead of from a third party. Tenor's terms apply to
 the clip itself; it is included as a joke, is not covered by the project's
 licence, and the page links back to the post.
 
+## The other tiers' clip (`betterAnusbis/web/cat-clapping.webp`)
+
+A Tenor GIF, "Cat Clapping" (post 4721454909525108914), transcoded from an 833 KB
+GIF to a 142 KB animated WebP (150 px, 12 fps) for the same reason as the miner
+clip: a challenged browser fetches it from the gate itself and never asks
+tenor.com for a script or an image. Tenor's terms apply to the clip, it is
+included as a joke, it is not covered by the project's licence, and the page
+links back to the post.
+
 ## The meatrider logo (`mascot/meatrider.jpg`)
 
 An internet meme — a man riding a flying steak above the clouds — used as the

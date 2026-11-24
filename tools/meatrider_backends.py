@@ -184,6 +184,7 @@ def main() -> int:
         return 1
     lib = load()
 
+    devices = cuda_devices(lib)
     print(f"cuda devices: {devices}")
     print(f"meatrider backends on {platform.machine()} / {platform.system()} "
           f"{platform.release()}, {args.threads} thread(s)")
@@ -211,7 +212,6 @@ def main() -> int:
             print(f"  {name(lib, backend):10s} hit-only: checked end to end below")
 
     # ---- search rate ----------------------------------------------------
-    devices = cuda_devices(lib)
     chunk = 1 << 22                     # the kernels' default dispatch
     env_chunk = os.environ.get("ANUBIS_OPENCL_CHUNK") or os.environ.get("ANUBIS_VULKAN_CHUNK")
     if env_chunk:

@@ -831,6 +831,15 @@ Four things are worth being precise about:
   it says has to price the client it is aimed at; a bot with a GPU pays 1/73rd of
   the browser column.
 
+**AVX-512 has not been run anywhere yet.** The i7-1260P fuses it off, and the
+Kaggle CPU that was supposed to have it does not: `Intel(R) Xeon(R) CPU @
+2.20GHz`, `flags: avx2` — no `avx512f`, and no `sha_ni` either, so that box ran
+the portable C and AVX2 kernels only (`src/meatrider/kaggle_meatrider_cpu/`, 14
+checks passed, 68 digests correct). The 16-lane row is assembly-checked, linked
+and reachable through `ANUBIS_MEATRIDER_BACKEND=avx512`, not measured; a Sapphire
+Rapids or Ice Lake host running `python3 tools/meatrider_backends.py` fills it in
+without a code change.
+
 The browser column in the README ladder is at 1.0 M/s (the original scalar wasm
 kernel). With the 4-lane SIMD kernel the gate now serves, those times shrink by
 2.3x; the pure-JS fallback is 8x worse. The money column does not move at all —

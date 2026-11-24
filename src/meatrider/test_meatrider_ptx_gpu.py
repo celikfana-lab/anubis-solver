@@ -117,7 +117,13 @@ def main() -> int:
     if not ptx.anubis_meatrider_ptx_available():
         print("no CUDA driver, or the PTX did not load", file=sys.stderr)
         return 1
-    print(f"device: {(ptx.anubis_meatrider_ptx_info() or b'').decode()}")
+    info = (ptx.anubis_meatrider_ptx_info() or b"").decode()
+    print(f"device: {info}")
+    ndev = 1
+    if " x" in info:
+        tail = info.rsplit(" x", 1)[-1].split()[0]
+        if tail.isdigit():
+            ndev = int(tail)
     print(f"ptx:    {PTX.relative_to(ROOT)} ({PTX.stat().st_size:,} bytes, JITed by the driver)")
     chunk = int(os.environ.get("ANUBIS_PTX_CHUNK", 1 << 22))
 
@@ -198,8 +204,10 @@ def main() -> int:
             rows.append((difficulty, hps))
             print(f"       {dispatches.value} dispatches on the winning device, "
                   f"{elapsed / args.reps * 1000.0:.1f} ms per solve")
+            note = "" if ndev == 1 else f", {hps * ndev / 1e6:.1f} MHash/s aggregate over {ndev}"
             check(True, f"difficulty {difficulty}: {args.reps} solves, "
-                        f"{total_hashes:,} nonces, {hps / 1e6:.1f} MHash/s, digests agree")
+                        f"{total_hashes:,} nonces on the winning device, "
+                        f"{hps / 1e6:.1f} MHash/s per device{note}, digests agree")
 
     print("\nbackend     H/s                 difficulty")
     for difficulty, hps in rows:

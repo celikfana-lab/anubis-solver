@@ -871,6 +871,26 @@ Two things that run only there, and their numbers:
   checked-in `meatrider.ptx` directly (no nvcc, no ptxas, no cubin), and
   `ANUBIS_MEATRIDER_PTX=1` makes the library's CUDA slot use it.
 
+### On Kaggle's two T4s
+
+`src/meatrider/kaggle_meatrider/` measures the same tier with one T4 visible and
+then with both. The generated PTX scales cleanly, and the numbers come from the
+device's own dispatch count rather than an estimate:
+
+| | one T4 | two T4 | scaling |
+|---|---:|---:|---:|
+| PTX, per device | 1,285.9 M | 1,285.9 M | wall time 26.1 -> 26.5 ms per solve |
+| PTX, aggregate | 1,285.9 M | **2,534 M** | **1.97x** |
+
+Eight chunk dispatches on the winning device in the same time on one device and on
+two, so the second card is doing its own slice and not costing the first one
+anything. The `.cu` kernel reads 1,217.8 M on one T4 against the PTX's 1,285.9
+(1.06x for the generated kernel, the same direction Colab showed). Its two-device
+row reads 1,295.6 M, i.e. 1.06x, which cannot both be true if the devices run in
+parallel (the count doubles while the wall time is unchanged), so that row is
+marked unresolved rather than published: settling it needs a dispatch counter in
+`meatrider_cuda.cu` the way the PTX loader has one.
+
 ### On a Colab TPU
 
 The tier's PJRT program (`build_module_meatrider()` in

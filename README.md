@@ -303,7 +303,8 @@ c++ demo.cpp -Iinclude -L. -lanubis_solver -Wl,-rpath,"$PWD" -o demo && ./demo
 
 ## Documentation
 
-New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
+New here? [BEGINNER.md](BEGINNER.md) walks from build to first request, and
+[EVOLUTION.md](EVOLUTION.md) says how the thing got here.
 
 | page | what it covers |
 |---|---|
@@ -314,6 +315,7 @@ New here? [BEGINNER.md](BEGINNER.md) walks from build to first request.
 | [docs/troubleshooting.md](docs/troubleshooting.md) | common build and runtime errors |
 | [docs/development.md](docs/development.md) | layout, build, kernel regeneration, tests |
 | [SPEED.md](SPEED.md) | measured throughput, per tier and per version |
+| [EVOLUTION.md](EVOLUTION.md) | where this began: the pirate-tool `.so`, the takedown, the chip, the GPU argument, the Radeon that got away, Scratch, meatrider |
 | [MIGRATE.md](MIGRATE.md) | moving a live deployment from Anubis to `betterAnusbis`, and making clients fast while doing it |
 
 ## [HALL_OF_SHAME.md](HALL_OF_SHAME.md)

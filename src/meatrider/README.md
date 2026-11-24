@@ -59,7 +59,7 @@ header.
 | WebGPU | [`webgpu/meatrider.wgsl`](../../webgpu/meatrider.wgsl) | `main()` | 43–62 |
 | wasm SIMD128 ×4 | [`wasm/meatrider_simd.c`](../../wasm/meatrider_simd.c) | `anubis_work()` | 4.0–4.5 |
 | wasm scalar | [`wasm/meatrider_pow.c`](../../wasm/meatrider_pow.c) | `anubis_work()` | 1.75–1.93 |
-| PTX | `meatrider.ptx` | `meatrider_kernel` | 994.7 (Colab T4, driver-JITed) |
+| PTX | `meatrider.ptx` | `meatrider_kernel` | 994.7-1199.5 (Colab T4, driver-JITed) |
 
 Numbers are one run on an i7-1260P with an Iris Xe, one thread; the machine
 readable copy is [`results/meatrider-backends.json`](../../results/meatrider-backends.json)
@@ -81,7 +81,7 @@ and block 2, calls the compression twice, and reverses the result — and
 - otherwise the first available accelerator in the library's dispatch order
   (CUDA → Level Zero → Vulkan → OpenCL), else the widest CPU kernel.
 - `ANUBIS_MEATRIDER_PTX=1` makes the CUDA slot run the generated PTX instead of
-  the `.cu` kernel; on a T4 that is 994.7 against 785.8 MHash/s.
+  the `.cu` kernel; the same harness reads 1199.5 against 785.8 MHash/s on a T4.
 - an accelerator is only asked above **2^20 hashes** (`ANUBIS_MEATRIDER_MIN_WORK`):
   a dispatch costs about 60 ms, where the AVX2 kernel does a `grain` rung in a
   millisecond. Below the threshold the CPU wins.

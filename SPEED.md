@@ -840,10 +840,10 @@ out to have the AVX-512 the Kaggle box did not:
 |---|---:|---:|
 | portable C | 1.44 M | 2.14 M |
 | AVX2 ×8 | 6.94 M | 6.91 M |
-| AVX-512 ×16 | **8.69 M** | not run (fused off) |
+| AVX-512 ×16 | **8.7-10.8 M** | not run (fused off) |
 | OpenCL (on the T4) | 654.6 M | 154-168 M (Iris Xe) |
 | CUDA, the `.cu` kernel | **785.8 M** | — |
-| PTX, driver-JITed | **994.7 M** | — |
+| PTX, driver-JITed | **994.7-1199.5 M** | — |
 
 `python3 tools/meatrider_backends.py` after `make CUDA_ARCH=sm_75` gives the
 first five rows; `python3 src/meatrider/test_meatrider_ptx_gpu.py` gives the last.
@@ -853,13 +853,19 @@ mine whose nonce the C reference re-derived for opencl, cuda and ptx.
 
 Two things that run only there, and their numbers:
 
-- **AVX-512 works.** The 16-lane kernel passes all 60 digest checks and does
-  8.69 MHash/s against 6.94 for AVX2 — 1.25x, not the 2x the lane count suggests,
-  because one hash is two compressions through a stack-spilled schedule.
-- **The generated PTX is the fastest thing on a T4.** 994.7 MHash/s against the
-  `.cu` kernel's 785.8 (1.27x): both compressions are fully unrolled and the
-  whole message schedule lives in registers, where nvcc keeps a loop. The driver
-  JITs the checked-in `meatrider.ptx` directly — no nvcc, no ptxas, no cubin — and
+- **AVX-512 works.** The 16-lane kernel passes all 60 digest checks. Two runs on
+  shared Colab CPUs read 8.69 and 10.82 MHash/s against 6.94 and 4.62 for AVX2 —
+  1.25x and 2.3x — so the box is too noisy for a single ratio, but not for the
+  conclusion: the lane count does not double the rate, because one hash is two
+  compressions through a stack-spilled schedule.
+- **The generated PTX is the fastest thing on a T4.** Both compressions are fully
+  unrolled and the whole message schedule lives in registers, where nvcc keeps a
+  loop. Two measurements, both correct, on the same box: the standalone script
+  (`test_meatrider_ptx_gpu.py`, 5 solves at each of d=16/20/24) reads 994.7, and
+  the rate harness at d=23 reads 1199.5 in the same kind of run where the `.cu`
+  kernel reads 785.8 — so the apples-to-apples figure is **1.53x**, and 994.7 is
+  what the same kernel does under a different difficulty mix. The driver JITs the
+  checked-in `meatrider.ptx` directly (no nvcc, no ptxas, no cubin), and
   `ANUBIS_MEATRIDER_PTX=1` makes the library's CUDA slot use it.
 
 **The Kaggle CPU that was supposed to have AVX-512 does not**: `Intel(R) Xeon(R)

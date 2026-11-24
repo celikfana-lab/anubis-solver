@@ -156,7 +156,19 @@ CODE=$(curl -s -o /tmp/ba-mr-mining.webp -w '%{http_code}' -D /tmp/ba-mr-mining.
 check "the mining clip is served as image/webp" \
       "$([ "$CODE" = 200 ] && [ -s /tmp/ba-mr-mining.webp ] \
          && grep -qi 'content-type: image/webp' /tmp/ba-mr-mining.hdr && echo 1 || echo 0)" \
-      "HTTP $CODE $(wc -c < /tmp/ba-mr-mining.webp 2>/dev/null)" 
+      "HTTP $CODE $(wc -c < /tmp/ba-mr-mining.webp 2>/dev/null)"
+
+# the WebGPU kernel, served by the gate itself: the page asks for it by name and
+# falls back to the wasm module when the browser has no adapter.
+CODE=$(curl -s -o /tmp/ba-mr.wgsl -w '%{http_code}' -D /tmp/ba-mr-wgsl.hdr \
+       "http://127.0.0.1:$PORT_PAY/.within.website/x/cmd/anubis/api/static/anubis/meatrider.wgsl")
+check "the WebGPU kernel is served as text" \
+      "$([ "$CODE" = 200 ] && grep -q 'entryPoint\|fn main' /tmp/ba-mr.wgsl \
+         && grep -qi 'content-type: text/plain' /tmp/ba-mr-wgsl.hdr && echo 1 || echo 0)" \
+      "HTTP $CODE $(wc -c < /tmp/ba-mr.wgsl 2>/dev/null)"
+check "the page mines on WebGPU before falling back to wasm" \
+      "$(curl -s "http://127.0.0.1:$PORT_PAY/" \
+         | grep -q 'navigator.gpu.*mrWebGPU\|mrWebGPU(raw,diff' && echo 1 || echo 0)"
 stop $NOPAY_PID
 
 echo

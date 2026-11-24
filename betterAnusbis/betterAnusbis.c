@@ -12447,6 +12447,172 @@ function buildModule(challenge) {
       }
     }
 
+    // ----------------------------------------------------------- meatrider
+    // The tier's WebGPU kernel, served next to the page as meatrider.wgsl
+    // (webgpu/meatrider.wgsl). It mines the same 80-byte header as the wasm
+    // fallback: the first 64 bytes are folded into a midstate here, the kernel
+    // tries four nonces per invocation, and a hit is re-hashed by mrDigest()
+    // before it is believed -- a driver that returns a wrong digest costs a
+    // dispatch, not a wrong answer.
+    const MR_IV=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    const MR_K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+    const MR_LANES=4, MR_THREADS=64, MR_PER_GROUP=MR_LANES*MR_THREADS, MR_RESULTS_U32=76;
+    const mrBe32=(a,o)=>((a[o]<<24)|(a[o+1]<<16)|(a[o+2]<<8)|a[o+3])>>>0;
+    const mrPutLE=(a,o,v)=>{a[o]=v&255;a[o+1]=(v>>>8)&255;a[o+2]=(v>>>16)&255;a[o+3]=(v>>>24)&255;};
+    const mrRotr=(x,n)=>((x>>>n)|(x<<(32-n)))>>>0;
+
+    function mrCompress(h,w){
+      const ww=new Uint32Array(64); ww.set(w);
+      for(let i=16;i<64;i++){
+        const x=ww[i-15], y=ww[i-2];
+        const s0=(mrRotr(x,7)^mrRotr(x,18)^(x>>>3))>>>0;
+        const s1=(mrRotr(y,17)^mrRotr(y,19)^(y>>>10))>>>0;
+        ww[i]=(ww[i-16]+s0+ww[i-7]+s1)>>>0;
+      }
+      let a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+      for(let i=0;i<64;i++){
+        const S1=(mrRotr(e,6)^mrRotr(e,11)^mrRotr(e,25))>>>0;
+        const ch=((e&f)^((~e)&g))>>>0;
+        const t1=(hh+S1+ch+MR_K[i]+ww[i])>>>0;
+        const S0=(mrRotr(a,2)^mrRotr(a,13)^mrRotr(a,22))>>>0;
+        const maj=((a&b)^(a&c)^(b&c))>>>0;
+        const t2=(S0+maj)>>>0;
+        hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;
+      }
+      h[0]=(h[0]+a)>>>0;h[1]=(h[1]+b)>>>0;h[2]=(h[2]+c)>>>0;h[3]=(h[3]+d)>>>0;
+      h[4]=(h[4]+e)>>>0;h[5]=(h[5]+f)>>>0;h[6]=(h[6]+g)>>>0;h[7]=(h[7]+hh)>>>0;
+    }
+
+    // SHA-256 of a message under 56 bytes: one padded block.
+    function mrShaShort(msg){
+      const h=Uint32Array.from(MR_IV), blk=new Uint8Array(64), bits=msg.length*8;
+      blk.set(msg); blk[msg.length]=0x80;
+      blk[62]=(bits>>>8)&255; blk[63]=bits&255;
+      const w=new Uint32Array(16);
+      for(let i=0;i<16;i++) w[i]=mrBe32(blk,4*i);
+      mrCompress(h,w);
+      return h;
+    }
+
+    // Bitcoin's nBits for the exact target 2^(256-difficulty).
+    function mrBitsFor(diff){
+      const blen=257-diff, size=Math.ceil(blen/8);
+      let compact = size<=3 ? ((1<<(blen-1))<<(8*(3-size)))>>>0
+                            : (1<<((blen-1)-8*(size-3)))>>>0;
+      let sz=size;
+      if(compact&0x00800000){compact=(compact>>>8)>>>0;sz++;}
+      return (compact|(sz<<24))>>>0;
+    }
+
+    // The host half of meatrider_ctx_init(): midstate[8] plus the tail words.
+    function mrCtx(rd,diff){
+      const label=new Uint8Array(9+32);
+      label.set([109,101,97,116,114,105,100,101,114]);   // "meatrider"
+      label.set(rd,9);
+      const mw=mrShaShort(label), merkle=new Uint8Array(32);
+      for(let i=0;i<8;i++){
+        merkle[4*i]=mw[i]>>>24;merkle[4*i+1]=(mw[i]>>>16)&255;
+        merkle[4*i+2]=(mw[i]>>>8)&255;merkle[4*i+3]=mw[i]&255;
+      }
+      const first=new Uint8Array(64);
+      mrPutLE(first,0,1); first.set(rd,4); first.set(merkle.subarray(0,28),36);
+      const mid=Uint32Array.from(MR_IV), w=new Uint32Array(16);
+      for(let i=0;i<16;i++) w[i]=mrBe32(first,4*i);
+      mrCompress(mid,w);
+      const tail=new Uint8Array(12);
+      tail.set(merkle.subarray(28,32),0);
+      mrPutLE(tail,4,1231006505);                // the genesis timestamp
+      mrPutLE(tail,8,mrBitsFor(diff));
+      return {mid, tailWords:[mrBe32(tail,0),mrBe32(tail,4),mrBe32(tail,8)], first};
+    }
+
+    // The reference digest for one nonce, in display order, in JavaScript.
+    function mrDigest(ctx,nonce){
+      const blk=new Uint8Array(64), w=new Uint32Array(16);
+      const h=Uint32Array.from(ctx.mid);
+      const tw=(o,v)=>{blk[o]=v>>>24;blk[o+1]=(v>>>16)&255;blk[o+2]=(v>>>8)&255;blk[o+3]=v&255;};
+      tw(0,ctx.tailWords[0]); tw(4,ctx.tailWords[1]); tw(8,ctx.tailWords[2]);
+      mrPutLE(blk,12,nonce>>>0); blk[16]=0x80; blk[62]=0x02; blk[63]=0x80;
+      for(let i=0;i<16;i++) w[i]=mrBe32(blk,4*i);
+      mrCompress(h,w);
+      blk.fill(0);
+      for(let i=0;i<8;i++) tw(4*i,h[i]);
+      blk[32]=0x80; blk[62]=0x01; blk[63]=0x00;
+      for(let i=0;i<16;i++) w[i]=mrBe32(blk,4*i);
+      const h2=Uint32Array.from(MR_IV);
+      mrCompress(h2,w);
+      const out=new Uint8Array(32);
+      for(let i=0;i<8;i++) mrPutLE(out,4*i,h2[7-i]);
+      return tohex(out);
+    }
+
+    // Mine the challenge on WebGPU. Throws when there is no adapter, the shader
+    // does not compile, or nothing is found in a bounded number of dispatches;
+    // the caller falls through to wasm in every one of those cases.
+    async function mrWebGPU(rd,diff,totalCents){
+      if(!navigator.gpu) throw new Error("this browser has no navigator.gpu");
+      const adapter=await navigator.gpu.requestAdapter();
+      if(!adapter) throw new Error("no WebGPU adapter");
+      const device=await adapter.requestDevice();
+      const code=await (await fetch("/.within.website/x/cmd/anubis/api/static/anubis/meatrider.wgsl")).text();
+      const module=device.createShaderModule({code,label:"meatrider"});
+      const info=await module.getCompilationInfo();
+      if(info.messages.some(m=>m.type==="error")) throw new Error("the WGSL kernel did not compile");
+      const pipeline=device.createComputePipeline({layout:"auto",compute:{module,entryPoint:"main"}});
+      const paramsBuf=device.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+      const resultsBuf=device.createBuffer({size:MR_RESULTS_U32*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC|GPUBufferUsage.COPY_DST});
+      const readBuf=device.createBuffer({size:MR_RESULTS_U32*4,usage:GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST});
+      const bind=device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries:[
+        {binding:0,resource:{buffer:paramsBuf}},{binding:1,resource:{buffer:resultsBuf}}]});
+      const ctx=mrCtx(rd,diff), CHUNK=1<<22, expected=Math.pow(2,diff);
+      let base=0, scanned=0;
+      const t0=performance.now();
+      for(let c=0;c<1024;c++){
+        const params=new Uint32Array(16);
+        params.set(ctx.mid,0); params.set(ctx.tailWords,8);
+        params[11]=diff>>>0; params[12]=base>>>0; params[13]=CHUNK;
+        device.queue.writeBuffer(paramsBuf,0,params);
+        device.queue.writeBuffer(resultsBuf,0,new Uint32Array(MR_RESULTS_U32));
+        const enc=device.createCommandEncoder();
+        const pass=enc.beginComputePass();
+        pass.setPipeline(pipeline); pass.setBindGroup(0,bind);
+        pass.dispatchWorkgroups(Math.ceil(CHUNK/MR_PER_GROUP));
+        pass.end();
+        enc.copyBufferToBuffer(resultsBuf,0,readBuf,0,MR_RESULTS_U32*4);
+        device.queue.submit([enc.finish()]);
+        await device.queue.onSubmittedWorkDone();
+        await readBuf.mapAsync(GPUMapMode.READ);
+        const u32=new Uint32Array(readBuf.getMappedRange()).slice(0);
+        readBuf.unmap();
+        base=(base+CHUNK)>>>0; scanned+=CHUNK;
+        const ms=performance.now()-t0;
+        if(u32[0]>0){
+          let best=null;
+          for(let s=0;s<Math.min(8,u32[0]);s++){
+            const nonce=u32[4+s], words=u32.slice(12+s*8,12+s*8+8);
+            let hexd=""; for(const w of words) hexd+=w.toString(16).padStart(8,"0");
+            if(!best||nonce<best.nonce) best={nonce,hash:hexd};
+          }
+          if(best&&mrDigest(ctx,best.nonce)===best.hash){
+            return {nonce:best.nonce,hash:best.hash,ms,scanned};
+          }
+          console.warn("meatrider: a WebGPU hit did not survive the JavaScript check");
+        }
+        const frac=Math.min(0.99,scanned/expected);
+        workUpdate(frac,scanned,ms,expected);
+        mrMiningSay(diff,totalCents,frac);
+        await new Promise(r=>setTimeout(r,0));
+      }
+      throw new Error("no hit after "+scanned.toLocaleString("en-US")+" nonces");
+    }
+
     // meatrider: the nonce is the last field of an 80-byte Bitcoin header, so
     // there is nothing to batch and no JIT to build. What the windowed export
     // buys is a progress bar and a tab that can be closed; the per-hash work is
@@ -12488,6 +12654,29 @@ function buildModule(challenge) {
       const totalCents=mrPriceUsd(diff)*100;
       const box=mrMiningBox();
       mrMiningSay(diff,totalCents,0);
+      // WebGPU first: the same kernel the tier ships for its GPU rows, and the
+      // fastest thing a browser can bring. A hit is re-hashed in JavaScript
+      // above, and any failure (no adapter, a shader that will not compile, no
+      // hit) falls through to the wasm module below.
+      if(navigator.gpu){
+        try{
+          say("meatrider: asking WebGPU for the kernel (4 nonces per invocation)");
+          const g=await mrWebGPU(raw,diff,totalCents);
+          const rate=g.scanned/(g.ms/1000);
+          if(box) box.remove();
+          workUpdate(1,g.scanned,g.ms,Math.pow(2,diff));
+          workDone();
+          say("solved with nonce "+g.nonce+" in "+g.ms.toFixed(0)+" ms on WebGPU ("+
+              (rate/1e6).toFixed(1)+" MHash/s over "+g.scanned.toLocaleString("en-US")+
+              " nonces, 4 per invocation)");
+          console.log("meatrider-webgpu "+JSON.stringify({nonce:g.nonce,ms:Math.round(g.ms),
+            nonces:g.scanned,mhs:+(rate/1e6).toFixed(1),difficulty:diff}));
+          return {hash:g.hash,nonce:g.nonce,ms:g.ms};
+        }catch(e){
+          console.warn("meatrider: WebGPU path failed, using wasm:",e);
+          say("WebGPU unavailable here ("+e.message+"), using the wasm kernel");
+        }
+      }
       // Four nonces per SIMD vector where the browser can do it; the scalar
       // module computes the same digests, one at a time.
       const file=(WASM_SIMD?"meatrider_simd.wasm":name);
@@ -15732,6 +15921,7 @@ static void handle_parsed(conn *c, request *req_in, const char *peer_ip) {
                     fclose(f);
                     const char *ctype = "application/octet-stream";
                     if (strstr(name, ".wasm")) ctype = "application/wasm";
+                    else if (strstr(name, ".wgsl")) ctype = "text/plain; charset=utf-8";
                     else if (strstr(name, ".webp")) ctype = "image/webp";
                     else if (strstr(name, ".gif")) ctype = "image/gif";
                     else if (strstr(name, ".png")) ctype = "image/png";

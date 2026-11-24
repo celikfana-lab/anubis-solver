@@ -11250,11 +11250,52 @@ static const char *CHALLENGE_JS = R"JS(
     [1e-11,"crumb"],[1e-10,"atom"],[1e-9,"nano"],[1e-8,"microbit"],[1e-7,"dust"],
     [1e-6,"suspicious"],[1e-5,"very-suspicious"],[1e-4,"bot-shaped"],[1e-3,"farm"],
     [1e-2,"datacenter"],[1e-1,"asic"],[1e0,"meatrider"]];
-  function meatriderBlurb(d){
-    const hashes=Math.pow(2,d);
-    const price=hashes*0.05/(1e12*86400);
+  function mrPriceUsd(d){ return Math.pow(2,d)*0.05/(1e12*86400); }
+  function mrTierName(d){
+    const price=mrPriceUsd(d);
     let name=MR_TIERS[0][1];
     for(const t of MR_TIERS) if(price>=t[0]) name=t[1];
+    return name;
+  }
+  // Cents, with enough digits after the leading zeros to see something. The
+  // whole ladder lives between 1e-16 and 1e-2 dollars, so "0.000000015 cents"
+  // is not a formatting accident: it is the price.
+  function mrCents(x){
+    if(!(x>0)) return "0";
+    const d=Math.min(18,Math.max(0,Math.ceil(-Math.log10(x))+3));
+    return x.toFixed(d);
+  }
+  function mrMiningSay(d,totalCents,frac){
+    const f=Math.max(0,Math.min(1,frac));
+    say("meatrider "+mrTierName(d)+" - mining "+(f*100).toFixed(1)+"%: "+
+        mrCents(totalCents*f)+" cents mined, "+mrCents(totalCents*(1-f))+" cents left");
+  }
+  // The Tenor clip, transcoded to a 150px animated WebP and served by the gate
+  // itself: no third-party script, no request to tenor.com from a challenged
+  // browser, 194 KB instead of 3.8 MB. Only meatrider mining ever loads it.
+  function mrMiningBox(){
+    try{
+      const img=document.createElement("img");
+      img.src="/.within.website/x/cmd/anubis/api/static/anubis/meatrider-mining.webp";
+      img.alt="a man mining coal"; img.width=150;
+      img.style.cssText="display:block;margin:.6rem auto 0;border-radius:.5rem";
+      const cap=document.createElement("div");
+      cap.style.cssText="font-size:.75rem;opacity:.7;text-align:center;margin-top:.2rem";
+      const a=document.createElement("a");
+      a.href="https://tenor.com/view/mining-pakistani-pakistani-miner-pakistani-mining-coal-gif-16305674345809141538";
+      a.textContent="via Tenor"; a.rel="noopener";
+      cap.appendChild(a);
+      const box=document.createElement("div");
+      box.appendChild(img); box.appendChild(cap);
+      const st=document.getElementById("status");
+      if(st&&st.parentNode) st.parentNode.insertBefore(box,st.nextSibling);
+      else if(document.body) document.body.appendChild(box);
+      return box;
+    }catch(_){ return null; }
+  }
+  function meatriderBlurb(d){
+    const hashes=Math.pow(2,d);
+    const price=mrPriceUsd(d), name=mrTierName(d);
     return name+": 2^"+d+" hashes, $"+(price<0.01?price.toExponential(1):price.toFixed(2))+
       " of bitcoin at $0.05/TH-day, "+mrTime(hashes/2.34e14)+" of an Antminer S21 Pro, "+
       mrTime(hashes/1e6)+" of this browser's wasm kernel";
@@ -12437,6 +12478,9 @@ function buildModule(challenge) {
         refused.meatriderRefused=true;
         throw refused;
       }
+      const totalCents=mrPriceUsd(diff)*100;
+      const box=mrMiningBox();
+      mrMiningSay(diff,totalCents,0);
       say("loading the meatrider kernel (SHA-256d over an 80-byte Bitcoin header)");
       const bytes=await (await fetch("/.within.website/x/cmd/anubis/api/static/anubis/"+name)).arrayBuffer();
       const {instance}=await WebAssembly.instantiate(bytes,{});
@@ -12451,11 +12495,14 @@ function buildModule(challenge) {
         const ms=performance.now()-t0, done=base;
         if(hit>=0){
           const digest=new Uint8Array(ex.memory.buffer,ex.result_hash_ptr(),ex.result_hash_size());
+          if(box) box.remove();
           workUpdate(1,done,ms,expected);
           workDone();
           return {hash:tohex(digest),nonce:hit,ms};
         }
-        workUpdate(Math.min(0.99,done/expected),done,ms,expected);
+        const frac=Math.min(0.99,done/expected);
+        workUpdate(frac,done,ms,expected);
+        mrMiningSay(diff,totalCents,frac);
         await new Promise(r=>setTimeout(r,0));
       }
     }
@@ -13442,7 +13489,11 @@ function argon2idTag(password, nonce) {
     pad2[32]=0x80;
     sha256length(pad2,256);
     const rev=new Uint8Array(32);
+    const totalCents=mrPriceUsd(diff)*100;
+    const expected=Math.pow(2,diff);
+    const box=mrMiningBox();
     const t0=performance.now();
+    mrMiningSay(diff,totalCents,0);
     for(let nonce=0;;nonce++){
       const v=nonce>>>0;
       pad1[76]=v&255; pad1[77]=(v>>>8)&255; pad1[78]=(v>>>16)&255; pad1[79]=(v>>>24)&255;
@@ -13450,11 +13501,15 @@ function argon2idTag(password, nonce) {
       const h2=sha256padded(pad2);
       if(lzr(h2)>=diff){
         for(let i=0;i<32;i++) rev[i]=h2[31-i];
+        if(box) box.remove();
         say("solved with nonce "+nonce+" in JavaScript");
         pass(tohex(rev),nonce,performance.now()-t0);
         return;
       }
-      if((nonce&8191)===8191) await new Promise(r=>setTimeout(r,0));
+      if((nonce&8191)===8191){
+        mrMiningSay(diff,totalCents,Math.min(0.99,nonce/expected));
+        await new Promise(r=>setTimeout(r,0));
+      }
     }
   }
 })();
@@ -15664,7 +15719,14 @@ static void handle_parsed(conn *c, request *req_in, const char *peer_ip) {
                     respond(c, 500, "Internal Server Error", NULL, NULL, "read\n", 5);
                 } else {
                     fclose(f);
-                    respond(c, 200, "OK", "application/wasm", "Cache-Control: max-age=86400\r\n",
+                    const char *ctype = "application/octet-stream";
+                    if (strstr(name, ".wasm")) ctype = "application/wasm";
+                    else if (strstr(name, ".webp")) ctype = "image/webp";
+                    else if (strstr(name, ".gif")) ctype = "image/gif";
+                    else if (strstr(name, ".png")) ctype = "image/png";
+                    else if (strstr(name, ".jpg") || strstr(name, ".jpeg"))
+                        ctype = "image/jpeg";
+                    respond(c, 200, "OK", ctype, "Cache-Control: max-age=86400\r\n",
                             blob, (size_t)len);
                     free(blob);
                 }

@@ -888,6 +888,14 @@ the payment (you confirm it and mint the receipt), and none of this pays anythin
 unless you publish an address — with `--meatrider-pay` unset the rungs are just
 expensive, and nobody gets paid.
 
+While a browser is mining, the page shows the miner it has become — a Tenor
+clip ("Mining Pakistani"), transcoded from 3.8 MB to a 150 px animated WebP and
+served by the gate itself, so a challenged browser makes no third-party request —
+and a running readout of the rung's price in cents:
+`meatrider atom - mining 3.2%: 0.00000000496 cents mined, 0.0000000150 cents left`.
+The browser "earns" that money in the sense that its hashes are worth it; the
+operator is who actually receives it, which is the joke.
+
 **Suspicion buys a rung.** `--meatrider-escalate` wires the rung to the honeypot
 the gate already runs: a network that follows the trap link gets a meatrider
 challenge instead of `difficulty + 8`, and every doubling of its hit count moves

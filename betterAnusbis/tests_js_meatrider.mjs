@@ -135,6 +135,12 @@ for (const [difficulty, randomData] of [
     check(`pure-js leading bits d=${difficulty}`, leadingZeroBits(hexToBytes(response)) >= difficulty);
     check(`pure-js mentions the rung d=${difficulty}`,
           said.some((s) => /meatrider: .* 2\^/.test(s)), said.join(' | '));
+    check(`pure-js starts at 0 cents d=${difficulty}`,
+          said.some((s) => /mining 0\.0%: 0 cents mined, [\d.]+ cents left/.test(s)),
+          said.join(' | '));
+    check(`pure-js reports cents mined vs left d=${difficulty}`,
+          said.some((s) => /mining [\d.]+%: [\d.]+ cents mined, [\d.]+ cents left/.test(s)),
+          said.join(' | '));
 }
 
 // 2. no WebAssembly at all: automatic fallback, same proof
@@ -150,10 +156,13 @@ for (const [difficulty, randomData] of [
 // 3. the wasm driver: the kernel from ./web/, windowed through the page
 for (const difficulty of [4, 12]) {
     const randomData = createHash('sha256').update(`kernel-${difficulty}`).digest('hex');
-    const { nonce, response } = await solve({ difficulty, randomData, withKernel: true });
+    const { nonce, response, said } = await solve({ difficulty, randomData, withKernel: true });
     const want = bitcoinHash(hexToBytes(randomData), difficulty, nonce).toString('hex');
     check(`wasm digest d=${difficulty}`, response === want, `${response} != ${want}`);
     check(`wasm leading bits d=${difficulty}`, leadingZeroBits(hexToBytes(response)) >= difficulty);
+    check(`wasm reports the money d=${difficulty}`,
+          said.some((s) => /mining [\d.]+%: [\d.]+ cents mined, [\d.]+ cents left/.test(s)),
+          said.join(' | '));
 }
 
 // 4. the ASIC rung refuses to mine

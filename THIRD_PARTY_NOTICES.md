@@ -6,6 +6,14 @@ licenses; the `LICENSE` covers only the original code, under **MIT + attribution
 the terms below and cannot loosen them — where they conflict, the third-party
 license wins for that portion.
 
+## The mining clip (`betterAnusbis/web/meatrider-mining.webp`)
+
+A Tenor clip, "Mining Pakistani" (post 16305674345809141538), transcoded from the
+3.8 MB GIF to a 150 px, 31-frame animated WebP (194 KB) so a challenged browser
+fetches it from the gate instead of from a third party. Tenor's terms apply to
+the clip itself; it is included as a joke, is not covered by the project's
+licence, and the page links back to the post.
+
 ## The meatrider logo (`mascot/meatrider.jpg`)
 
 An internet meme — a man riding a flying steak above the clouds — used as the

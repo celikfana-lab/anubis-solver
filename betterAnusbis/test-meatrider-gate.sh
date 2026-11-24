@@ -137,6 +137,14 @@ REC3=$(./betterAnusbis --meatrider-receipt "$ID3" --secret-hex "$SECRET")
 CODE=$(curl -s -o /dev/null -w '%{http_code}' \
        "http://127.0.0.1:$PORT_PAY/.within.website/x/cmd/anubis/api/pass-challenge?id=$ID3&response=$REC3&nonce=0")
 check "and a receipt is refused without an address" "$([ "$CODE" = 403 ] && echo 1 || echo 0)" "HTTP $CODE"
+
+# the mining clip is served by the gate itself, with the right type
+CODE=$(curl -s -o /tmp/ba-mr-mining.webp -w '%{http_code}' -D /tmp/ba-mr-mining.hdr \
+       "http://127.0.0.1:$PORT_PAY/.within.website/x/cmd/anubis/api/static/anubis/meatrider-mining.webp")
+check "the mining clip is served as image/webp" \
+      "$([ "$CODE" = 200 ] && [ -s /tmp/ba-mr-mining.webp ] \
+         && grep -qi 'content-type: image/webp' /tmp/ba-mr-mining.hdr && echo 1 || echo 0)" \
+      "HTTP $CODE $(wc -c < /tmp/ba-mr-mining.webp 2>/dev/null)" 
 stop $NOPAY_PID
 
 echo

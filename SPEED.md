@@ -817,6 +817,12 @@ Four things are worth being precise about:
   wasm module compiles, so the browser and the server still agree bit for bit.
   The native library picks the fastest kernel per call, `ANUBIS_MEATRIDER_BACKEND`
   overrides it, and `anubis_meatrider_backend_digest()` asks one kernel directly.
+- **Small rungs stay on the CPU.** A dispatch costs ~60 ms; the AVX2 kernel does
+  a 2^11 rung in a millisecond and 2^20 in 150 ms. The crossover at 6.9 MHash/s
+  CPU against 154 MHash/s GPU is about 2^19, so `anubis_solve_meatrider()` keeps
+  anything below 2^20 on the CPU unless `ANUBIS_MEATRIDER_MIN_WORK` says
+  otherwise. On this machine's Intel GPU OpenCL measures about 2.5x Vulkan for
+  this tier even though the dispatch order prefers Vulkan.
 - **The ladder is priced for a browser, and a GPU laughs at it.** The `atom` rung
   is 2^28 hashes: 4 minutes for the browser column, 1.6 seconds for OpenCL on an
   integrated GPU. This was always true of SHA-256d — Bitcoin ASICs have done it in

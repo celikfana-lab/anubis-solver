@@ -830,7 +830,12 @@ are one run on an i7-1260P with an Iris Xe; the commands and the caveats are in
 [SPEED.md](SPEED.md#meatrider-two-compressions-and-a-price-tag).
 
 `ANUBIS_MEATRIDER_BACKEND=cpu|shani|avx2|avx512|opencl|vulkan|levelzero|cuda|tpu`
-pins the solver to one kernel, which is how those rows were measured.
+pins the solver to one kernel, which is how those rows were measured. Below
+2^20 hashes the CPU kernel is used even when a GPU is present — a dispatch costs
+about 60 ms where the AVX2 path does a `grain` rung in a millisecond — and
+`ANUBIS_MEATRIDER_MIN_WORK` moves that crossover. On the Intel iGPU here OpenCL
+is about 2.5x Vulkan for this tier, so `ANUBIS_MEATRIDER_BACKEND=opencl` is worth
+pinching if the rung is big.
 
 So the rung is a price on *browser* work, and a GPU turns it into a coffee break:
 the `atom` rung is 4 minutes of Chrome and 1.6 seconds of OpenCL. That was always

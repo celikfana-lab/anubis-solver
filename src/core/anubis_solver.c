@@ -2474,7 +2474,29 @@ static int meatrider_solve_on(int backend, const char *challenge_hex,
     }
 
     /* An accelerator covers the whole 32-bit space in one dispatch, so it is
-     * asked first and the thread pool is not started at all. */
+     * asked first and the thread pool is not started at all. Below ~2^20
+     * hashes that is a loss: a dispatch costs about 60 ms (pipeline plus
+     * round trip) where the AVX2 kernel does 2^20 in 150 ms and 2^11 in a
+     * millisecond. The threshold is the crossover at 6.9 MHash/s CPU against
+     * 154 MHash/s GPU plus the dispatch, and it moves with
+     * ANUBIS_MEATRIDER_MIN_WORK=hashes (0 = always use the accelerator). */
+    if (backend >= MR_BACKEND_OPENCL) {
+        double min_work = 1u << 20;
+        const char *mw = getenv("ANUBIS_MEATRIDER_MIN_WORK");
+        if (mw != NULL && mw[0] != '\0') {
+            min_work = strtod(mw, NULL);
+        }
+        if (min_work > 0.0) {
+            double expected = 1.0;
+            int i;
+            for (i = 0; i < difficulty; i++) {
+                expected *= 2.0;
+            }
+            if (expected < min_work) {
+                backend = MR_BACKEND_SCALAR;
+            }
+        }
+    }
     if (backend >= MR_BACKEND_OPENCL) {
         double started = now_seconds();
         uint32_t accel_nonce = 0;

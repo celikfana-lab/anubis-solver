@@ -230,6 +230,12 @@ ANUBIS_API int anubis_meatrider_difficulty_for_usd(double usd,
  * has no device falls back to the next available kernel, and
  * anubis_meatrider_backend_available() says which of those would happen.
  *
+ * An accelerator is only asked when the rung is worth a dispatch: below
+ * 2^ANUBIS_MEATRIDER_MIN_WORK hashes (default 2^20) the CPU kernel is faster,
+ * because a dispatch costs ~60 ms where the CPU does a rung in a millisecond.
+ * Set ANUBIS_MEATRIDER_MIN_WORK=0 to always dispatch, or a larger number to
+ * keep small rungs on the CPU.
+ *
  * The CPU kernels (cpu, shani, avx2, avx512) hash one nonce at a time here;
  * the search uses the widest of them. The accelerators report only hits, so
  * their digest is a hit digest: ask for one nonce and a miss means "this

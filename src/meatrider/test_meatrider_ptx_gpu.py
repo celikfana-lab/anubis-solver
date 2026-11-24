@@ -171,19 +171,24 @@ def main() -> int:
         tail_d = (ctypes.c_uint32 * 3)(
             *[int.from_bytes(bytes(ctx_d.tail[4 * i:4 * i + 4]), "little") for i in range(3)])
         total_hashes = 0
+        total_dispatches = 0
         started = time.perf_counter()
         for _ in range(args.reps):
             nonce = ctypes.c_uint32(0)
             hashes = (ctypes.c_uint32 * 8)()
+            dispatches = ctypes.c_int(0)
             rc = ptx.anubis_meatrider_ptx_solve(ctx_d.mid, tail_d, difficulty, 0, 0,
                                                 5000.0, ctypes.byref(nonce),
-                                                hashes, None)
+                                                hashes, ctypes.byref(dispatches))
             if rc != 0:
                 check(False, f"difficulty {difficulty}: solve returned {rc}")
                 break
             got = words_to_hex(list(hashes))
             want = meatrider_ref.digest(rd, difficulty, nonce.value).hex()
-            total_hashes += (nonce.value // chunk + 1) * chunk
+            # Exact, not estimated: the loader reports how many chunk dispatches
+            # the winning device issued, and every dispatch is a full chunk.
+            total_hashes += max(1, dispatches.value) * chunk
+            total_dispatches += dispatches.value
             if got != want:
                 check(False, f"difficulty {difficulty}: nonce {nonce.value} digest {got[:16]} != reference")
                 break
@@ -191,6 +196,8 @@ def main() -> int:
             elapsed = time.perf_counter() - started
             hps = total_hashes / elapsed
             rows.append((difficulty, hps))
+            print(f"       {dispatches.value} dispatches on the winning device, "
+                  f"{elapsed / args.reps * 1000.0:.1f} ms per solve")
             check(True, f"difficulty {difficulty}: {args.reps} solves, "
                         f"{total_hashes:,} nonces, {hps / 1e6:.1f} MHash/s, digests agree")
 

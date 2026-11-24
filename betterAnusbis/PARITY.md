@@ -132,6 +132,13 @@ accepted by `known_algorithms`, by per-rule `algorithm:` lines and by the
 (`N = 64*clamp(d,2,16)`), not nibbles or bits, so a policy that switches an
 existing rule to `tensor` should also set its difficulty.
 
+`--meatrider-escalate` (suspicion buys a rung), `--meatrider-pay` /
+`--meatrider-receipt` (a `bitcoin:` link and an operator-issued receipt, verified
+as HMAC over the challenge id) and `--flag-threshold` are ours alone as well:
+upstream has no pricing of work and no payment path at all. The receipt is
+reconciliation, not payment verification — the gate never contacts a Bitcoin
+node, and the operator decides when a payment happened.
+
 `--algorithm meatrider` is ours alone too: SHA-256d over an 80-byte Bitcoin
 header rebuilt from the challenge, with the work priced in bitcoin. It is
 accepted by `known_algorithms`, by per-rule `algorithm:` lines and by the

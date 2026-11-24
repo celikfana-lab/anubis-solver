@@ -803,6 +803,14 @@ more work, and the top rung is
 ./betterAnusbis --algorithm meatrider --difficulty 16     # ~70 ms of browser
 ./betterAnusbis --meatrider-usd 1e-10                     # the atom rung, d=28
 python3 tools/meatrider_ref.py --ladder                   # the same table, in Python
+
+# the dollar rung, payable: 1,334 sats at $100k/BTC, receipt on request
+./betterAnusbis --meatrider-usd 1 --meatrider-pay bc1q... --meatrider-btc-usd 100000 \
+                --secret-file /etc/betteranusbis/key
+./betterAnusbis --meatrider-receipt <challenge-id> --secret-file /etc/betteranusbis/key
+
+# the honeypot prices the request: one wall up per doubling of the hit count
+./betterAnusbis --meatrider-escalate --honeypot --flag-threshold 25
 ```
 
 The escalation needs no new machinery — the policy file already has a per-rule
@@ -815,15 +823,42 @@ challenge ua contains HeadlessChrome difficulty 48 algorithm meatrider
 challenge net 203.0.113.0/24 difficulty 61 algorithm meatrider
 ```
 
-**What it is not.** No money changes hands anywhere in this repository. The price
-is a label on the hashes: `anubis_meatrider_price_usd()` never contacts a wallet,
-and the gate never asks for an address, an invoice or a preimage. A payment rail
-would slot in at exactly one seam — `anubis_verify_meatrider()` takes a nonce, not
-a preimage — and it is not implemented, because a real one needs a node, invoice
-settlement and a way to verify an amount, none of which belongs behind a
-`challenge` handler. What *is* real is the top rung: at difficulty 61 one full
-sweep of the 32-bit nonce space succeeds with probability 2^-29, so it is a
-paywall that only an ASIC can pass, and the page says so instead of spinning.
+**Paying instead of mining.** Above 32 bits there is nothing for a browser to
+mine, so the gate can publish the price as a `bitcoin:` link
+(`--meatrider-pay ADDRESS --meatrider-btc-usd 100000`): the amount is the rung's
+price converted at that rate, so $1.33 is 1,334 sats at $100k/BTC, and the page
+shows it with an "open in a bitcoin wallet" link and a prompt for a receipt. The
+receipt is not a payment proof. It is
+
+```
+receipt(id) = HMAC-SHA256(signing key, "meatrider-receipt:" || id)
+```
+
+printed by `./betterAnusbis --meatrider-receipt <id> --secret-hex <key>` once the
+operator has confirmed the payment by whatever means they like. The page submits
+it as `response` with nonce 0, the gate recomputes it, it is single-use because
+the challenge is, and it opens no other id. **The gate never talks to Bitcoin** —
+this is reconciliation, not verification, so the code cannot be fooled into
+accepting money that was not sent: the operator is the one who says it was.
+There is no node, no invoice, no address watch and no wallet in this repository.
+
+**Suspicion buys a rung.** `--meatrider-escalate` wires the rung to the honeypot
+the gate already runs: a network that follows the trap link gets a meatrider
+challenge instead of `difficulty + 8`, and every doubling of its hit count moves
+it one wall up the browser ladder —
+
+| trap hits vs `--flag-threshold` | rung | bits | one browser | of bitcoin |
+|---|---:|---:|---:|---:|
+| 1x | `spark` | 20 | 1 s | $6e-13 |
+| 2x | `mote` | 26 | 1 min | $4e-11 |
+| 4x | `nano` | 32 | 1 h | $2e-9 |
+| 8x | `suspicious` | 38 | 3 days | $2e-7 |
+| 16x | `asic` | 48 | 9 years | $2e-4 |
+
+`--flag-threshold N` sets the hit count that starts it (default 25). No policy
+edit, no operator in the loop: the pricing function is the punishment. What is
+still true: at difficulty 61 one full sweep of the 32-bit nonce space succeeds
+with probability 2^-29, so the top rung is a wall only an ASIC can climb.
 
 The other honest number: the rung a browser can afford in a second is around
 difficulty 20, which is $6e-13 — a picodollar. "An atom of a cent" (1e-10 USD)
@@ -836,6 +871,7 @@ the prices are quoted against.
 python3 tests/test_meatrider.py              # 546 checks against tools/meatrider_ref.py
 node wasm/verify-meatrider.mjs               # the wasm kernel against node:crypto
 node betterAnusbis/tests_js_meatrider.mjs    # the page: pure JS, wasm driver, ASIC refusal
+./betterAnusbis/test-meatrider-gate.sh       # escalation by suspicion, and a receipt bought
 ```
 
 ### Protocol eras handled

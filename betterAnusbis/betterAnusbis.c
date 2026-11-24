@@ -89,8 +89,13 @@ typedef struct {
     const char *target;          /* scheme://host[:port] */
     const char *algorithm;
     int difficulty;
-    char meatrider_usd[32];      /* --meatrider-usd: a price, not a difficulty */
+    const char *meatrider_usd;   /* --meatrider-usd: a price, not a difficulty */
     int meatrider_ladder;        /* --meatrider-ladder: print and exit */
+    int meatrider_escalate;      /* --meatrider-escalate: suspicion buys a rung */
+    const char *meatrider_pay;   /* --meatrider-pay: a bitcoin address to pay */
+    const char *meatrider_btc_usd; /* --meatrider-btc-usd: USD per BTC */
+    const char *meatrider_receipt; /* --meatrider-receipt: mint one for this id */
+    double btc_usd;              /* derived: 100000 when not given */
     const char *cookie_prefix;
     int verbose;
     /* derived */
@@ -660,6 +665,70 @@ static int verify_answer(const char *algorithm, const char *random_data, unsigne
     }
     if (digest_out) snprintf(digest_out, digest_cap, "%s", rc == ANUBIS_OK ? out : "");
     return rc == ANUBIS_OK ? 1 : 0;
+}
+
+/* An option string is unset until the flag or its environment variable fills
+ * it; every read has to go through this rather than [0] on a NULL pointer. */
+#define OPT(s) ((s) != NULL && *(s) != '\0')
+
+/* ------------------------------------------------- meatrider receipts
+ *
+ * The top of the ladder is priced for hardware, so there has to be a way to
+ * buy your way past it. There is no node here: this is the preimage model with
+ * an operator-issued receipt. The gate derives one secret per challenge,
+ *
+ *     receipt(id) = HMAC-SHA256(signing key, "meatrider-receipt:" || id)
+ *
+ * and only hands it out when the payment has been confirmed by whatever means
+ * the operator likes (a lightning invoice, an on-chain tx, a bank transfer).
+ * The page submits it as `response` with nonce 0; the gate recomputes it and
+ * accepts. It is single-use because the challenge is, it cannot be transferred
+ * to another id, and it needs --secret-hex/--secret-file so a restart (or the
+ * --meatrider-receipt CLI, which is a second process) derives the same value.
+ * This is reconciliation, not verification: the gate never talks to Bitcoin. */
+
+static void mr_receipt(const char *id, char out[65]) {
+    unsigned char mac[32];
+    unsigned int mlen = sizeof mac;
+    char msg[256];
+
+    snprintf(msg, sizeof msg, "meatrider-receipt:%s", id ? id : "");
+    if (!HMAC(EVP_sha256(), cfg.secret, (int)sizeof cfg.secret,
+              (const unsigned char *)msg, strlen(msg), mac, &mlen) ||
+        mlen != sizeof mac) {
+        memset(mac, 0, sizeof mac);
+    }
+    hex_encode(mac, sizeof mac, out);
+}
+
+static int mr_receipt_matches(const char *id, const char *response) {
+    char want[65];
+    unsigned char diff = 0;
+    int i;
+
+    if (!OPT(cfg.meatrider_pay) || !id || !response) return 0;
+    /* stateless has no ledger, so a receipt could be replayed forever */
+    if (!cfg.stateful) return 0;
+    if (strlen(response) != 64) return 0;
+    mr_receipt(id, want);
+    for (i = 0; i < 64; i++) {
+        unsigned char c = (unsigned char)response[i];
+        if (c >= 'A' && c <= 'F') c = (unsigned char)(c - 'A' + 'a');
+        diff |= (unsigned char)(c ^ (unsigned char)want[i]);
+    }
+    return diff == 0;
+}
+
+/* Suspicion wears a price tag: each doubling of the trap count moves the
+ * network one wall up the browser ladder — a second, a minute, an hour, three
+ * days, an ASIC's second — and every step is also ten times the money. */
+static int meatrider_suspicion_bits(int threshold, int hits) {
+    static const int wall[] = {20, 26, 32, 38, 48};
+    int step = 0;
+
+    if (threshold < 1) threshold = 1;
+    while (step < 4 && hits >= (threshold << (step + 1))) step++;
+    return wall[step];
 }
 
 /* One connection: a socket, and an OpenSSL session when the listener is HTTPS. */
@@ -12337,6 +12406,31 @@ function buildModule(challenge) {
     if(algo==="meatrider"){
       say("meatrider: "+meatriderBlurb(diff));
       if(diff>32){
+        // The rung is priced for hardware. If the operator published a bitcoin
+        // address, offer the other way past it: pay, and submit the receipt the
+        // gate derives for this challenge id once the payment is confirmed.
+        const pay=rules.pay;
+        if(pay&&pay.address){
+          const uri="bitcoin:"+pay.address+"?amount="+pay.btc+
+                    "&label=meatrider&message="+encodeURIComponent("meatrider "+pay.sats+" sats");
+          say("meatrider: this rung is priced at $"+(pay.usd<0.01?pay.usd.toExponential(2):pay.usd.toFixed(2))+
+              " ("+pay.sats+" sats). Pay "+pay.btc+" BTC to "+pay.address+
+              ", then paste the receipt the operator gave you.");
+          try{
+            const a=document.createElement("a");
+            a.href=uri;
+            a.textContent="open in a bitcoin wallet";
+            a.style.cssText="display:inline-block;margin-left:.5rem;color:#f7931a";
+            document.body.appendChild(a);
+          }catch(_){}
+          const r=prompt("This rung is priced for an ASIC.\n\nPay "+pay.btc+" BTC ("+
+                         pay.sats+" sats) to:\n"+pay.address+"\n\n"+uri+
+                         "\n\nThen paste the receipt the operator gave you:", "");
+          if(r&&/^[0-9a-fA-F]{64}$/.test(r.trim())){
+            pass(r.trim().toLowerCase(),0,0);
+            return null;
+          }
+        }
         const refused=new Error("this rung is priced for an ASIC: "+meatriderBlurb(diff)+
           ". A browser cannot mine past 32 bits of difficulty, because one full "+
           "32-bit nonce sweep would already be 2^32 hashes -- that is the point of the rung");
@@ -13404,13 +13498,26 @@ static void challenge_page(conn *c, const char *id, const char *random_data,
                            const char *metadata_json, const char *test_cookie,
                            const char *algorithm, int difficulty, const locale *loc,
                            const char *og) {
-    char payload[2048];
+    char pay_json[512] = "null";
+    if (OPT(cfg.meatrider_pay) && !strcasecmp(algorithm, "meatrider")) {
+        double usd = anubis_meatrider_price_usd(difficulty, 0.0);
+        double btc = cfg.btc_usd > 0.0 ? usd / cfg.btc_usd : 0.0;
+        long long sats = (long long)(btc * 1e8 + 0.5);
+        /* below one satoshi there is nothing to pay: the rungs that matter are
+         * the top of the ladder, where the amount is thousands of sats */
+        if (sats >= 1) {
+            snprintf(pay_json, sizeof pay_json,
+                     "{\"address\":\"%s\",\"usd\":%.6g,\"btc\":\"%.8f\",\"sats\":%lld}",
+                     cfg.meatrider_pay, usd, btc, sats);
+        }
+    }
+    char payload[2560];
     snprintf(payload, sizeof payload,
-             "{\"rules\":{\"algorithm\":\"%s\",\"difficulty\":%d},"
+             "{\"rules\":{\"algorithm\":\"%s\",\"difficulty\":%d,\"pay\":%s},"
              "\"challenge\":{\"issuedAt\":\"%lld\",\"metadata\":%s,\"id\":\"%s\","
              "\"method\":\"%s\",\"randomData\":\"%s\",\"policyRuleHash\":\"%s\","
              "\"difficulty\":%d,\"spent\":false,\"extensions\":null}}",
-             algorithm, difficulty, (long long)time(NULL), metadata_json, id,
+             algorithm, difficulty, pay_json, (long long)time(NULL), metadata_json, id,
              algorithm, random_data, policy_digest(), difficulty);
 
     char status_line[512];
@@ -15781,6 +15888,12 @@ static void handle_parsed(conn *c, request *req_in, const char *peer_ip) {
                     if (!strcasecmp(algorithm, "tensor") && !looks_like_digest(response)) {
                         logmsg("rejecting: tensor response is not a 64-hex digest");
                         valid = 0;
+                    } else if (mr_receipt_matches(id, response)) {
+                        /* paid, not mined: the operator handed this id's secret
+                         * out after the payment arrived */
+                        valid = 1;
+                        snprintf(digest, sizeof digest, "%s", response);
+                        logmsg("meatrider: receipt accepted for %s", id);
                     } else {
                         valid = verify_answer(algorithm, stored, nonce, stored_difficulty,
                                               digest, sizeof digest);
@@ -15806,6 +15919,10 @@ static void handle_parsed(conn *c, request *req_in, const char *peer_ip) {
                 logmsg("rejecting: challenge %s expired", id);
             } else if (!strcasecmp(algorithm, "tensor") && !looks_like_digest(response)) {
                 logmsg("rejecting: tensor response is not a 64-hex digest");
+            } else if (mr_receipt_matches(id, response)) {
+                valid = 1;
+                snprintf(digest, sizeof digest, "%s", response);
+                logmsg("meatrider: receipt accepted for %s", id);
             } else {
                 valid = verify_answer(algorithm, rd_hex, nonce, cfg.difficulty,
                                       digest, sizeof digest);
@@ -16139,10 +16256,24 @@ static void handle_parsed(conn *c, request *req_in, const char *peer_ip) {
          * rule here, +8 bits is the equivalent wall. */
         int trap_hits = hp_count(client_ip);
         if (trap_hits >= cfg.flag_threshold) {
-            difficulty = cfg.difficulty + 8 > 64 ? 64 : cfg.difficulty + 8;
+            const char *why = "difficulty+8";
+            if (cfg.meatrider_escalate && cfg.stateful) {
+                /* The rung is chosen by the hit count, not by the operator's
+                 * mood: threshold hits is a second of browser, twice that is a
+                 * minute, then an hour, then three days, then an ASIC's second. */
+                algorithm = "meatrider";
+                difficulty = meatrider_suspicion_bits(cfg.flag_threshold, trap_hits);
+                why = "meatrider";
+            } else {
+                difficulty = cfg.difficulty + 8 > 64 ? 64 : cfg.difficulty + 8;
+                if (cfg.meatrider_escalate)
+                    why = "difficulty+8 (--meatrider-escalate needs stateful)";
+            }
             if (cfg.verbose)
-                logmsg("honeypot: %s has %d trap hits, difficulty raised %d -> %d",
-                       client_ip, trap_hits, cfg.difficulty, difficulty);
+                logmsg("honeypot: %s has %d trap hits, %s, tier %s, difficulty %d",
+                       client_ip, trap_hits, why,
+                       anubis_meatrider_tier(difficulty) ? anubis_meatrider_tier(difficulty) : "n/a",
+                       difficulty);
         }
         uint8_t rd[32];
         char rd_hex[65];
@@ -19080,6 +19211,14 @@ static void usage(FILE *out) {
         "                         bits, e.g. 1e-10 for the atom-of-a-cent rung; sets\n"
         "                         --algorithm meatrider\n"
         "  --meatrider-ladder     print the meatrider rungs and exit\n"
+        "  --meatrider-escalate   networks caught by the honeypot get a meatrider\n"
+        "                         rung instead of difficulty+8: one wall up the\n"
+        "                         browser ladder per doubling of the hit count\n"
+        "  --meatrider-pay ADDR   publish a bitcoin: link for the ASIC rungs and\n"
+        "                         accept an operator-issued receipt as the response\n"
+        "  --meatrider-btc-usd N  USD per BTC for that amount (default 100000)\n"
+        "  --meatrider-receipt ID mint the receipt for one challenge id and exit\n"
+        "                         (needs --secret-hex or --secret-file)\n"
         "  --difficulty N         difficulty; bits for sha256/argon2id/hashx/meatrider,\n"
         "                         nibbles for fast/slow, and the matrix size for\n"
         "                         tensor: N = 64*clamp(N,2,16), so 8 is 512x512\n"
@@ -19160,6 +19299,8 @@ static void usage(FILE *out) {
         "  --jwt-restriction-header NAME\n"
         "                         bind the auth cookie to the client address, the way\n"
         "                         Anubis does by default; pass \"\" to turn it off\n"
+        "  --flag-threshold N     honeypot hits in the hour before a network is\n"
+        "                         flagged (default 25)\n"
         "  --healthcheck          GET /healthz on --metrics-bind and exit 0 or 1\n"
         "  --metrics-bind ADDR:PORT\n"
         "                         Prometheus /metrics and /healthz on a listener of\n"
@@ -19193,8 +19334,13 @@ static const arg_spec args[] = {
     {"target", ARG_STR, &cfg.target},
     {"algorithm", ARG_STR, &cfg.algorithm},
     {"difficulty", ARG_INT, &cfg.difficulty},
-    {"meatrider-usd", ARG_STR, cfg.meatrider_usd},
+    {"meatrider-usd", ARG_STR, &cfg.meatrider_usd},
     {"meatrider-ladder", ARG_BOOL, &cfg.meatrider_ladder},
+    {"meatrider-escalate", ARG_BOOL, &cfg.meatrider_escalate},
+    {"meatrider-pay", ARG_STR, &cfg.meatrider_pay},
+    {"meatrider-btc-usd", ARG_STR, &cfg.meatrider_btc_usd},
+    {"meatrider-receipt", ARG_STR, &cfg.meatrider_receipt},
+    {"flag-threshold", ARG_INT, &cfg.flag_threshold},
     {"challenge-status", ARG_INT, &cfg.challenge_status},
     {"deny-status", ARG_INT, &cfg.deny_status},
     {"cookie-prefix", ARG_STR, &cfg.cookie_prefix},
@@ -19621,7 +19767,18 @@ int main(int argc, char **argv) {
         print_meatrider_ladder(stdout);
         return 0;
     }
-    if (cfg.meatrider_usd[0]) {
+    cfg.btc_usd = OPT(cfg.meatrider_btc_usd) ? atof(cfg.meatrider_btc_usd) : 100000.0;
+    if (!(cfg.btc_usd > 0.0)) {
+        fprintf(stderr, "betterAnusbis: --meatrider-btc-usd wants a positive price\n");
+        return 2;
+    }
+    if (OPT(cfg.meatrider_pay) && !cfg.stateful)
+        logmsg("meatrider: --meatrider-pay needs the challenge ledger; "
+               "receipts are refused on a stateless gate");
+    if (cfg.meatrider_escalate && !cfg.stateful)
+        logmsg("meatrider: --meatrider-escalate needs the challenge ledger; "
+               "a stateless gate will only raise the difficulty by 8");
+    if (OPT(cfg.meatrider_usd)) {
         double usd = atof(cfg.meatrider_usd);
         if (!(usd > 0.0)) {
             fprintf(stderr, "betterAnusbis: --meatrider-usd wants a positive amount\n");
@@ -19639,6 +19796,27 @@ int main(int argc, char **argv) {
         int rc = do_healthcheck(addr);
         fprintf(stderr, "betterAnusbis: healthcheck %s %s\n", addr, rc == 0 ? "ok" : "failed");
         return rc;
+    }
+
+    if (OPT(cfg.meatrider_receipt)) {
+        /* A receipt must come out of the same key the gate verifies with, and
+         * this is a second process, so a random per-run key cannot work. */
+        char receipt[65];
+        if (OPT(cfg.secret_hex)) {
+            if (hex_decode(cfg.secret_hex, cfg.secret, sizeof cfg.secret) != (int)sizeof cfg.secret) {
+                fprintf(stderr, "betterAnusbis: --secret-hex wants exactly 64 hex characters\n");
+                return 2;
+            }
+        } else if (OPT(cfg.secret_file)) {
+            if (load_secret(cfg.secret_file, cfg.secret) != 0) return 1;
+        } else {
+            fprintf(stderr, "betterAnusbis: --meatrider-receipt needs --secret-hex "
+                            "or --secret-file, so the gate and this command agree\n");
+            return 2;
+        }
+        mr_receipt(cfg.meatrider_receipt, receipt);
+        printf("%s\n", receipt);
+        return 0;
     }
 
     if (!cfg.target || !*cfg.target) {
@@ -19851,6 +20029,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "betterAnusbis: cannot read the system random source\n");
         return 1;
     }
+
 
     signal(SIGPIPE, SIG_IGN);
     /* no SA_RESTART: accept() has to come back so the dump can happen */

@@ -79,6 +79,17 @@ audit) handled by the challenge page and the `audit-tensor` endpoint; see
 [SECURITY-REVIEW.md](SECURITY-REVIEW.md#tensor-v-sampled-verification). `tensor`
 remains the one-request tier for solvers that expect a single digest.
 
+`meatrider` escalates by itself when `--meatrider-escalate` is set: the
+honeypot's hit count picks the rung, one wall up the browser ladder per doubling
+(a second, a minute, an hour, three days, an ASIC's second), so a crawler is
+priced by its own behaviour instead of by a rule someone remembered to write. The
+top rungs can be paid instead of mined when `--meatrider-pay` names an address:
+the page shows a `bitcoin:` link, and the gate accepts
+`HMAC(key, "meatrider-receipt:" || id)` as the response once the operator has
+confirmed the payment. It is single-use, bound to one challenge id, and the gate
+never talks to Bitcoin — reconciliation, not verification.
+`./test-meatrider-gate.sh` covers both paths with curl.
+
 `./test-all-algorithms.sh` — each line asserts the protected page came back, not
 just that a challenge was issued:
 
@@ -170,6 +181,11 @@ the challenge
                              tensor-v, metarefresh
   --meatrider-usd USD        pick the meatrider rung by price; sets --algorithm meatrider
   --meatrider-ladder         print the meatrider rungs and exit
+  --meatrider-escalate       honeypot-flagged networks get a rung, not difficulty+8
+  --meatrider-pay ADDR       publish a bitcoin: link and accept a receipt for the ASIC rungs
+  --meatrider-btc-usd N      USD per BTC for that amount (default 100000)
+  --meatrider-receipt ID     mint the receipt for one challenge id and exit
+  --flag-threshold N         honeypot hits before a network is flagged (default 25)
   --difficulty N             bits for sha256/argon2id/hashx/meatrider, nibbles for fast/slow
   --challenge-status N       status for the challenge page (default 200)
   --deny-status N            status for a policy deny (default 200, see below)

@@ -169,6 +169,8 @@ check "the WebGPU kernel is served as text" \
 check "the page mines on WebGPU before falling back to wasm" \
       "$(curl -s "http://127.0.0.1:$PORT_PAY/" \
          | grep -q 'navigator.gpu.*mrWebGPU\|mrWebGPU(raw,diff' && echo 1 || echo 0)"
+check "the meatrider page shows the progress bar" \
+      "$(curl -s "http://127.0.0.1:$PORT_PAY/" | grep -q 'workShow(\"2\^\"' && echo 1 || echo 0)"
 stop $NOPAY_PID
 
 echo

@@ -12654,6 +12654,14 @@ function buildModule(challenge) {
       const totalCents=mrPriceUsd(diff)*100;
       const box=mrMiningBox();
       mrMiningSay(diff,totalCents,0);
+      // The site-wide progress bar, which the other tiers show and meatrider
+      // never did: the number of hashes this rung needs is known exactly, so the
+      // bar is real progress, not a spinner. It is fed by workUpdate() in both
+      // the WebGPU loop (4M nonces per dispatch) and the wasm loop (262,144).
+      workShow("2^"+diff+" ("+Math.pow(2,diff).toLocaleString("en-US")+") hashes expected: "+
+               "WebGPU mines 4 nonces per invocation in 4,194,304-nonce dispatches, "+
+               "the wasm fallback in 262,144-nonce windows");
+      workUpdate(0,0,1,Math.pow(2,diff));
       // WebGPU first: the same kernel the tier ships for its GPU rows, and the
       // fastest thing a browser can bring. A hit is re-hashed in JavaScript
       // above, and any failure (no adapter, a shader that will not compile, no
@@ -12675,6 +12683,8 @@ function buildModule(challenge) {
         }catch(e){
           console.warn("meatrider: WebGPU path failed, using wasm:",e);
           say("WebGPU unavailable here ("+e.message+"), using the wasm kernel");
+          workShow("2^"+diff+" ("+Math.pow(2,diff).toLocaleString("en-US")+
+                   ") hashes expected: wasm kernel, 262,144-nonce windows");
         }
       }
       // Four nonces per SIMD vector where the browser can do it; the scalar

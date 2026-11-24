@@ -11293,6 +11293,34 @@ static const char *CHALLENGE_JS = R"JS(
       return box;
     }catch(_){ return null; }
   }
+  // Every tier but meatrider shows the same clip while it mines: a cat clapping,
+  // transcoded from 833 KB of Tenor GIF to 142 KB of animated WebP and served by
+  // the gate itself, so a challenged browser makes no third-party request.
+  // meatrider has its own clip (mrMiningBox above) and this one stays out of it.
+  let catBox=null;
+  function showMiningClip(){
+    if(catBox||algo==="meatrider") return catBox;
+    try{
+      const img=document.createElement("img");
+      img.src="/.within.website/x/cmd/anubis/api/static/anubis/cat-clapping.webp";
+      img.alt="a cat clapping"; img.width=150;
+      img.style.cssText="display:block;margin:.6rem auto 0;border-radius:.5rem";
+      const cap=document.createElement("div");
+      cap.style.cssText="font-size:.75rem;opacity:.7;text-align:center;margin-top:.2rem";
+      const a=document.createElement("a");
+      a.href="https://tenor.com/view/cat-clapping-tweenslop-gif-4721454909525108914";
+      a.textContent="via Tenor"; a.rel="noopener";
+      cap.appendChild(a);
+      const box=document.createElement("div");
+      box.appendChild(img); box.appendChild(cap);
+      const st=document.getElementById("status");
+      if(st&&st.parentNode) st.parentNode.insertBefore(box,st.nextSibling);
+      else if(document.body) document.body.appendChild(box);
+      catBox=box;
+      return box;
+    }catch(_){ return null; }
+  }
+
   function meatriderBlurb(d){
     const hashes=Math.pow(2,d);
     const price=mrPriceUsd(d), name=mrTierName(d);
@@ -12338,6 +12366,7 @@ function buildModule(challenge) {
     if(workBox) workBox.hidden=false;
     if(workBar) workBar.classList.add("busy");
     if(workSub&&sub) workSub.textContent=sub;
+    showMiningClip();
   }
   function workUpdate(frac,done,ms,expected,unit){
     if(workFill) workFill.style.width=(Math.max(0,Math.min(1,frac))*100).toFixed(1)+"%";

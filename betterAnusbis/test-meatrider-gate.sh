@@ -171,6 +171,17 @@ check "the page mines on WebGPU before falling back to wasm" \
          | grep -q 'navigator.gpu.*mrWebGPU\|mrWebGPU(raw,diff' && echo 1 || echo 0)"
 check "the meatrider page shows the progress bar" \
       "$(curl -s "http://127.0.0.1:$PORT_PAY/" | grep -q 'workShow(\"2\^\"' && echo 1 || echo 0)"
+
+# the other tiers' clip: a Tenor GIF transcoded to a WebP the gate serves, so no
+# challenged browser asks tenor.com for anything.
+CODE=$(curl -s -o /tmp/ba-cat.webp -w '%{http_code}' -D /tmp/ba-cat.hdr \
+       "http://127.0.0.1:$PORT_PAY/.within.website/x/cmd/anubis/api/static/anubis/cat-clapping.webp")
+check "the other tiers' clip is served as image/webp" \
+      "$([ "$CODE" = 200 ] && [ -s /tmp/ba-cat.webp ] \
+         && grep -qi 'content-type: image/webp' /tmp/ba-cat.hdr && echo 1 || echo 0)" \
+      "HTTP $CODE $(wc -c < /tmp/ba-cat.webp 2>/dev/null)"
+check "and the page shows it for every other tier" \
+      "$(curl -s "http://127.0.0.1:$PORT_PAY/" | grep -q 'cat-clapping.webp.*\|showMiningClip()' && echo 1 || echo 0)"
 stop $NOPAY_PID
 
 echo

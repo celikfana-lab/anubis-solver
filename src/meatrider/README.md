@@ -95,6 +95,10 @@ python3 tests/test_meatrider_backends.py   # every available kernel vs Python
 python3 tools/meatrider_backends.py        # the same, plus the rate table
 ```
 
+On a machine with an NVIDIA GPU the same three commands run after `make CUDA=1`;
+the [`colab/`](../../colab/meatrider-colab.ipynb) notebook does exactly that on a
+Colab T4, because the machine this was written on has no NVIDIA device.
+
 `tests/test_meatrider_backends.py` asks each kernel for the digest of the same
 nonces and compares against [`tools/meatrider_ref.py`](../../tools/meatrider_ref.py),
 an independent Python implementation of the header — not a second call into C —

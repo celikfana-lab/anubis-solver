@@ -81,6 +81,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `web/` | the static documentation site: beginner guide, algorithms, comparison, benchmarks. `cd web && make check` |
 | `webgpu/` | HashX, Argon2id, SHA-256 and meatrider compiled to WGSL and run on WebGPU; SHA-256 is 33x wasm, Argon2id is slower than wasm, HashX is wrong on the Intel backend — see its README before quoting any number from it |
 | `betterAnusbis/` | an Anubis-compatible PoW gate in one C file; links this library |
+| `colab/` | the Colab notebook that builds with CUDA and measures every meatrider kernel on a T4 |
 | `firefox-extension/` | native messaging host so the browser uses `libanubis_solver.so` |
 | `beyond/`, `card/` | the hardware half: RTL, testbenches, QEMU PCI device + driver |
 

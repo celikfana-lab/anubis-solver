@@ -61,6 +61,8 @@ cd web  && make check                      # the site: links, anchors, layout
 webgpu/run.sh                              # HashX on WebGPU (needs Chrome; see webgpu/README.md)
 gcc -O2 -o /tmp/clrun tools/xe-sha256-opencl.c -lOpenCL && /tmp/clrun   # SHA-256 on Intel Xe, needs intel-opencl-icd
 make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the hand-written Xe listing
+bash src/i915raw/capture.sh               # raw i915: capture a vendor dispatch, replay it, time it
+./build/i915-probe --bench 300 --pipe 512 --storm 262142   # raw i915 submission benchmarks
 ```
 
 ## Layout
@@ -73,6 +75,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `src/meatrider/` | the Bitcoin-header tier: the portable reference, `meatrider_*` clones of the CPU kernels, one kernel per accelerator, the backend table, the PTX kernel, and a README that says which byte is what |
 | `src/nvidia/cuda/*.cu` | CUDA backends (SHA-256, Argon2id, HashX) |
 | `src/intel/xe/` | Intel Xe (gen12lp) assembly for the SHA-256 kernel: a hand-written listing from `tools/gen_xe_sha256.py`, and IGC's own code extracted from a Zebin that ran on the GPU |
+| `src/i915raw/` | raw i915: the GPU through DRM ioctls with no Mesa/OpenCL/Level Zero. A probe (identity, submission cost, store proof), an `LD_PRELOAD` capture of what NEO submits, and a replay that re-submits it at the same VAs and times it |
 | `src/intel/levelzero/*.c` | Level Zero backends; kernels in `src/intel/levelzero/*.cl` |
 | `src/intel/levelzero/level_zero/` | vendored `ze_api.h`, so the one `.so` builds without `libze-dev` |
 | `src/google/tpu/` | Google TPU through the PJRT C API, `sha256` tier; `libtpu.so` is `dlopen`ed |

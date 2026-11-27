@@ -1,0 +1,193 @@
+# Raw i915
+
+Three programs that drive the Intel GPU through `/dev/dri/renderD128` and DRM
+ioctls only — no Mesa, no libOpenCL, no Level Zero, no libdrm wrappers, not
+even `drmIoctl()`. Every interaction with the driver is one `ioctl` in this
+directory.
+
+Why: on this laptop Mesa's ANV computes the wrong HashX digests
+([`webgpu/ANV-BUG.md`](../../webgpu/ANV-BUG.md)), and any userspace stack can
+carry bugs that are invisible from above. This is the bottom of the stack, so
+there is nothing left under it to be wrong.
+
+| file | what it is |
+|---|---|
+| `i915_probe.c` | device identity, engine list, GEM objects, submission benchmarks, and a store instruction executed by the GPU as proof |
+| `i915_dump.c` | `LD_PRELOAD` shim that records what a real driver (NEO/IGC) submits: every execbuffer, every buffer, the batch bytes |
+| `i915_replay.c` | recreates a recorded dispatch at the same virtual addresses and submits it through raw i915; verified digest, timed |
+| `capture.sh` | capture + replay end to end |
+
+## The number
+
+Alder Lake-P GT2 (Iris Xe, 96 EU), kernel 6.17.0-41-generic, i915, 27 Nov 2026:
+
+| measurement | result |
+|---|---|
+| sequential submit + wait | **~330 µs** per submission (launch, execute, fence wakeup) |
+| pipelined (submit N, wait for all) | **~30 µs** per submission, ~30–38 k/s |
+| command stream (262,142 `MI_NOOP`) | **~140–210 M commands/s**, best of 3 |
+| **raw replay of the SHA-256 dispatch** | **16.0–17.4 ms per 4,194,304 nonces = 241–262 M hashes/s** |
+| digest, computed by our own submission | `f2bf82167d41fe1701711273d69d05f17793d6adb5bc30d290b448d1f5585f71` (matches `hashlib`) |
+
+For scale, on the same GPU and the same kernel:
+
+| path | sha256 hashes/s |
+|---|---|
+| WebGPU (ANV compiles WGSL) | 70.6 M |
+| Intel OpenCL (NEO + IGC) | 195–247 M |
+| **raw i915 (this directory)** | **241–262 M** |
+
+The raw path is not faster because we outsmarted IGC: it runs the same machine
+code. It is at least as fast, and it is ours.
+
+## What the uapi makes you learn the hard way
+
+All of these return `EINVAL` with no explanation:
+
+1. **`batch_len` must be a multiple of 8.** A 4-byte batch (one `MI_BATCH_BUFFER_END`)
+   and a 12-byte batch are rejected; 8 and 16 are fine.
+   (`i915_gem_check_execbuffer()`: `(batch_start_offset | batch_len) & 0x7`.)
+2. **The batch must not be the only object.** One object in `buffers_ptr` is
+   rejected for anything but a tiny batch. The list is `[data, batch]`; i915
+   takes the batch from the last entry.
+3. **Relocations are rejected** on this kernel (`relocation_count > 0` →
+   `EINVAL`) even though the uapi documents them. Use `I915_EXEC_NO_RELOC` and
+   write addresses yourself. The kernel tells you the address it gave an
+   object in `exec_object2.offset`; that is enough.
+4. **Pinning above 4 GiB needs `EXEC_OBJECT_SUPPORTS_48B_ADDRESS`.** Without
+   it, `EXEC_OBJECT_PINNED | offset >= 4 GiB` is `EINVAL` — the code checks
+   `(start + size + 4095) >> 32` and needs the flag set.
+5. **`batch_start_offset` is also 8-byte aligned.**
+6. **The completion fence is `exec.rsvd2 >> 32`** when `I915_EXEC_FENCE_OUT` is
+   set; it is a `sync_file` fd, so `poll()` it. No `SET_DOMAIN` dance needed.
+7. A private address space is `VM_CREATE` (256 TiB) then
+   `CONTEXT_CREATE_EXT` with `I915_CONTEXT_CREATE_EXT_SETPARAM` /
+   `I915_CONTEXT_PARAM_VM` and **`param.size = 0`** (a nonzero size is
+   `EINVAL`), then `exec.rsvd1 = ctx_id`.
+
+`i915_probe --pin 0x40000000` pins the data object at a chosen address and
+stores to it; that is the smallest complete proof that the address you wrote
+is the address the GPU used.
+
+## What Intel's own dispatch looks like
+
+A GPGPU dispatch is not an ioctl. It is a batch of commands, and i915 has no
+API for any of them. `i915_dump.c` recorded one from the vendor stack
+(`tools/xe-sha256-opencl.c` under `LD_PRELOAD`), and this is its shape.
+
+One submission carries 11–12 objects; the last one is the batch. The first
+submission writes the pipeline state and then jumps into the dispatch buffer:
+
+```
+dw 0  69049312   PIPELINE_SELECT, media bit set
+dw 1  61050000   vendor prologue (not decoded)
+dw 3  7a000004   PIPE_CONTROL (6 dwords)
+dw 9  70000007   MEDIA_VFE_STATE (9 dwords), max threads 0x1033
+dw18  11020001   MI_LOAD_REGISTER_IMM, register 0x2580 = 0x00060002
+dw21  7a000204   PIPE_CONTROL (6 dwords)
+dw27  61010014   STATE_BASE_ADDRESS (22 dwords): general/dynamic/instruction bases
+dw49  7a000004   PIPE_CONTROL (6 dwords)
+dw55  18800101   MI_BATCH_BUFFER_START | 48-bit address
+dw56  0x...      -> the dispatch buffer (64 KiB, one 128-byte block per dispatch)
+```
+
+Each dispatch block (30 dwords used, 128-byte slot):
+
+```
++0x00  70040000   GPGPU_OBJECT
++0x08  70020002   MEDIA_INTERFACE_DESCRIPTOR_LOAD (4 dwords), address 0, size 32
++0x10  7105000d   GPGPU_WALKER (15 dwords)
+         +0x04  indirect data length 0
+         +0x08  thread group count X (3200 for the throughput dispatch)
+         +0x0c  48-bit pointer into the surface-state/heap buffer
++0x54  70040000   GPGPU_OBJECT
++0x5c  7a000004   PIPE_CONTROL with a post-sync store to the results buffer
++0x70  05000000   MI_BATCH_BUFFER_END
+```
+
+Object roles, inferred from their contents:
+
+| VA | size | role |
+|---|---|---|
+| `0xffff8001fffea000` | 24 KiB | kernel text (decodes as gen12 SASS; "kernel end" at 20,544 bytes) |
+| `0x7e31bc37b000` | 4 KiB | kernel argument block; contains the message words big-endian |
+| `0x7e31bc379000` | 4 KiB | **results**: hit count, hit nonce, eight digest words |
+| `0x7e31bc381000` | 4 KiB | a second status buffer (atomic hit counter) |
+| `0x7e31bc368000` | 64 KiB | dispatch batch: one 128-byte block per dispatch |
+| `0x7e31bc37f000` | 64 KiB | prologue batch |
+| `0xffff8001fffd9000` | 64 KiB | heap holding the per-dispatch argument structures |
+| `0x7e31bafef000` | 64 KiB | surface states (128-byte entries; buffer pointer at +0x60) |
+| `0x7e31bb295000` | 64 KiB | a second state heap (points at the instruction base) |
+| `0xffffd556aa7e0000` | 64 KiB | userptr scratch |
+| `0x7e31a8200000` | 6 MiB | per-workgroup status array |
+| `0xffff8001fffe9000` | 4 KiB | NEO's private/scratch state |
+
+Addresses change per run; they are assigned by the driver to the context.
+
+## The replay
+
+`i915_replay.c` creates every object at the address the capture shows
+(`EXEC_OBJECT_PINNED | EXEC_OBJECT_SUPPORTS_48B_ADDRESS`), fills it from the
+dump, and submits the capture's submissions in order, in a private VM. Nothing
+in the batch has to be patched: nothing moved.
+
+That is why the digest comes out right — the GPU runs Intel's machine code with
+Intel's state, but the submission path is this program. It is a **replay**, not
+a dispatcher: the nonce range, work-group count, kernel and arguments are
+whatever the capture contains. What it proves is that the whole compute path
+runs on raw i915 from userspace.
+
+```sh
+make -C src/i915raw              # build into ../../build
+bash src/i915raw/capture.sh      # needs intel-opencl-icd for the capture
+```
+
+`capture.sh` prints the per-dispatch time (16.0–17.4 ms for 4,194,304 nonces)
+and the digest.
+
+## The next step: our own dispatch, not Intel's
+
+The pieces are known and small:
+
+1. **Patch the arguments.** The per-dispatch argument structures live in the
+   heap buffer; one structure begins near `+0x248` and holds, in order, a
+   pointer, difficulty, `count`, `base` (u64) and another pointer. Rewriting
+   `difficulty`/`count`/`base` and the walker's thread-group count turns the
+   replay into a dispatcher.
+2. **Supply our own kernel.** `src/intel/xe/intelXe_sha256.xe` is a
+   hand-written gen12lp listing for exactly this part, assembled by `iga64`
+   (`make xe-asm`). It has no result store yet; the `send.dc1` write and one
+   surface state are the missing code.
+3. **Then measure our code against IGC's**, which is the comparison the
+   `src/intel/xe/README.md` was unable to make.
+
+Until (1) and (2) exist, the honest claim is: *raw submission works, raw replay
+of the vendor dispatch works and is correct at 241–262 M hashes/s; a raw
+dispatcher of our own kernel is the next commit.*
+
+## Reproducing
+
+```sh
+make -C src/i915raw all
+./build/i915-probe --bench 300 --pipe 512 --storm 262142
+#  -> identity, engines, submission costs, command-stream rate, store proof
+
+# capture + replay
+bash src/i915raw/capture.sh
+
+# or step by step
+LD_PRELOAD=./build/i915-dump.so /tmp/anubis-i915-clrun
+./build/i915-replay --dump /tmp/i915dump --upto 8 --bench 12
+```
+
+Requirements: `drm/i915_drm.h` (libdrm-dev) to build; membership of the
+`render` group to open the render node; `intel-opencl-icd` only for producing
+a capture.
+
+## Not implemented
+
+- A parameterised dispatcher (see above).
+- The compute-only engine (`CCS`): the probe lists it, but submissions go to
+  the default (render) engine. `I915_CONTEXT_PARAM_ENGINES` is the way.
+- GuC/HuC identity, power management and frequency reporting: `/sys` and
+  debugfs need root, which this repository does not ask for.

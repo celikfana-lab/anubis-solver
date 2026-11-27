@@ -4,7 +4,16 @@
 Spawns the host, speaks the 4-byte-length + JSON protocol on its pipes, and checks
 that a challenge from a *live* Anubis is solved and accepted. No browser needed.
 
-    python3 firefox-extension/test-native.py [--url http://127.0.0.1:8923/]
+    python3 firefox-extension/test-native.py                          # :8923
+    python3 firefox-extension/test-native.py --url http://host:port/
+    python3 firefox-extension/test-native.py --start-gate             # sha256, 20
+    python3 firefox-extension/test-native.py --start-gate --algorithm hashx --difficulty 26
+
+--start-gate builds a challenge in front of a throwaway backend, so the whole
+Anubis exchange (page, challenge JSON, pass-challenge, cookie) runs against
+betterAnusbis on a free port, with whichever algorithm and difficulty you ask
+for. The default is the sha256 tier: same randomData size Anubis issues, and the
+tier the WebGPU and wasm 4-wide kernels implement.
 """
 
 from __future__ import annotations
@@ -52,11 +61,77 @@ def parse_challenge(html: str) -> dict | None:
     return json.loads(m.group(1)) if m else None
 
 
+def free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def wait_for(url: str, timeout: float = 8.0) -> bool:
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(url, timeout=0.5).read()
+            return True
+        except Exception:
+            time.sleep(0.1)
+    return False
+
+
+def start_gate(algorithm: str, difficulty: int):
+    """An Anubis gate in front of a throwaway backend, on free ports."""
+    import tempfile
+
+    gate_bin = REPO / "betterAnusbis" / "betterAnusbis"
+    if not gate_bin.exists():
+        raise SystemExit(f"{gate_bin} is not built; run `make -C betterAnusbis` first")
+
+    www = Path(tempfile.mkdtemp(prefix="anubis-gate-"))
+    (www / "index.html").write_text("PAST THE WALL\n")
+    backend_port = free_port()
+    backend = subprocess.Popen(
+        [sys.executable, "-m", "http.server", str(backend_port), "--bind", "127.0.0.1"],
+        cwd=www, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    gate_port = free_port()
+    gate = subprocess.Popen(
+        [str(gate_bin), "--listen", f"127.0.0.1:{gate_port}",
+         "--target", f"http://127.0.0.1:{backend_port}",
+         "--algorithm", algorithm, "--difficulty", str(difficulty)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    url = f"http://127.0.0.1:{gate_port}/"
+    if not wait_for(url):
+        gate.terminate()
+        backend.terminate()
+        raise SystemExit(f"the gate on {url} never answered")
+    print(f"  gate: {algorithm} difficulty {difficulty} on {url}")
+    return gate, backend, url
+
+
 def main() -> int:
     base = "http://127.0.0.1:8923/"
-    for i, arg in enumerate(sys.argv):
-        if arg == "--url" and i + 1 < len(sys.argv):
-            base = sys.argv[i + 1]
+    algorithm = "sha256"
+    difficulty = 20
+    start = False
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg == "--url" and i + 1 < len(args):
+            base = args[i + 1]
+        elif arg == "--algorithm" and i + 1 < len(args):
+            algorithm = args[i + 1]
+        elif arg == "--difficulty" and i + 1 < len(args):
+            difficulty = int(args[i + 1])
+        elif arg == "--start-gate":
+            start = True
+
+    gate = backend = None
+    if start:
+        gate, backend, base = start_gate(algorithm, difficulty)
 
     proc = subprocess.Popen(
         [sys.executable, "-u", str(HOST), "manifest.json", "anubis-solver@celikfana-lab"],
@@ -172,6 +247,13 @@ def main() -> int:
     finally:
         proc.stdin.close()
         proc.wait(timeout=5)
+        for child in (gate, backend):
+            if child is not None:
+                child.terminate()
+                try:
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    child.kill()
 
     print()
     print("all checks passed" if failures == 0 else f"{failures} check(s) FAILED")

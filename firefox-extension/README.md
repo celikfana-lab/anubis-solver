@@ -76,9 +76,30 @@ runs, it only sees whether the host answers.
 ## Tests
 
 ```bash
-node test-webgpu.js      # the shader's nonce placement vs node's crypto (25 checks)
-python3 test-native.py   # the native host, end to end (needs the gate on :8923)
+node test-webgpu.js                              # shader nonce placement vs node crypto (25 checks)
+python3 test-native.py --start-gate              # sha256 challenge, difficulty 20, end to end
+python3 test-native.py --start-gate --algorithm hashx --difficulty 26
+python3 test-native.py --url http://127.0.0.1:8923/   # or against a gate you already run
 ```
+
+`--start-gate` launches `betterAnusbis` in front of a throwaway backend on free
+ports, so the full Anubis exchange (page, challenge JSON, cookie,
+pass-challenge) is real, with the algorithm and difficulty you name. The
+default is `sha256` at difficulty 20 — the tier the WebGPU and 4-wide wasm
+kernels implement, and the one a real site issues.
+
+## Try it in a browser
+
+```bash
+# one terminal per line: a backend, then a sha256 gate in front of it
+(cd /tmp && python3 -m http.server 8000)
+./betterAnusbis/betterAnusbis --listen 127.0.0.1:8080 --target http://127.0.0.1:8000 \
+    --algorithm sha256 --difficulty 20
+```
+
+Load the add-on, open `http://127.0.0.1:8080/`, and the gate's challenge page is
+the one the extension takes over. `--algorithm hashx --difficulty 26` gives the
+other tier; `--difficulty 24+` makes the progress bar worth watching.
 
 ### The bits Firefox requires
 

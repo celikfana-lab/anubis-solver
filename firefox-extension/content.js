@@ -6,18 +6,25 @@
 //   <div id="progress"><div class="bar-inner"></div></div>
 // and its own single-core wasm keeps updating both. This replaces the text and
 // the bar with the real solver's numbers, and re-asserts them over Anubis's
-// writes (an observer, because the page's solver is still running and will keep
-// overwriting #status until it is navigated away from).
+// writes (an observer, because the page's solver would otherwise keep
+// overwriting #status).
 //
-// Three modes, chosen by what answers:
-//   native   the Firefox native host (libanubis_solver.so: SHA-NI/AVX2/AVX-512,
-//            every core, an accelerator when one exists) — "solving natively"
-//   wasm     this repository's wasm kernel in a Worker, when the host is missing
-//            (Windows/macOS without install.sh) — "solving with better wasm"
-//   page     nothing of ours: Anubis's own solver keeps the bar
-// WebGPU is not a mode yet: the repository has WGSL for meatrider, not for the
-// hashx/sha256 challenges a website issues, and a label without a kernel behind
-// it would be a lie.
+// The page's own solver is stopped before it starts: once a challenge is seen,
+// the background script cancels the challenge page's .wasm module requests. If
+// nothing of ours works, we ask the background to unblock, so the tab is never
+// left with a dead solver and no replacement.
+//
+// Four modes, chosen in this order by what answers:
+//   native   the Firefox native host: libanubis_solver.so, which picks the best
+//            backend it has (CUDA, Level Zero, Vulkan, OpenCL, SHA-NI/AVX-512)
+//            — the fast path on Windows/macOS/Linux when the host is installed
+//   gpu      WebGPU, after a known-answer self-check against WebCrypto
+//            (webgpu/gpu-solver.js + webgpu/sha256.wgsl) — the fast path when
+//            the host is missing but the browser has a real GPU
+//   wasm     this repository's 4-wide wasm kernel in a Worker, when neither of
+//            the above is there
+//   page     nothing of ours: the tab is unblocked and Anubis's solver resumes
+// A GPU that fails the self-check is not used: wrong answers are not fast.
 (() => {
   "use strict";
 
@@ -31,7 +38,7 @@
   };
 
   const state = {
-    mode: null,          // "native" | "wasm" | "page"
+    mode: null,          // "native" | "gpu" | "wasm" | "page"
     challenge: null,
     kernel: "",
     rate: 0,
@@ -39,6 +46,13 @@
     started: 0,
     ticker: 0,
     worker: null,
+  };
+
+  const MODE_LABEL = {
+    native: "Solving natively",
+    gpu: "Solving on the GPU",
+    wasm: "Solving with better wasm",
+    page: "Solving",
   };
 
   function $(id) {
@@ -81,9 +95,7 @@
     if (state.phase === "done") {
       return `Solved with ${state.kernel} in ${(state.elapsedMs / 1000).toFixed(2)} s`;
     }
-    const label = state.mode === "native" ? "Solving natively"
-                : state.mode === "wasm" ? "Solving with better wasm"
-                : "Solving";
+    const label = MODE_LABEL[state.mode] ?? "Solving";
     const bits = [`${label} · ${state.challenge?.algorithm ?? ""} · difficulty ${state.challenge?.difficulty ?? "?"}`];
     if (state.rate) bits.push(humanRate(state.rate));
     if (state.threads) bits.push(`${state.threads} threads`);
@@ -113,6 +125,7 @@
     if (panelRefs) {
       panelRefs.engine.textContent =
         state.mode === "native" ? `${state.kernel}`
+        : state.mode === "gpu" ? `webgpu · ${state.kernel}`
         : state.mode === "wasm" ? `wasm · ${state.kernel}`
         : "page solver";
       panelRefs.fill.style.width = `${pct}%`;
@@ -185,7 +198,7 @@
       }
       paint(true);
     } else if (message.type === "anubis-native-mode") {
-      // the host is not there: pick the in-page kernel if we have one
+      // the host is not there: pick the in-page engine if we have one
       startFallback();
     }
   });
@@ -196,16 +209,30 @@
     return browser.runtime.getURL(path);
   }
 
-  function startFallback() {
-    if (state.mode === "wasm" || state.mode === "page") return;
+  /** The host is not there: WebGPU if it passes the self-check, else wasm. */
+  async function startFallback() {
+    if (state.mode === "gpu" || state.mode === "wasm" || state.mode === "page") return;
     const chal = state.challenge;
     if (!chal) return;
+
+    // The probe ran in parallel with the native attempt, so this is usually
+    // already settled. A GPU holds the whole card; the wasm worker uses one core.
+    if (chal.algorithm === "sha256" || chal.algorithm === "wasm-sha256") {
+      const gpu = await gpuProbe;
+      if (gpu && gpu.ok) {
+        startGPU(gpu);
+        return;
+      }
+      state.gpuWhy = gpu ? gpu.why : "no WebGPU";
+    }
+    if (WASM_FOR[chal.algorithm]) startWasm(chal);
+    else giveUp(state.gpuWhy ?? "no kernel of ours for this algorithm");
+  }
+
+  function startWasm(chal) {
     const wasmName = WASM_FOR[chal.algorithm];
     if (!wasmName) {
-      state.mode = "page";             // no kernel of ours for this algorithm
-      state.kernel = "page wasm";
-      state.phase = "running";
-      paint(true);
+      giveUp("no kernel of ours for this algorithm");
       return;
     }
     state.mode = "wasm";
@@ -236,11 +263,7 @@
       }
       clearInterval(state.ticker);
       if (!calibrated && !msg.ok) {
-        // the module would not load: leave Anubis's own solver to it
-        state.mode = "page";
-        state.kernel = "page wasm";
-        state.phase = "running";
-        paint(true);
+        giveUp(msg.error ?? "the wasm module would not load");
         return;
       }
       if (msg.ok) {
@@ -258,6 +281,49 @@
     const cal = Math.max(8, Math.min(chal.difficulty - 4, 18));
     worker.postMessage({ kind: "calibrate", wasmUrl, algorithm: chal.algorithm,
                          challengeHex: chal.randomData, difficulty: cal });
+  }
+
+  // ---- gpu mode --------------------------------------------------------
+
+  function startGPU(gpu) {
+    const chal = state.challenge;
+    state.mode = "gpu";
+    state.kernel = gpu.adapter || "webgpu";
+    state.phase = "running";
+    state.started = performance.now();
+    paint(true);
+
+    AnubisWebGPU.solve(chal.randomData, chal.difficulty, (p) => {
+      state.pct = p.pct;
+      state.rate = p.rate;
+      paint(false);
+    }).then((res) => {
+      if (res && res.ok) {
+        state.phase = "done";
+        state.elapsedMs = res.elapsedMs;
+        state.rate = res.rate ?? state.rate;
+        paint(true);
+        passThrough(chal, res);
+        return;
+      }
+      state.gpuWhy = res?.error ?? "the GPU scan failed";
+      if (WASM_FOR[chal.algorithm]) startWasm(chal);
+      else giveUp(state.gpuWhy);
+    }).catch((err) => {
+      state.gpuWhy = String(err);
+      if (WASM_FOR[chal.algorithm]) startWasm(chal);
+      else giveUp(state.gpuWhy);
+    });
+  }
+
+  /** Nothing of ours worked: put the page's own solver back in charge. */
+  function giveUp(why) {
+    state.mode = "page";
+    state.kernel = "page wasm";
+    state.phase = "running";
+    state.error = why;
+    paint(true);
+    browser.runtime.sendMessage({ type: "anubis-unblock" }).catch(() => {});
   }
 
   function passThrough(chal, solution) {
@@ -279,6 +345,13 @@
   state.phase = "running";
   watch();
   paint(true);
+
+  // Probe the GPU while the native host is being tried, so a missing host does
+  // not cost a round trip before the GPU scan can start.
+  const gpuProbe = (typeof AnubisWebGPU !== "undefined" && AnubisWebGPU.probe)
+    ? AnubisWebGPU.probe().catch((e) => ({ ok: false, why: String(e) }))
+    : Promise.resolve({ ok: false, why: "no WebGPU support compiled in" });
+
   browser.runtime
     .sendMessage({ type: "anubis-native-detected", challenge: chal })
     .catch(() => startFallback());

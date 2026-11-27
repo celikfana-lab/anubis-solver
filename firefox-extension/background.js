@@ -14,12 +14,44 @@
 // The point is the engine: the in-page solver is single-core WebAssembly, while
 // the native host uses the SHA-NI/AVX2 kernels, every core, and an accelerator
 // when one is available.
+//
+// The page's own solver is stopped at the network layer: once a tab has shown a
+// challenge, its .wasm requests under /.within.website/ are cancelled, so the
+// single-core in-page miner never starts and the progress bar is ours. If the
+// page asks us to stand down (nothing of ours worked), the tab is unblocked.
 
 const HOST = "anubis_solver";
 const PASS_PATH = "/.within.website/x/cmd/anubis/api/pass-challenge";
 
 /** tabId -> true while a native solve is running for that tab */
 const solving = new Map();
+
+/** tabIds whose challenge we took over: their own wasm module is cancelled */
+const challenged = new Set();
+
+browser.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    if (details.tabId < 0 || !challenged.has(details.tabId)) return {};
+    const url = details.url;
+    // only the proof-of-work module: the page still needs its own scripts and
+    // the pass-challenge navigation, which is not a sub-resource request.
+    if (/\/\.within\.website\//.test(url) && /\.wasm($|\?)/i.test(url)) {
+      console.log(`[anubis-native] blocked the page's wasm: ${url}`);
+      return { cancel: true };
+    }
+    return {};
+  },
+  { urls: ["*://*/*"], types: ["script", "xmlhttprequest", "other", "object_subrequest"] },
+  ["blocking"]
+);
+
+browser.tabs.onRemoved.addListener((tabId) => {
+  challenged.delete(tabId);
+  solving.delete(tabId);
+});
+browser.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === "loading" || info.url) challenged.delete(tabId);
+});
 
 async function activeTab() {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -81,7 +113,9 @@ function solveForTab(tabId, tabUrl, challenge) {
     // Nothing came back: no host on this machine (Windows/macOS without
     // install.sh). Tell the page so it can use the wasm kernel in a Worker.
     relay(tabId, { event: "unavailable" });
-    browser.tabs.sendMessage(tabId, { type: "anubis-native-mode" }).catch(() => {});
+    browser.tabs
+      .sendMessage(tabId, { type: "anubis-native-mode", platform: platform() })
+      .catch(() => {});
     const err = browser.runtime.lastError?.message ?? "the native host exited";
     relay(tabId, { event: "done", ok: false, error: err });
     notify("native host stopped", withInstallHint(err));
@@ -102,8 +136,14 @@ function solveForTab(tabId, tabUrl, challenge) {
 
 // The content script's auto-detection.
 browser.runtime.onMessage.addListener((message, sender) => {
-  if (!message || message.type !== "anubis-native-detected") return;
+  if (!message) return;
+  if (message.type === "anubis-unblock") {
+    if (sender.tab?.id != null) challenged.delete(sender.tab.id);
+    return;
+  }
+  if (message.type !== "anubis-native-detected") return;
   if (!sender.tab?.id) return;
+  challenged.add(sender.tab.id);
   solveForTab(sender.tab.id, sender.tab.url, message.challenge);
 });
 
@@ -122,6 +162,15 @@ browser.browserAction.onClicked.addListener(async () => {
     notify("cannot read this page", String(err));
   }
 });
+
+/** Where this browser is running: the native host is a per-OS install. */
+function platform() {
+  const p = (navigator.userAgentData?.platform || navigator.platform || "").toLowerCase();
+  if (p.includes("win")) return "windows";
+  if (p.includes("mac")) return "macos";
+  if (p.includes("linux")) return "linux";
+  return p || "unknown";
+}
 
 function withInstallHint(message) {
   if (!/No such native application|not found/i.test(message)) return message;

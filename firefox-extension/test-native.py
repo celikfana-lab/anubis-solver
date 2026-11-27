@@ -141,8 +141,20 @@ def main() -> int:
                       done.get("event") == "done" and done.get("ok") is True
                       and done.get("nonce") is not None,
                       f"nonce {done.get('nonce')} in {done.get('elapsedMs', 0):.0f} ms")
-                check("stream: same proof as the one-shot path",
-                      done.get("response") == solved.get("response"))
+                # A second solve of the same challenge may legitimately find a
+                # different nonce (hashx is not deterministic), so the two
+                # responses are not expected to be equal: check that the
+                # streamed proof is a valid one instead.
+                stream_verified = send(proc, {
+                    "cmd": "verify",
+                    "algorithm": rules["algorithm"],
+                    "randomData": chal["randomData"],
+                    "difficulty": rules["difficulty"],
+                    "nonce": done.get("nonce"),
+                })
+                check("stream: the proof it streamed is valid",
+                      stream_verified.get("valid") is True,
+                      f"nonce {done.get('nonce')}")
 
                 # the real proof: hand the response to the server and fetch the page
                 query = urlencode({

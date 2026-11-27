@@ -86,7 +86,7 @@ rm -f "$OUT"
 
 # -X keeps timestamps and extra attributes out, so the same tree gives the same
 # bytes; that makes the sha256 below meaningful rather than decorative.
-zip -q -X -r "$OUT" manifest.json background.js content.js icons wasm
+zip -q -X -r "$OUT" manifest.json background.js content.js icons wasm webgpu
 
 echo
 echo "built $OUT"

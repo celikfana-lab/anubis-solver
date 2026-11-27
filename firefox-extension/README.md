@@ -1,16 +1,39 @@
-# Anubis native solver — Firefox extension
+# Anubis solver — Firefox extension
 
-Solves Anubis proof-of-work challenges with **`libanubis_solver.so`** instead of the
-page's WebAssembly solver. The page can only use one core of wasm; the native host
-uses the SHA-NI/AVX2 kernels and every core.
+Solves Anubis proof-of-work challenges faster than the page can, in one of three
+engines, and paints the result into Anubis's own progress bar:
+
+1. **native host** — `libanubis_solver.so` picks the best backend the machine
+   has (CUDA, Level Zero, Vulkan, OpenCL, then SHA-NI/AVX-512 on the CPU). The
+   fast path wherever `install.sh` has been run, Windows and macOS included.
+2. **WebGPU** — the extension ships `webgpu/sha256.wgsl` and only uses it after
+   a known-answer self-check against WebCrypto. This is the fast path when the
+   host is missing but the browser has a real GPU (Firefox with
+   `dom.webgpu.enabled`).
+3. **wasm 4-wide** — the repository's `wasm/sha256_pow_batch.wasm` in a Worker,
+   when neither of the above is available.
+
+Before any of that, the page's own solver is stopped: once a challenge is seen,
+the background script cancels the challenge page's `.wasm` requests, so the
+single-core in-page miner never starts. If nothing of ours works, the tab is
+unblocked again and Anubis's solver resumes.
 
 Measured on the same challenge (`difficulty 18–22`, this machine):
 
-| engine | SHA-256 rate | |
+Measured on the same challenge (`difficulty 18–22`, this machine):
+
+| engine | SHA-256 rate | where it was measured |
 |---|---:|---|
-| **native host** (`libanubis_solver.so`, SHA-NI, 4 threads) | **~20 M hashes/s** | |
-| our wasm, 4 nonces wide (`wasm/sha256_pow_batch.wasm`) | ~3.4 M hashes/s | **5.9× slower** |
-| official Anubis wasm (`simd128/sha256.wasm`) | ~1.9 M hashes/s | **10.5× slower** |
+| native host, GPU backend (Level Zero / Vulkan) | ~137 M hashes/s | `tools/bench_gpu.py` |
+| WebGPU, `webgpu/sha256.wgsl` | 86.7 M hashes/s | `webgpu/README.md` |
+| native host, CPU-only (SHA-NI, 4 threads) | ~20 M hashes/s | this README |
+| our wasm, 4 nonces wide (`wasm/sha256_pow_batch.wasm`) | ~3.4 M hashes/s | this README |
+| official Anubis wasm (`simd128/sha256.wasm`) | ~1.9 M hashes/s | this README |
+
+The engines are tried in that order for that reason: whatever CUDA/Level Zero/
+Vulkan gives the native host is the best this machine can do; WebGPU is next;
+the wasm worker is the last resort. The extension does not measure any of them
+itself, it only reports what the engine it picked says.
 
 A live `difficulty 12` challenge — 4,000 hashes on average — is solved in
 **0.5–0.9 ms** end to end, and the answer is accepted by a real Anubis v1.28.3
@@ -19,12 +42,14 @@ A live `difficulty 12` challenge — 4,000 hashes on average — is solved in
 ## How it fits together
 
 ```
-toolbar click
-   └─ content.js          reads <script id="anubis_challenge"> from the page
-   └─ background.js       browser.runtime.sendNativeMessage("anubis_solver", ...)
-        └─ anubis_native.py   (Firefox starts it; 4-byte length + JSON on stdin/stdout)
-             └─ libanubis_solver.so   the C engine, via the repo's anubis_solver.py
-   └─ tabs.update(pass-challenge?id=…&response=…&nonce=…)
+page load
+   └─ content.js            reads <script id="anubis_challenge">, starts the bar
+   └─ background.js         cancels the page's .wasm, then tries the native host
+        └─ anubis_native.py    (Firefox starts it; 4-byte length + JSON on stdio)
+             └─ libanubis_solver.so   the C engine, every backend it finds
+   └─ if the host is absent: webgpu/gpu-solver.js  (self-check, then scan)
+   └─ if the GPU fails:      wasm/pow-worker.js    (4-wide wasm)
+   └─ pass-challenge?id=…&response=…&nonce=…
 ```
 
 Native messaging cannot be used from a content script, so the content script only
@@ -43,6 +68,17 @@ directory and have it signed.
 
 `install.sh` rewrites the manifest's `path` to this checkout's absolute path, so
 re-run it if you move the repository.
+
+On Windows the host is the registry key above and `libanubis_solver` must be a
+`.dll` next to `anubis_native.py`; the extension does not care which of the two
+runs, it only sees whether the host answers.
+
+## Tests
+
+```bash
+node test-webgpu.js      # the shader's nonce placement vs node's crypto (25 checks)
+python3 test-native.py   # the native host, end to end (needs the gate on :8923)
+```
 
 ### The bits Firefox requires
 

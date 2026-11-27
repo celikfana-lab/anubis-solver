@@ -47,6 +47,7 @@ node betterAnusbis/tests_js_tensor_v.mjs  # `tensor-v` sample protocol + WebNN h
 python3 tools/test_wallet.py --check       # the payout fixture derives from its own key
 ./firefox-extension/build-xpi.sh           # the Firefox add-on: build/anubis-solver-firefox-<ver>.xpi
 python3 firefox-extension/test-native.py    # the native host, end to end (needs the gate on :8923)
+node firefox-extension/test-webgpu.js       # the WebGPU nonce placement vs node's crypto
 python3 tools/test_wallet.py --new --out ~/w/Name.json --label Name   # a wallet of your own, outside git
 python3 tools/bench-server-resources.py   # RAM and CPU, from /proc
 node tools/bench-client-resources.mjs     # wasm vs native memory and CPU
@@ -88,7 +89,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `webgpu/` | HashX, Argon2id, SHA-256 and meatrider compiled to WGSL and run on WebGPU; SHA-256 is 33x wasm, Argon2id is slower than wasm, HashX is wrong on the Intel backend — see its README before quoting any number from it |
 | `betterAnusbis/` | an Anubis-compatible PoW gate in one C file; links this library |
 | `colab/` | the Colab notebooks: every meatrider kernel on a T4, and the TPU program's first run |
-| `firefox-extension/` | native messaging host so the browser uses `libanubis_solver.so` |
+| `firefox-extension/` | native messaging host so the browser uses `libanubis_solver.so`, plus a WebGPU and a wasm engine, and Anubis's progress bar taken over |
 | `beyond/`, `card/` | the hardware half: RTL, testbenches, QEMU PCI device + driver |
 
 ## Conventions

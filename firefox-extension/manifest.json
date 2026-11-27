@@ -1,19 +1,40 @@
 {
   "manifest_version": 2,
   "name": "Anubis native solver",
-  "version": "1.10.0",
+  "version": "2.50.0",
   "description": "Solve Anubis proof-of-work challenges with the native C engine instead of the in-page WebAssembly solver.",
   "browser_specific_settings": {
     "gecko": {
       "id": "anubis-solver@celikfana-lab",
-      "strict_min_version": "115.0"
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
   },
-  "permissions": ["nativeMessaging", "activeTab", "tabs", "notifications"],
+  "permissions": [
+    "nativeMessaging",
+    "activeTab",
+    "tabs",
+    "notifications"
+  ],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "background.js"
+    ]
   },
   "browser_action": {
-    "default_title": "Solve this Anubis challenge natively"
+    "default_title": "Solve this Anubis challenge natively",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png"
   }
 }

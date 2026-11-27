@@ -88,6 +88,39 @@ Algorithms supported: `fast`, `slow`, `sha256`, `wasm-sha256`, `argon2id`, `hash
 (whatever `libanubis_solver.so` provides, plus GPU backends if the library was
 built with them).
 
+## The .xpi
+
+```bash
+./build-xpi.sh                 # -> ../build/anubis-solver-firefox-2.50.0.xpi
+./build-xpi.sh --sign          # the same, then `web-ext sign` (AMO_API_KEY/AMO_API_SECRET)
+```
+
+An `.xpi` is a zip with `manifest.json` at its root; the script also checks the two
+things that silently break native messaging before it writes one: the add-on ID in
+`manifest.json` must appear in `native-host/anubis_solver.json`'s
+`allowed_extensions`, and every file the manifest names must exist. It packages
+only the runtime files (`manifest.json`, `background.js`, `content.js`, `icons/`)
+and leaves the host, the installer and this README out of the archive.
+
+The icons are generated from `../mascot/icon.png` at 48, 96 and 128 pixels.
+
+Install:
+
+1. `./install.sh` once per checkout — it writes the OS-level native manifest
+   Firefox reads at startup.
+2. **Temporary:** `about:debugging` → This Firefox → Load Temporary Add-on → pick
+   the `.xpi`. It lasts until Firefox restarts.
+3. **Permanent:** the file needs a signature. Upload the `.xpi` at
+   <https://addons.mozilla.org/developers/> (AMO signs it and hands back a signed
+   copy), or run `./build-xpi.sh --sign` with your AMO API key. A plain
+   `xpinstall.signatures.required=false` only works on Developer Edition/Nightly.
+
+`web-ext lint` on the packaged file reports 0 errors. The two warnings are
+expected: `data_collection_permissions` (required for new AMO submissions since
+Firefox 140) is not understood by the 115 minimum this add-on declares, and the
+Android variant of the same key is irrelevant because native messaging is
+desktop-only.
+
 ## Testing without a browser
 
 ```bash
@@ -98,15 +131,27 @@ python3 test-native.py --url https://some.anubis.host/
 It spawns the host exactly as Firefox does, checks `ping`/`info`/unknown-command
 handling, solves a live challenge, verifies the nonce through the C engine, then
 does the full pass-challenge exchange with a cookie jar and asserts the protected
-page comes back. Current output:
+page comes back. The page it asserts on is the repo's `PAST THE WALL` fixture, so
+put one behind the gate:
+
+```bash
+mkdir -p /tmp/ba-site && echo '<html><body><h1>PAST THE WALL</h1></body></html>' \
+  > /tmp/ba-site/index.html
+(cd /tmp/ba-site && python3 -m http.server 3000 &)
+(cd betterAnusbis && ./betterAnusbis --listen 127.0.0.1:8923 \
+   --target http://127.0.0.1:3000 --public-url http://127.0.0.1:8923 --difficulty 12 &)
+python3 test-native.py --url http://127.0.0.1:8923/
+```
+
+Current output:
 
 ```
   ok   ping
-  ok   info  libanubis_solver 2.0.2, 4 threads, sha256 batch 8, gpu None
+  ok   info  libanubis_solver 2.50, 4 threads, sha256 batch 8, gpu Intel(R) Iris(R) Xe Graphics (ADL GT2)
   ok   unknown command is an error, not a crash
-  ok   live solve (sha256 difficulty 12)  nonce 9195 in 0.86 ms
+  ok   live solve (sha256 difficulty 12)  nonce 6839 in 2.95 ms
   ok   the engine agrees the nonce is valid
-  ok   the server let the native solve through  69 bytes after the wall
+  ok   the server let the native solve through  49 bytes after the wall
 ```
 
 `wasm/live-server.md` has the steps to bring up the Anubis instance it tests

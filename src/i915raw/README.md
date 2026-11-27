@@ -122,9 +122,11 @@ Each dispatch block (30 dwords used, 128-byte slot):
 +0x00  70040000   GPGPU_OBJECT
 +0x08  70020002   MEDIA_INTERFACE_DESCRIPTOR_LOAD (4 dwords), address 0, size 32
 +0x10  7105000d   GPGPU_WALKER (15 dwords)
-         +0x04  indirect data length 0
-         +0x08  thread group count X (3200 for the throughput dispatch)
-         +0x0c  48-bit pointer into the surface-state/heap buffer
+         +0x04  interface descriptor offset 0
+         +0x08  indirect data length 0xc80 (bytes of payload)
+         +0x0c  indirect data address, an offset from the indirect object base
+         +0x10  thread width 16, SIMD32 (dw4 bits 5:0 and 31:30)
+         +0x1c  thread group count X (8192 for the throughput dispatch)
 +0x54  70040000   GPGPU_OBJECT
 +0x5c  7a000004   PIPE_CONTROL with a post-sync store to the results buffer
 +0x70  05000000   MI_BATCH_BUFFER_END
@@ -169,6 +171,86 @@ bash src/i915raw/capture.sh      # needs intel-opencl-icd for the capture
 
 `capture.sh` prints the per-dispatch time (16.0–17.4 ms for 4,194,304 nonces)
 and the digest.
+
+## What Mesa says (the reference we should have read first)
+
+Mesa ships this whole path twice: `src/gallium/drivers/iris/` for the render
+engine, and — much closer to what we need — **`src/intel/executor/`**, a
+standalone compute executor that builds a dispatch by hand and submits it with
+`DRM_IOCTL_I915_GEM_EXECBUFFER2`, no ANV, no Gallium. Its `emit_execute()`
+writes exactly this:
+
+```
+PIPE_CONTROL, PIPELINE_SELECT(GPGPU, mask 3), PIPE_CONTROL,
+STATE_BASE_ADDRESS (general/instruction base 0, surface/dynamic base = a state BO),
+3DSTATE_BINDING_TABLE_POOL_ALLOC, 3DSTATE_STATE_INVALIDATE,
+MEDIA_VFE_STATE (URB entries 2, max threads, CURBE allocation),
+PIPE_CONTROL,
+INTERFACE_DESCRIPTOR_DATA (32 bytes, in the state BO),
+MEDIA_INTERFACE_DESCRIPTOR_LOAD (offset of that IDD),
+MEDIA_CURBE_LOAD (one GRF per hardware thread, thread id in dword 0),
+GPGPU_WALKER (SIMD size, thread width, X dimension, masks),
+MEDIA_STATE_FLUSH, PIPE_CONTROL, MI_BATCH_BUFFER_END
+```
+
+and the field layouts are in `src/intel/genxml/` — exact, machine-readable, and
+inherited across generations (`gen120.xml` imports `gen110.xml`, which imports
+`gen90.xml`, which imports `gen80.xml`; the file that actually defines
+`GPGPU_WALKER` for this part is **gen80.xml**, length 15).
+
+`decode_capture.py` in this directory uses those XML files to decode a capture
+with field names. It corrects three things the earlier dword-guessing got
+wrong:
+
+```
+GPGPU_WALKER  (15 dwords: 7105000d 00000000 00000c80 fffdd080 8000000f ...)
+   dw0  DWord Length                           13
+   dw2  Indirect Data Length                   0xc80
+   dw3  Indirect Data Start Address            0x3fff742   -> IndirectObjectBase + 0xfffdd080
+   dw4  Thread Width Counter Maximum           15          (16 threads per group)
+   dw4  SIMD Size                              2           (SIMD32)
+   dw7  Thread Group ID X Dimension            0x2000      (8192)
+```
+
+8192 groups x 16 threads x 32 lanes = **4,194,304**, exactly the dispatch's
+nonce count. The `0xc80` that looked like a thread count is the indirect-data
+length; the X dimension is `dw7`.
+
+```
+STATE_BASE_ADDRESS (22 dwords: 61010014 ...)
+   dw1  General State Base Address             0x7b6b6d7ff000
+   dw4  Surface State Base Address             0x7b6b75075000
+   dw6  Dynamic State Base Address             0x7b6b75086000
+   dw8  Indirect Object Base Address           0xffff800100000000
+   dw10 Instruction Base Address               0x800100000000
+   dw16 Bindless Surface State Base Address    0x7b6b75075000
+
+MEDIA_INTERFACE_DESCRIPTOR_LOAD (4 dwords: 70020002 00000000 00000020 00000180)
+   dw3  Interface Descriptor Data Start Address 0x180       (offset from dynamic base)
+```
+
+The IDD lives at `DynamicStateBase + 0x180`, and its `Kernel Start Pointer`
+(`0xfffea000`) is an offset from the **Indirect Object Base Address**, not an
+absolute address: `0xffff800100000000 + 0xfffea000` is the kernel buffer. The
+payload (the kernel's cross-thread constants, difficulty/count included) is at
+`IndirectObjectBase + 0xfffdd080`, which is the walker's indirect-data address.
+
+That is the same trick the `.so` would use: one address space (the indirect
+object base), the kernel at one offset, the payload at another, and the
+interface descriptor pointing at both.
+
+### What this changes for the `.so`
+
+The state builder no longer has to be reverse-engineered. `gen_pack_header.py`
+from Mesa turns `gen120.xml` into C pack functions
+(`GFX12_STATE_BASE_ADDRESS_pack`, `GFX12_GPGPU_WALKER_pack`,
+`GFX12_INTERFACE_DESCRIPTOR_DATA_pack`, ...), and `make gen12-pack` here does
+that into `build/gen12_pack.h`. With those, the library can emit the executor's
+sequence itself — Mesa is a *reference at build time*, not a runtime
+dependency, which is exactly the "talk to the kernel driver directly" shape.
+
+The kernel is still the open piece: IGC's binary is message-length specific
+(one 48-byte block), and our own listing still needs its `send.dc1` store.
 
 ## Solving: the argument block
 

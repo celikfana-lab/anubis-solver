@@ -35,7 +35,24 @@ replay: $(BUILD)/i915-replay
 capture: all
 	bash ./capture.sh
 
-clean:
-	rm -f $(BUILD)/i915-probe $(BUILD)/i915-dump.so $(BUILD)/i915-replay
+# The exact command/struct encoders, generated from Mesa's genxml.  Mesa is a
+# build-time reference only: the generated header has no Mesa runtime
+# dependency (it needs the small shims in a future state builder).
+#   make gen12-pack MESA_SRC=/path/to/mesa
+MESA_SRC ?= /media/miku6/kubuntu_2404/home/miku/DOWN/pyani/mesa
+MESA_XML ?= $(MESA_SRC)/src/intel/genxml
+.PHONY: gen12-pack
+gen12-pack: | $(BUILD)
+ifneq ($(wildcard $(MESA_XML)/gen120.xml),)
+	python3 $(MESA_XML)/gen_pack_header.py --pack --unpack $(MESA_XML)/gen120.xml > $(BUILD)/gen12_pack.h
+	@echo "generated $(BUILD)/gen12_pack.h: $$(grep -c '_pack(' $(BUILD)/gen12_pack.h) pack functions"
+else
+	@echo "gen12-pack needs a Mesa checkout: make gen12-pack MESA_SRC=/path/to/mesa"
+	@false
+endif
 
-.PHONY: all probe dump replay capture clean
+clean:
+	rm -f $(BUILD)/i915-probe $(BUILD)/i915-dump.so $(BUILD)/i915-replay \
+		$(BUILD)/gen12_pack.h
+
+.PHONY: all probe dump replay capture gen12-pack clean

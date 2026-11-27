@@ -1,0 +1,49 @@
+{
+  "what": "GPU clock behaviour and the boost pin, measured through libanubis_solver.so",
+  "date": "2026-11-27",
+  "machine": {
+    "gpu": "Intel Iris Xe Graphics (Alder Lake-P GT2)",
+    "kernel": "6.17.0-41-generic",
+    "driver": "i915",
+    "acpi_platform_profile": "performance",
+    "gt_min_mhz": 100,
+    "gt_idle_mhz": 300,
+    "gt_boost_mhz": 1400,
+    "gt_max_mhz": 1400,
+    "gt_min_writable_by_user": false
+  },
+  "api": {
+    "anubis_gpu_freq_mhz": "current GT clock, 0 when absent",
+    "anubis_gpu_boost": "1 pins gt_min_freq_mhz at the boost clock, 0 restores; -1 with EACCES when unprivileged",
+    "anubis_gpu_power_state": "JSON: card, cur/act/min/max/boost/RP0/RPn MHz, writable, boost, profile",
+    "env": "ANUBIS_GPU_BOOST=1 attempts the pin at library load"
+  },
+  "boost_pin": {
+    "result": "EACCES",
+    "why": "/sys/class/drm/cardN/gt_min_freq_mhz is root:root 0644",
+    "udev_workaround": "SUBSYSTEM==\"drm\", KERNEL==\"card[0-9]*\", RUN+=\"/bin/chown miku6 /sys/class/drm/%k/gt_min_freq_mhz\""
+  },
+  "benchmark": {
+    "tool": "python3 tools/bench_gpu_boost.py",
+    "backend": "opencl (IGC)",
+    "difficulty": 24,
+    "solves": 12,
+    "unpinned": {
+      "cold_mhs": 168.5,
+      "cold_ms": 58.3,
+      "steady_mhs_median": 245.6,
+      "steady_clock_mhz": [1100, 1150],
+      "cold_to_steady": 1.46
+    },
+    "difficulty_22": {
+      "cold_mhs": 48.1,
+      "steady_mhs_median": 129.4,
+      "cold_to_steady": 2.69
+    }
+  },
+  "notes": [
+    "the iGPU idles at 300 MHz and reaches 1400 MHz only in a short burst",
+    "sustained clock settles at 1100-1150 MHz under the performance profile (power/thermal)",
+    "discard the first solve when benchmarking a GPU: it measures the governor, not the kernel"
+  ]
+}

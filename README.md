@@ -223,6 +223,10 @@ make test-impersonate         # local TLS server: GREASE present/absent per prof
   Vulkan and OpenCL — for SHA-256, Argon2id and HashX. The OpenCL path now
   actually runs: 265 M hashes/s on an Iris Xe through Intel's NEO ICD, 13x what
   four CPU threads manage on the same challenge (see [docs/gpu.md](docs/gpu.md)).
+  The library also reads the Intel GPU's clock (`anubis_gpu_freq_mhz`,
+  `anubis_gpu_power_state`) and, with sysfs permission, pins its floor at the
+  boost clock (`anubis_gpu_boost`, `ANUBIS_GPU_BOOST=1`); the first solve after
+  idle is 1.5-2.7x slower than the steady state, so benchmark the second one.
 - **One `.so`, every machine (new in 2.0.2)**: `make universal` compiles CUDA,
   Level Zero, Vulkan, OpenCL and TPU in; the library probes what is present and
   uses it, so the same file runs on a T4, an Arc, an AMD card, a TPU VM or a

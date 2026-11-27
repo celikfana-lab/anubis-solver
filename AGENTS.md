@@ -37,6 +37,7 @@ python3 tools/bench_tiers.py
 python3 tools/bench_tensor_v.py       # tensor-v: client GEMM+tree vs sampled server check
 kaggle kernels push -p src/core/kaggle_tensor_v   # the same on a Kaggle CPU kernel
 python3 tools/bench_gpu.py          # per-backend rows: cuda/l0, vulkan, opencl, cpu
+python3 tools/bench_gpu_boost.py    # the same, with the GPU clock ramp and boost pin
 python3 tools/bench_argon2_gpu.py  # ANUBIS_GPU_ARGON2=1 for the GPU
 python3 tools/bench_hashx_gpu.py   # ANUBIS_GPU_HASHX=1 for CUDA
 node tools/bench-endtoend.mjs      # the wall, 2 servers x 3 clients

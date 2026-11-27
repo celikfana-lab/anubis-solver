@@ -349,6 +349,28 @@ ANUBIS_API int anubis_tensor_v_verify(const char *challenge_hex, int difficulty,
                                       size_t err_cap);
 
 /* ------------------------------------------------------------------ *
+ * GPU power (Linux)
+ *
+ * An iGPU clocks itself; userspace cannot ask i915 for a frequency. These
+ * read what the driver reports and, when the process has write permission on
+ * /sys/class/drm/cardN/gt_min_freq_mhz (root, or a udev rule), raise the floor
+ * to the boost clock so the governor cannot idle down between dispatches.
+ *
+ * anubis_gpu_boost(1) pins, anubis_gpu_boost(0) puts the old floor back.
+ * Returns 0 on success; -1 when there is no Intel GPU or the kernel refuses
+ * (errno EACCES for the usual "not root" case). ANUBIS_GPU_BOOST=1 runs the
+ * pin at library load.
+ *
+ * anubis_gpu_freq_mhz() is the current clock, 0 when unknown.
+ * anubis_gpu_power_state() is a static JSON snapshot: card, cur/act/min/max/
+ * boost/RP0/RPn MHz, whether the floor is writable, whether the pin is held,
+ * and the ACPI platform profile.
+ * ------------------------------------------------------------------ */
+ANUBIS_API int anubis_gpu_freq_mhz(void);
+ANUBIS_API int anubis_gpu_boost(int enable);
+ANUBIS_API const char *anubis_gpu_power_state(void);
+
+/* ------------------------------------------------------------------ *
  * Google TPU (PJRT C API), the `sha256` tier
  *
  * libtpu.so is dlopen()ed, so these symbols exist in every build: without the

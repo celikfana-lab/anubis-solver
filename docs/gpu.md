@@ -100,6 +100,50 @@ than a digest.
 Full tables, per-version numbers and raw JSON live in [SPEED.md](../SPEED.md)
 and `results/`.
 
+## Boost, and what the clock actually does
+
+An iGPU clocks itself. On the Iris Xe in this laptop the floor is 100 MHz, the
+idle clock 300 MHz, and the boost clock 1400 MHz; the driver raises it under
+load, on its own schedule. There is **no i915 ioctl for a frequency**, so a
+library cannot request one — the only lever is the sysfs floor,
+`/sys/class/drm/cardN/gt_min_freq_mhz`, which is root-only on a stock system.
+
+The library still reports and, where permitted, uses it:
+
+```c
+int anubis_gpu_freq_mhz(void);          /* current clock, 0 if no Intel GPU */
+int anubis_gpu_boost(int enable);       /* 1 pins the floor at boost, 0 restores */
+const char *anubis_gpu_power_state(void); /* JSON: card, clocks, writable, profile */
+```
+
+```python
+s = AnubisSolver()
+s.gpu_power_state()   # {'card': 'card1', 'cur_mhz': 300, 'max_mhz': 1400, ...}
+s.gpu_boost(True)     # 0 when it pinned, -1 with EACCES on a stock system
+s.gpu_freq_mhz()      # 1400 while hashing, 300 when idle
+```
+
+`ANUBIS_GPU_BOOST=1` runs the pin at library load. On this laptop it returns
+`EACCES`: the sysfs files are `root:root 0644`. A udev rule can grant it if you
+want the pin without root:
+
+```
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", RUN+="/bin/chown miku6 /sys/class/drm/%k/gt_min_freq_mhz"
+```
+
+What the clock costs, measured with `python3 tools/bench_gpu_boost.py`
+(OpenCL/IGC sha256, difficulty 24, performance platform profile active):
+
+| | MH/s | clock |
+|---|---:|---|
+| first solve, cold GPU | 168.5 | 300 → 1400 MHz |
+| steady state (median) | 245.6 | 1100–1150 MHz |
+
+So the ramp is 1.46x on a 40 ms solve, and the sustained clock sits below the
+1400 MHz ceiling (power/thermal, even in the performance profile). If you are
+benchmarking a GPU, discard the first solve — it measures the governor, not the
+kernel.
+
 ## Raspberry Pi 5
 
 Mesa's V3DV driver is detected but the compute kernels do not produce verified

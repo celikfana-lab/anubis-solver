@@ -1571,6 +1571,244 @@ const char *anubis_active_kernel(void) {
     return g_active_kernel;
 }
 
+/* ------------------------------------------------------------------ */
+/* GPU power: what the Intel GPU is clocked at, and raising its floor  */
+/*                                                                     */
+/* An iGPU clocks itself: userspace cannot ask i915 for a frequency.   */
+/* What it can read is the RPS state under /sys/class/drm/cardN, and   */
+/* what it can do with the right permission is raise gt_min_freq_mhz   */
+/* to the boost clock, so the governor cannot idle down between        */
+/* dispatches.  On a normal desktop those files are root-only, so the  */
+/* attempt reports EACCES instead of pretending to be boosted.         */
+/*                                                                     */
+/* The measured reason this matters: on the same machine a cold GPU    */
+/* retires command streams at ~10 M/s and a warm one at ~200 M/s; the  */
+/* hashing rate moves 146 -> 265 M hashes/s between the two.           */
+/* ------------------------------------------------------------------ */
+#if defined(__linux__)
+#include <dirent.h>
+#include <errno.h>
+
+static char g_gpu_card[32];
+static int g_gpu_min_saved = -1;
+static int g_gpu_boost_on;
+static int g_gpu_looked;
+
+#define GPU_SYSFS "/sys/class/drm"
+
+static void gpu_find_card(void) {
+    DIR *d;
+    struct dirent *e;
+
+    if (g_gpu_looked) {
+        return;
+    }
+    g_gpu_looked = 1;
+    d = opendir(GPU_SYSFS);
+    if (!d) {
+        return;
+    }
+    while ((e = readdir(d)) != NULL) {
+        char path[512];
+        FILE *f;
+
+        if (strncmp(e->d_name, "card", 4) != 0 || !e->d_name[4] ||
+            strlen(e->d_name) >= sizeof(g_gpu_card)) {
+            continue;
+        }
+        snprintf(path, sizeof(path), GPU_SYSFS "/%s/gt_max_freq_mhz",
+                 e->d_name);
+        f = fopen(path, "r");
+        if (f) {
+            fclose(f);
+            snprintf(g_gpu_card, sizeof(g_gpu_card), "%s", e->d_name);
+            break;
+        }
+    }
+    closedir(d);
+}
+
+static int gpu_read_int(const char *name) {
+    char path[512];
+    FILE *f;
+    int v = -1;
+
+    gpu_find_card();
+    if (!g_gpu_card[0]) {
+        return -1;
+    }
+    snprintf(path, sizeof(path), GPU_SYSFS "/%s/%s", g_gpu_card, name);
+    f = fopen(path, "r");
+    if (!f) {
+        return -1;
+    }
+    if (fscanf(f, "%d", &v) != 1) {
+        v = -1;
+    }
+    fclose(f);
+    return v;
+}
+
+static int gpu_write_int(const char *name, int value) {
+    char path[512];
+    FILE *f;
+    int rc = -1;
+
+    gpu_find_card();
+    if (!g_gpu_card[0]) {
+        errno = ENODEV;
+        return -1;
+    }
+    snprintf(path, sizeof(path), GPU_SYSFS "/%s/%s", g_gpu_card, name);
+    f = fopen(path, "w");
+    if (!f) {
+        return -1;          /* EACCES on a stock system */
+    }
+    if (fprintf(f, "%d\n", value) > 0 && fflush(f) == 0 && !ferror(f)) {
+        rc = 0;
+    } else {
+        errno = EIO;
+    }
+    if (fclose(f) != 0 && rc == 0) {
+        rc = -1;
+    }
+    return rc;
+}
+
+/* Current GPU clock in MHz: the actual one when the driver reports it, the
+ * requested one otherwise. 0 when there is no Intel GPU here. */
+ANUBIS_EXPORT
+int anubis_gpu_freq_mhz(void) {
+    int v = gpu_read_int("gt_act_freq_mhz");
+
+    if (v <= 0) {
+        v = gpu_read_int("gt_cur_freq_mhz");
+    }
+    return v > 0 ? v : 0;
+}
+
+/* enable != 0: raise the frequency floor to the boost clock.
+ * enable == 0: put the old floor back.
+ * Returns 0 on success, -1 when the kernel or the permissions say no
+ * (errno is EACCES for the usual "not root" case). */
+ANUBIS_EXPORT
+int anubis_gpu_boost(int enable) {
+    int target, min;
+
+    gpu_find_card();
+    if (!g_gpu_card[0]) {
+        errno = ENODEV;
+        return -1;
+    }
+    if (!enable) {
+        if (!g_gpu_boost_on || g_gpu_min_saved < 0) {
+            return 0;
+        }
+        if (gpu_write_int("gt_min_freq_mhz", g_gpu_min_saved) != 0) {
+            return -1;
+        }
+        g_gpu_boost_on = 0;
+        g_gpu_min_saved = -1;
+        return 0;
+    }
+    if (g_gpu_boost_on) {
+        return 0;
+    }
+    target = gpu_read_int("gt_boost_freq_mhz");
+    if (target <= 0) {
+        target = gpu_read_int("gt_RP0_freq_mhz");
+    }
+    if (target <= 0) {
+        target = gpu_read_int("gt_max_freq_mhz");
+    }
+    min = gpu_read_int("gt_min_freq_mhz");
+    if (target <= 0) {
+        errno = ENODEV;
+        return -1;
+    }
+    if (min == target) {
+        g_gpu_boost_on = 1;    /* already pinned by someone else */
+        return 0;
+    }
+    if (gpu_write_int("gt_min_freq_mhz", target) != 0) {
+        return -1;
+    }
+    g_gpu_min_saved = min;
+    g_gpu_boost_on = 1;
+    return 0;
+}
+
+/* A JSON snapshot of what the GPU is doing, for a UI or a benchmark. */
+ANUBIS_EXPORT
+const char *anubis_gpu_power_state(void) {
+    static char buf[640];
+    char profile[32] = "unknown";
+    char path[512], *nl;
+    FILE *f;
+    int writable = 0;
+
+    gpu_find_card();
+    snprintf(path, sizeof(path), "/sys/firmware/acpi/platform_profile");
+    f = fopen(path, "r");
+    if (f) {
+        if (fgets(profile, sizeof(profile), f)) {
+            nl = strchr(profile, '\n');
+            if (nl) {
+                *nl = 0;
+            }
+        }
+        fclose(f);
+    }
+    if (g_gpu_card[0]) {
+        snprintf(path, sizeof(path), GPU_SYSFS "/%s/gt_min_freq_mhz",
+                 g_gpu_card);
+        writable = access(path, W_OK) == 0;
+    }
+    snprintf(buf, sizeof(buf),
+             "{\"card\":\"%s\",\"cur_mhz\":%d,\"act_mhz\":%d,"
+             "\"min_mhz\":%d,\"max_mhz\":%d,\"boost_mhz\":%d,"
+             "\"rp0_mhz\":%d,\"rpn_mhz\":%d,\"writable\":%d,"
+             "\"boost\":%d,\"profile\":\"%s\"}",
+             g_gpu_card[0] ? g_gpu_card : "",
+             gpu_read_int("gt_cur_freq_mhz"),
+             gpu_read_int("gt_act_freq_mhz"),
+             gpu_read_int("gt_min_freq_mhz"),
+             gpu_read_int("gt_max_freq_mhz"),
+             gpu_read_int("gt_boost_freq_mhz"),
+             gpu_read_int("gt_RP0_freq_mhz"),
+             gpu_read_int("gt_RPn_freq_mhz"),
+             writable, g_gpu_boost_on, profile);
+    return buf;
+}
+
+/* ANUBIS_GPU_BOOST=1 pins the floor at startup when the process may. */
+__attribute__((constructor))
+static void anubis_gpu_boost_init(void) {
+    const char *v = getenv("ANUBIS_GPU_BOOST");
+
+    if (v && *v && strcmp(v, "0") != 0 && strcmp(v, "off") != 0) {
+        (void)anubis_gpu_boost(1);
+    }
+}
+#else
+ANUBIS_EXPORT
+int anubis_gpu_freq_mhz(void) {
+    return 0;
+}
+
+ANUBIS_EXPORT
+int anubis_gpu_boost(int enable) {
+    (void)enable;
+    errno = ENOSYS;
+    return -1;
+}
+
+ANUBIS_EXPORT
+const char *anubis_gpu_power_state(void) {
+    return "{}";
+}
+#endif
+
 ANUBIS_EXPORT
 int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
                          int64_t max_nonce, double budget_ms,

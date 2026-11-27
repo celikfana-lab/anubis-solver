@@ -666,6 +666,38 @@ class _Native:
         name = fn()
         return name.decode() if name else "cpu"
 
+    # -- GPU power ------------------------------------------------------
+    def gpu_freq_mhz(self) -> int:
+        """The Intel GPU clock right now, 0 when there is none."""
+        fn = getattr(self.lib, "anubis_gpu_freq_mhz", None)
+        if fn is None:
+            return 0
+        fn.restype = ctypes.c_int
+        return int(fn())
+
+    def gpu_boost(self, enable: bool = True) -> int:
+        """Pin the GPU clock floor at the boost clock; -1 when not permitted."""
+        fn = getattr(self.lib, "anubis_gpu_boost", None)
+        if fn is None:
+            return -1
+        fn.argtypes = [ctypes.c_int]
+        fn.restype = ctypes.c_int
+        return int(fn(1 if enable else 0))
+
+    def gpu_power_state(self) -> dict:
+        """card, minute/max/boost MHz, writable, boost, ACPI profile."""
+        fn = getattr(self.lib, "anubis_gpu_power_state", None)
+        if fn is None:
+            return {}
+        fn.restype = ctypes.c_char_p
+        raw = fn()
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw.decode())
+        except (ValueError, UnicodeDecodeError):
+            return {}
+
     def meatrider_header(self, challenge_hex: str, difficulty: int, nonce: int) -> str:
         """The 80-byte block header, as 160 hex characters."""
         out = ctypes.create_string_buffer(161)
@@ -981,6 +1013,18 @@ class AnubisSolver:
     def active_kernel(self) -> str:
         """Which kernel answered the last solve (avx512/avx2/cpu/cuda/hashx...)."""
         return self._native.active_kernel()
+
+    def gpu_power_state(self) -> dict:
+        """The Intel GPU's clock state, and whether the boost pin is held."""
+        return self._native.gpu_power_state()
+
+    def gpu_boost(self, enable: bool = True) -> int:
+        """Pin the GPU clock floor at boost (needs write access to sysfs)."""
+        return self._native.gpu_boost(enable)
+
+    def gpu_freq_mhz(self) -> int:
+        """The Intel GPU clock right now."""
+        return self._native.gpu_freq_mhz()
 
     # -- core -------------------------------------------------------------
     def solve(self, challenge: AnubisChallenge | dict) -> Solution:

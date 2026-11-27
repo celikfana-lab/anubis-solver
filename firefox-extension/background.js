@@ -1,90 +1,121 @@
 // background.js — the extension side of native messaging.
 //
 // Native messaging cannot be used from a content script, so the content script
-// only extracts the challenge and everything else happens here.
+// only finds the challenge and draws; everything else happens here.
 //
-// Flow: toolbar click -> read the challenge from the active tab -> ask the native
-// host to solve it with libanubis_solver.so -> navigate the tab to the
-// pass-challenge URL. The point is the engine: the in-page solver is single-core
-// WebAssembly, while the native host uses the SHA-NI/AVX2 kernels and every core.
+// Flow: the content script sees <script id="anubis_challenge"> -> this asks the
+// native host over a *port* (so the host can stream progress frames) -> each
+// frame is relayed to the tab's panel -> the final frame carries the nonce and
+// this navigates to the pass URL.
+//
+// A port is used instead of sendNativeMessage because the host writes a frame
+// every ~120 ms: one-shot messaging would take only the first and drop the rest.
+//
+// The point is the engine: the in-page solver is single-core WebAssembly, while
+// the native host uses the SHA-NI/AVX2 kernels, every core, and an accelerator
+// when one is available.
 
 const HOST = "anubis_solver";
 const PASS_PATH = "/.within.website/x/cmd/anubis/api/pass-challenge";
+
+/** tabId -> true while a native solve is running for that tab */
+const solving = new Map();
 
 async function activeTab() {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   return tab ?? null;
 }
 
-async function readChallenge(tabId) {
-  const [result] = await browser.tabs.executeScript(tabId, { file: "content.js" });
-  return result ?? null;
-}
-
-async function nativeInfo() {
-  return browser.runtime.sendNativeMessage(HOST, { cmd: "info" });
-}
-
-async function nativeSolve(algorithm, randomData, difficulty) {
-  const started = performance.now();
-  const reply = await browser.runtime.sendNativeMessage(HOST, {
-    cmd: "solve",
-    algorithm,
-    randomData,
-    difficulty,
-  });
-  reply.wallMs = performance.now() - started;
-  return reply;
-}
-
-function passUrl(tab, challenge, solution, elapsedMs) {
-  const url = new URL(PASS_PATH, tab.url);
-  url.searchParams.set("id", challenge.id);
+function passUrl(tabUrl, challenge, solution) {
+  const url = new URL(PASS_PATH, tabUrl);
+  url.searchParams.set("id", challenge.id ?? "");
   url.searchParams.set("response", solution.response);
   url.searchParams.set("nonce", String(solution.nonce));
-  url.searchParams.set("redir", tab.url);
-  url.searchParams.set("elapsedTime", String(Math.max(1, Math.round(elapsedMs))));
+  url.searchParams.set("redir", tabUrl);
+  url.searchParams.set("elapsedTime", String(Math.max(1, Math.round(solution.elapsedMs))));
   return url.toString();
 }
 
+function relay(tabId, frame) {
+  browser.tabs
+    .sendMessage(tabId, { type: "anubis-native-progress", frame })
+    .catch(() => {}); // the tab may already be navigating away
+}
+
+/** Solve one challenge for one tab, streaming progress back to its panel. */
+function solveForTab(tabId, tabUrl, challenge) {
+  if (solving.has(tabId)) return;
+  solving.set(tabId, true);
+
+  let port;
+  try {
+    port = browser.runtime.connectNative(HOST);
+  } catch (err) {
+    solving.delete(tabId);
+    notify("native host not reachable", withInstallHint(String(err)));
+    return;
+  }
+
+  let finished = false;
+
+  port.onMessage.addListener((frame) => {
+    relay(tabId, frame);
+    if (frame.event !== "done") return;
+    finished = true;
+    solving.delete(tabId);
+    try {
+      port.disconnect();
+    } catch {
+      /* already gone */
+    }
+    if (frame.ok) {
+      browser.tabs.update(tabId, { url: passUrl(tabUrl, challenge, frame) });
+    } else {
+      notify("solve failed", frame.error ?? "unknown error");
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    solving.delete(tabId);
+    if (finished) return;
+    const err = browser.runtime.lastError?.message ?? "the native host exited";
+    relay(tabId, { event: "done", ok: false, error: err });
+    notify("native host stopped", withInstallHint(err));
+  });
+
+  try {
+    port.postMessage({
+      cmd: "solve_stream",
+      algorithm: challenge.algorithm,
+      randomData: challenge.randomData,
+      difficulty: challenge.difficulty,
+    });
+  } catch (err) {
+    solving.delete(tabId);
+    notify("could not ask the host", String(err));
+  }
+}
+
+// The content script's auto-detection.
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (!message || message.type !== "anubis-native-detected") return;
+  if (!sender.tab?.id) return;
+  solveForTab(sender.tab.id, sender.tab.url, message.challenge);
+});
+
+// The toolbar button: re-run detection on the active tab (useful when the
+// content script ran before the challenge element existed, or for a retry).
 browser.browserAction.onClicked.addListener(async () => {
   const tab = await activeTab();
   if (!tab || !tab.id) return;
-
-  let challenge;
-  try {
-    challenge = await readChallenge(tab.id);
-  } catch (err) {
-    // activeTab is not granted on privileged pages (about:, the add-on store…)
-    return notify("cannot read this page", String(err));
+  if (solving.has(tab.id)) {
+    notify("already solving", "the native host is working on this tab");
+    return;
   }
-
-  if (!challenge) return notify("no challenge here", "This page is not showing an Anubis challenge.");
-  if (challenge.error) return notify("challenge parse failed", challenge.error);
-  if (!challenge.randomData || challenge.difficulty == null) {
-    return notify("unsupported page", "The challenge has no randomData/difficulty.");
-  }
-
-  let info;
   try {
-    info = await nativeInfo();
+    await browser.tabs.executeScript(tab.id, { file: "content.js" });
   } catch (err) {
-    return notify("native host not reachable", withInstallHint(String(err)));
-  }
-
-  try {
-    const solution = await nativeSolve(challenge.algorithm, challenge.randomData, challenge.difficulty);
-    if (!solution.ok) return notify("solver error", solution.error ?? "unknown");
-
-    // navigate to the pass URL: the server sets the cookie and redirects back
-    await browser.tabs.update(tab.id, { url: passUrl(tab, challenge, solution, solution.wallMs) });
-    notify(
-      `solved with the native engine in ${solution.elapsedMs.toFixed(1)} ms`,
-      `libanubis_solver ${info.version} · ${info.threads} threads · ${solution.algorithm} difficulty ${challenge.difficulty}\n` +
-      `nonce ${solution.nonce} · ${solution.wallMs.toFixed(1)} ms end to end`,
-    );
-  } catch (err) {
-    notify("solve failed", String(err));
+    notify("cannot read this page", String(err));
   }
 });
 
@@ -95,10 +126,6 @@ function withInstallHint(message) {
 
 function notify(title, message) {
   // notifications are best-effort: the call itself can fail on some desktops
-  browser.notifications.create({
-    type: "basic",
-    title,
-    message: message ?? "",
-  }).catch(() => {});
+  browser.notifications.create({ type: "basic", title, message: message ?? "" }).catch(() => {});
   console.log(`[anubis-native] ${title} — ${message ?? ""}`);
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Anubis native solver",
-  "version": "2.50.0",
+  "version": "2.51.0",
   "description": "Solve Anubis proof-of-work challenges with the native C engine instead of the in-page WebAssembly solver.",
   "browser_specific_settings": {
     "gecko": {
@@ -18,7 +18,9 @@
     "nativeMessaging",
     "activeTab",
     "tabs",
-    "notifications"
+    "notifications",
+    "storage",
+    "*://*/*"
   ],
   "background": {
     "scripts": [
@@ -36,5 +38,17 @@
     "48": "icons/icon-48.png",
     "96": "icons/icon-96.png",
     "128": "icons/icon-128.png"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
 }

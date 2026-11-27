@@ -77,6 +77,12 @@ ANUBIS_API const char *easter(void);
 /* Name of the active GPU backend (e.g. "CUDA: Tesla T4 x2"), or NULL. */
 ANUBIS_API const char *anubis_gpu_info(void);
 
+/* Which kernel produced the last solve on this process: "avx512", "avx2",
+ * "cpu", "cuda", "vulkan", "opencl", "levelzero", "tpu", "hashx", "argon2id"
+ * or "meatrider". For labelling work in a user interface; a solve that fell
+ * back leaves the kernel that finally answered. */
+ANUBIS_API const char *anubis_active_kernel(void);
+
 /* CUDA kernel selector: returns the name of the kernel that will be used for
  * the given mode (0 = fast/slow decimal nonce, 1 = sha256 u32 nonce).
  * Values: "original", "optimized (auto)", "optimized (ILP=N)",

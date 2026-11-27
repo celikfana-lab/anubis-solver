@@ -657,6 +657,15 @@ class _Native:
         )
 
     # -- meatrider: the header and the price ladder ----------------------
+    def active_kernel(self) -> str:
+        """The kernel behind the last solve: avx512, avx2, cpu, cuda, hashx..."""
+        fn = getattr(self.lib, "anubis_active_kernel", None)
+        if fn is None:
+            return "cpu"
+        fn.restype = ctypes.c_char_p
+        name = fn()
+        return name.decode() if name else "cpu"
+
     def meatrider_header(self, challenge_hex: str, difficulty: int, nonce: int) -> str:
         """The 80-byte block header, as 160 hex characters."""
         out = ctypes.create_string_buffer(161)
@@ -968,6 +977,10 @@ class AnubisSolver:
                                      usd_per_th_day: float = 0.0) -> int:
         """The first difficulty whose price reaches `usd`."""
         return self._native.meatrider_difficulty_for_usd(usd, usd_per_th_day)
+
+    def active_kernel(self) -> str:
+        """Which kernel answered the last solve (avx512/avx2/cpu/cuda/hashx...)."""
+        return self._native.active_kernel()
 
     # -- core -------------------------------------------------------------
     def solve(self, challenge: AnubisChallenge | dict) -> Solution:

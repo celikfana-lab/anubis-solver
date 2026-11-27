@@ -29,6 +29,8 @@ import json
 import os
 import struct
 import sys
+import threading
+import time
 from pathlib import Path
 
 MAX_MESSAGE = 1 << 20          # Firefox refuses host messages larger than 1 MB
@@ -86,6 +88,86 @@ def write_message(stream, payload: dict) -> None:
     stream.flush()
 
 
+def _payload_solution(module, solver, payload: dict):
+    """The library's own payload shape, so its parser does the work."""
+    return solver.solve({
+        "rules": {"algorithm": str(payload.get("algorithm", "")).lower(),
+                  "difficulty": int(payload.get("difficulty", 0))},
+        "challenge": {"id": payload.get("id") or "",
+                      "randomData": str(payload.get("randomData", "")),
+                      "method": str(payload.get("algorithm", "")).lower()},
+    })
+
+
+def _calibrate(solver, algorithm: str, difficulty: int) -> float:
+    """Hashes per second for this algorithm here, measured a few bits lower.
+
+    A bar needs a denominator. Asking for a difficulty 8 bits under the real one
+    is 1/256 of the work on the same program, threads and cache, and the elapsed
+    time the library reports turns that into a rate.
+    """
+    d = max(10, min(difficulty - 4, 20))
+    best = 0.0
+    for _ in range(3):
+        probe = {"algorithm": algorithm, "difficulty": d,
+                 "randomData": os.urandom(32).hex()}
+        started = time.perf_counter()
+        _payload_solution(None, solver, probe)
+        elapsed = max(time.perf_counter() - started, 1e-6)
+        if elapsed > 0.6 and d > 10:
+            d -= 4                       # too slow to be a probe: shrink, retry
+            continue
+        # the first probe pays the library's warm-up; a maximum over the probes
+        # is closer to the steady-state rate the real solve will see
+        best = max(best, (2 ** d) / elapsed)
+    return best or 1e6
+
+
+def solve_streaming(solver, payload: dict, emit) -> None:
+    """Solve while reporting progress: used with `connectNative`, not one-shot.
+
+    The solve runs on a worker thread so the loop can write a frame every ~120 ms;
+    a port accepts many messages, which is the whole reason this exists.
+    """
+    algorithm = str(payload.get("algorithm", "sha256")).lower()
+    difficulty = int(payload.get("difficulty", 0))
+    rate = _calibrate(solver, algorithm, difficulty)
+    estimate_ms = (2 ** difficulty) / max(rate, 1.0) * 1000.0
+    result: dict = {}
+    started = time.perf_counter()
+
+    def work() -> None:
+        try:
+            solution = _payload_solution(None, solver, payload)
+            result.update({
+                "ok": True,
+                "algorithm": solution.algorithm,
+                "nonce": int(solution.nonce),
+                "response": solution.response_hex,
+                "elapsedMs": (time.perf_counter() - started) * 1000.0,
+            })
+        except Exception as err:                       # survives a bad challenge
+            result.update({"ok": False, "error": f"{type(err).__name__}: {err}"})
+
+    emit({"event": "start", "algorithm": algorithm, "difficulty": difficulty,
+          "kernel": solver.active_kernel(), "rate": rate,
+          "estimateMs": estimate_ms, "threads": solver.threads})
+    thread = threading.Thread(target=work, daemon=True)
+    thread.start()
+    while thread.is_alive():
+        elapsed = (time.perf_counter() - started) * 1000.0
+        emit({"event": "progress", "elapsedMs": elapsed,
+              "estimateMs": estimate_ms,
+              "pct": min(99.0, elapsed / max(estimate_ms, 1.0) * 100.0),
+              "rate": rate, "kernel": solver.active_kernel()})
+        thread.join(0.12)
+    thread.join()
+    done = {"event": "done", "kernel": solver.active_kernel(), "rate": rate,
+            "estimateMs": estimate_ms}
+    done.update(result)
+    emit(done)
+
+
 def main(argv: list[str]) -> int:
     # Firefox passes the manifest path and, since 55, the add-on ID. Neither is
     # needed to solve, but logging them makes install problems diagnosable.
@@ -133,9 +215,19 @@ def main(argv: list[str]) -> int:
                     "threads": s.threads,
                     "batchWidth": s.batch_width,
                     "gpu": s.gpu,
+                    "kernel": s.active_kernel(),
                     "affinity": s.affinity,
                     "algorithms": sorted(s.ALGORITHMS),
                 }
+            elif cmd == "solve_stream":
+                s = get_solver()
+                if not request.get("randomData") or request.get("difficulty") is None:
+                    raise ValueError("solve_stream needs randomData and difficulty")
+                if str(request.get("algorithm", "")).lower() not in s.ALGORITHMS:
+                    raise ValueError(f"unsupported algorithm {request.get('algorithm')!r}")
+                solve_streaming(s, request,
+                                lambda frame: write_message(stdout, frame))
+                continue
             elif cmd == "solve":
                 algorithm = str(request.get("algorithm", "")).lower()
                 random_data = str(request.get("randomData", ""))

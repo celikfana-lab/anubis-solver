@@ -1556,6 +1556,21 @@ done:
 /* Public API: JavaScript fast/slow challenges (leading zero nibbles)  */
 /* ------------------------------------------------------------------ */
 
+/* Which kernel produced the last solve on this process: "avx512", "avx2",
+ * "cpu", "shani", "cuda", "vulkan", "opencl", "levelzero", "tpu", "hashx",
+ * "argon2id" or "meatrider". A user interface labels the work with it; no
+ * verification path reads it, and a solve that falls back overwrites it. */
+static const char *g_active_kernel = "cpu";
+
+static void note_kernel(const char *name) {
+    g_active_kernel = name;
+}
+
+ANUBIS_EXPORT
+const char *anubis_active_kernel(void) {
+    return g_active_kernel;
+}
+
 ANUBIS_EXPORT
 int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
                          int64_t max_nonce, double budget_ms,
@@ -1833,6 +1848,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
                                : 0xFFFFFFFFull;
+            note_kernel("cuda");
             int grc = anubis_cuda_solve(ctx.base.h, (uint32_t)raw_len, 1,
                                         ctx.use_le, difficulty, 1, cap,
                                         budget_ms, &gnonce, ghex, &gms);
@@ -1863,6 +1879,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
                                : 0xFFFFFFFFull;
+            note_kernel("levelzero");
             int grc = anubis_l0_solve(ctx.base.h, (uint32_t)raw_len, 1,
                                       ctx.use_le, difficulty, 1, cap,
                                       budget_ms, &gnonce, ghex, &gms);
@@ -1893,6 +1910,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
                                : 0xFFFFFFFFull;
+            note_kernel("vulkan");
             int grc = anubis_vulkan_solve(ctx.base.h, (uint32_t)raw_len, 1,
                                           ctx.use_le, difficulty, 1, cap,
                                           budget_ms, &gnonce, ghex, &gms);
@@ -1923,6 +1941,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
                                : 0xFFFFFFFFull;
+            note_kernel("opencl");
             int grc = anubis_opencl_solve(ctx.base.h, raw, (uint32_t)raw_len,
                                           1, ctx.use_le, difficulty, 1, cap,
                                           budget_ms, &gnonce, ghex, &gms);
@@ -1956,6 +1975,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
             uint64_t cap = expected < (0xFFFFFFFFull / 8)
                                ? expected * 8
                                : 0xFFFFFFFFull;
+            note_kernel("tpu");
             int grc = anubis_tpu_solve(raw, (uint32_t)raw_len, difficulty,
                                        ctx.use_le, cap, budget_ms, &gnonce,
                                        ghex, &gms);
@@ -1972,6 +1992,8 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
     }
 #endif
 
+    note_kernel(job.batch_lanes == 16 ? "avx512"
+                                      : job.batch_lanes == 8 ? "avx2" : "cpu");
     rc = run_search(&job, &nonce64, out_hex, out_ms);
     if (rc == ANUBIS_OK) {
         *out_nonce = (uint32_t)nonce64;
@@ -2168,6 +2190,7 @@ int anubis_solve_argon2id(const char *challenge_hex, int difficulty, int threads
     }
 #endif
 
+    note_kernel("argon2id");
     rc = run_search(&job, &nonce64, out_hex, out_ms);
     if (rc == ANUBIS_OK) {
         *out_nonce = (uint32_t)nonce64;
@@ -2335,6 +2358,7 @@ int anubis_solve_hashx(const char *challenge_hex, int difficulty, int threads,
     }
 #endif
 
+    note_kernel("hashx");
     rc = run_search(&job, &nonce64, out_hex, out_ms);
     hashx_free(state);
 
@@ -2472,6 +2496,7 @@ static int meatrider_solve_on(int backend, const char *challenge_hex,
     if (backend < 0) {
         backend = meatrider_backend_active();
     }
+    note_kernel(meatrider_backend_name(backend));
 
     /* An accelerator covers the whole 32-bit space in one dispatch, so it is
      * asked first and the thread pool is not started at all. Below ~2^20

@@ -31,6 +31,13 @@ def read_message(stream) -> dict:
     return json.loads(stream.read(length).decode())
 
 
+def write_only(proc: subprocess.Popen, payload: dict) -> None:
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    proc.stdin.write(struct.pack("=I", len(body)))
+    proc.stdin.write(body)
+    proc.stdin.flush()
+
+
 def send(proc: subprocess.Popen, payload: dict) -> dict:
     body = json.dumps(payload, separators=(",", ":")).encode()
     proc.stdin.write(struct.pack("=I", len(body)))
@@ -108,6 +115,35 @@ def main() -> int:
             check("the engine agrees the nonce is valid", verified.get("valid") is True)
 
             if solved.get("ok"):
+                # the port path the extension uses: a stream of frames, so a
+                # progress bar can show what is working and how fast
+                frames = []
+                write_only(proc, {
+                    "cmd": "solve_stream",
+                    "algorithm": rules["algorithm"],
+                    "randomData": chal["randomData"],
+                    "difficulty": rules["difficulty"],
+                })
+                while True:
+                    frame = read_message(proc.stdout)
+                    frames.append(frame)
+                    if frame.get("event") in ("done", "error"):
+                        break
+                start, done = frames[0], frames[-1]
+                check("stream: the first frame names the engine",
+                      start.get("event") == "start" and bool(start.get("kernel")),
+                      f"{start.get('kernel')} at {start.get('rate', 0) / 1e6:.2f} MH/s, "
+                      f"~{start.get('estimateMs', 0) / 1000:.1f} s")
+                check("stream: progress frames are well formed",
+                      all(0 <= f.get("pct", 0) <= 99 for f in frames[1:-1]),
+                      f"{len(frames) - 2} progress frame(s)")
+                check("stream: the last frame carries the proof",
+                      done.get("event") == "done" and done.get("ok") is True
+                      and done.get("nonce") is not None,
+                      f"nonce {done.get('nonce')} in {done.get('elapsedMs', 0):.0f} ms")
+                check("stream: same proof as the one-shot path",
+                      done.get("response") == solved.get("response"))
+
                 # the real proof: hand the response to the server and fetch the page
                 query = urlencode({
                     "id": chal["id"],

@@ -88,10 +88,40 @@ Algorithms supported: `fast`, `slow`, `sha256`, `wasm-sha256`, `argon2id`, `hash
 (whatever `libanubis_solver.so` provides, plus GPU backends if the library was
 built with them).
 
+## It runs by itself
+
+The add-on now watches for Anubis pages instead of waiting for a click: a content
+script runs at `document_start` on every page, returns immediately if there is no
+`<script id="anubis_challenge">`, and otherwise parses the challenge and hands it
+to the background script. The trade for that is the `*://*/*` permission — an
+add-on that only acts on a click can ask for `activeTab` alone; one that starts by
+itself has to be allowed to look.
+
+While the native host works, a panel in the bottom-right of the page shows:
+
+```
+anubis-solver                    hashx · difficulty 26
+[############                        ]
+14%        17.83 MH/s · 4 threads        3.2 s
+```
+
+The engine name is the kernel that actually answered — `avx512`, `avx2`, `cpu`,
+`cuda`, `vulkan`, `opencl`, `levelzero`, `tpu`, `hashx`, `argon2id` or
+`meatrider` — reported by the library through `anubis_active_kernel()`, so it
+says what ran rather than what is installed. The rate comes from a calibration
+probe a few bits below the real difficulty, and the bar is `elapsed / estimate`;
+when the proof arrives the panel flips to `solved` and the page navigates.
+
+The protocol is a **port**, not `sendNativeMessage`: `{"cmd": "solve_stream"}`
+gets `{"event": "start"}` with the kernel and the estimate, a `{"event":
+"progress"}` frame every ~120 ms, and a final `{"event": "done"}` with the nonce
+and response. One-shot messaging takes only the first frame, which is why the
+streaming path exists.
+
 ## The .xpi
 
 ```bash
-./build-xpi.sh                 # -> ../build/anubis-solver-firefox-2.50.0.xpi
+./build-xpi.sh                 # -> ../build/anubis-solver-firefox-2.51.0.xpi
 ./build-xpi.sh --sign          # the same, then `web-ext sign` (AMO_API_KEY/AMO_API_SECRET)
 ```
 
@@ -109,7 +139,8 @@ Install:
 1. `./install.sh` once per checkout — it writes the OS-level native manifest
    Firefox reads at startup.
 2. **Temporary:** `about:debugging` → This Firefox → Load Temporary Add-on → pick
-   the `.xpi`. It lasts until Firefox restarts.
+   the `.xpi`. It lasts until Firefox restarts. Reload it there after rebuilding —
+   a temporarily loaded add-on keeps running the old copy until you do.
 3. **Permanent:** the file needs a signature. Upload the `.xpi` at
    <https://addons.mozilla.org/developers/> (AMO signs it and hands back a signed
    copy), or run `./build-xpi.sh --sign` with your AMO API key. A plain

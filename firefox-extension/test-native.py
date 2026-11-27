@@ -8,12 +8,26 @@ that a challenge from a *live* Anubis is solved and accepted. No browser needed.
     python3 firefox-extension/test-native.py --url http://host:port/
     python3 firefox-extension/test-native.py --start-gate             # sha256, 20
     python3 firefox-extension/test-native.py --start-gate --algorithm hashx --difficulty 26
+    python3 firefox-extension/test-native.py --start-anubis           # the real Anubis
 
 --start-gate builds a challenge in front of a throwaway backend, so the whole
 Anubis exchange (page, challenge JSON, pass-challenge, cookie) runs against
 betterAnusbis on a free port, with whichever algorithm and difficulty you ask
 for. The default is the sha256 tier: same randomData size Anubis issues, and the
 tier the WebGPU and wasm 4-wide kernels implement.
+
+--start-anubis does the same with the real Anubis (Go), built from
+$ANUBIS_SRC (default ../anubis) or a binary passed with --anubis-binary. It
+starts it the way an http-only local server has to be started, because
+Anubis's defaults make the browser drop its own challenge cookie:
+
+    -cookie-secure=false -cookie-partitioned=false -cookie-same-site=Lax
+    -use-remote-address
+
+With the defaults (Secure; SameSite=None; Partitioned) a browser on plain
+http:// never stores the verification cookie, and /pass-challenge answers
+"Your browser is configured to disable cookies" -- the Sad Anubis page. That
+is Anubis's own check (lib/anubis.go, PassChallenge), not the extension.
 """
 
 from __future__ import annotations
@@ -80,22 +94,28 @@ def wait_for(url: str, timeout: float = 8.0) -> bool:
     return False
 
 
-def start_gate(algorithm: str, difficulty: int):
-    """An Anubis gate in front of a throwaway backend, on free ports."""
+def start_backend():
+    """A throwaway backend whose page the gate's marker is checked against."""
     import tempfile
 
+    www = Path(tempfile.mkdtemp(prefix="anubis-backend-"))
+    (www / "index.html").write_text("PAST THE WALL\n")
+    port = free_port()
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+        cwd=www, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return proc, port
+
+
+def start_gate(algorithm: str, difficulty: int):
+    """betterAnusbis in front of a throwaway backend, on free ports."""
     gate_bin = REPO / "betterAnusbis" / "betterAnusbis"
     if not gate_bin.exists():
         raise SystemExit(f"{gate_bin} is not built; run `make -C betterAnusbis` first")
 
-    www = Path(tempfile.mkdtemp(prefix="anubis-gate-"))
-    (www / "index.html").write_text("PAST THE WALL\n")
-    backend_port = free_port()
-    backend = subprocess.Popen(
-        [sys.executable, "-m", "http.server", str(backend_port), "--bind", "127.0.0.1"],
-        cwd=www, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    backend, backend_port = start_backend()
     gate_port = free_port()
     gate = subprocess.Popen(
         [str(gate_bin), "--listen", f"127.0.0.1:{gate_port}",
@@ -109,8 +129,73 @@ def start_gate(algorithm: str, difficulty: int):
         gate.terminate()
         backend.terminate()
         raise SystemExit(f"the gate on {url} never answered")
-    print(f"  gate: {algorithm} difficulty {difficulty} on {url}")
+    print(f"  gate: betterAnusbis, {algorithm} difficulty {difficulty} on {url}")
     return gate, backend, url
+
+
+ANUBIS_COOKIE_FLAGS = [
+    # Anubis defaults to Secure; SameSite=None; Partitioned, which a browser
+    # refuses to store on a plain http:// origin. Then /pass-challenge has no
+    # verification cookie and answers with the cookies-disabled page.
+    "-cookie-secure=false",
+    "-cookie-partitioned=false",
+    "-cookie-same-site=Lax",
+    # no proxy in front of it here, so take the peer address instead of X-Real-IP
+    "-use-remote-address",
+]
+
+
+def build_anubis(src: Path) -> Path:
+    out = REPO / "build" / "anubis-e2e"
+    out.parent.mkdir(exist_ok=True)
+    print(f"  building anubis from {src} ...")
+    proc = subprocess.run(["go", "build", "-o", str(out), "./cmd/anubis"], cwd=src,
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(f"go build failed:\n{proc.stderr[-2000:]}")
+    return out
+
+
+def start_anubis(algorithm: str, difficulty: int, binary: Path | None):
+    """The real Anubis in front of a throwaway backend, http-only friendly."""
+    import tempfile
+
+    if binary is None:
+        src = Path(__import__("os").environ.get("ANUBIS_SRC", REPO.parent / "anubis"))
+        binary = REPO / "build" / "anubis-e2e"
+        if not binary.exists() or binary.stat().st_mtime < max(
+            p.stat().st_mtime for p in (src / "lib").glob("*.go")
+        ):
+            binary = build_anubis(src)
+    if not Path(binary).exists():
+        raise SystemExit(f"{binary} is not there")
+
+    tmp = Path(tempfile.mkdtemp(prefix="anubis-real-"))
+    policy = tmp / "botPolicies.yaml"
+    policy.write_text(
+        "bots:\n"
+        "  - name: local-solver-test\n"
+        "    user_agent_regex: .\n"
+        "    action: CHALLENGE\n"
+        "    challenge:\n"
+        f"      algorithm: {algorithm}\n"
+        f"      difficulty: {difficulty}\n"
+    )
+    backend, backend_port = start_backend()
+    port, metrics = free_port(), free_port()
+    proc = subprocess.Popen(
+        [str(binary), "-bind", f"127.0.0.1:{port}", "-metrics-bind", f"127.0.0.1:{metrics}",
+         "-target", f"http://127.0.0.1:{backend_port}", "-policy-fname", str(policy),
+         *ANUBIS_COOKIE_FLAGS, "-slog-level", "WARN"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+    url = f"http://127.0.0.1:{port}/"
+    if not wait_for(url):
+        proc.terminate()
+        backend.terminate()
+        raise SystemExit(f"anubis on {url} never answered")
+    print(f"  gate: real Anubis, {algorithm} difficulty {difficulty} on {url}")
+    return proc, backend, url
 
 
 def main() -> int:
@@ -118,6 +203,8 @@ def main() -> int:
     algorithm = "sha256"
     difficulty = 20
     start = False
+    real = False
+    anubis_binary = None
     args = sys.argv[1:]
     for i, arg in enumerate(args):
         if arg == "--url" and i + 1 < len(args):
@@ -128,10 +215,16 @@ def main() -> int:
             difficulty = int(args[i + 1])
         elif arg == "--start-gate":
             start = True
+        elif arg == "--start-anubis":
+            real = True
+        elif arg == "--anubis-binary" and i + 1 < len(args):
+            anubis_binary = Path(args[i + 1])
 
     gate = backend = None
     if start:
         gate, backend, base = start_gate(algorithm, difficulty)
+    elif real:
+        gate, backend, base = start_anubis(algorithm, difficulty, anubis_binary)
 
     proc = subprocess.Popen(
         [sys.executable, "-u", str(HOST), "manifest.json", "anubis-solver@celikfana-lab"],

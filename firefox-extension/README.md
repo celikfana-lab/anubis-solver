@@ -77,16 +77,37 @@ runs, it only sees whether the host answers.
 
 ```bash
 node test-webgpu.js                              # shader nonce placement vs node crypto (25 checks)
-python3 test-native.py --start-gate              # sha256 challenge, difficulty 20, end to end
+python3 test-native.py --start-gate              # betterAnusbis, sha256, difficulty 20
+python3 test-native.py --start-anubis            # the real Anubis, built from $ANUBIS_SRC
 python3 test-native.py --start-gate --algorithm hashx --difficulty 26
-python3 test-native.py --url http://127.0.0.1:8923/   # or against a gate you already run
+python3 test-native.py --url http://127.0.0.1:8923/   # or against a server you already run
 ```
 
 `--start-gate` launches `betterAnusbis` in front of a throwaway backend on free
 ports, so the full Anubis exchange (page, challenge JSON, cookie,
 pass-challenge) is real, with the algorithm and difficulty you name. The
 default is `sha256` at difficulty 20 — the tier the WebGPU and 4-wide wasm
-kernels implement, and the one a real site issues.
+kernels implement, and the one a real site issues. `--start-anubis` does the
+same with upstream Anubis, built from `$ANUBIS_SRC` (default `../anubis`) unless
+`--anubis-binary` names one.
+
+### "Sad Anubis: your browser is configured to disable cookies"
+
+That page is Anubis's own check, not the extension: `PassChallenge` looks for
+the verification cookie and answers with that page when it is missing
+(`lib/anubis.go`). Anubis sets the cookie as **`Secure; SameSite=None;
+Partitioned`**, and a browser will not store that on a plain `http://` origin,
+so it is always missing there. Run any local Anubis the way `--start-anubis`
+does:
+
+```
+-cookie-secure=false -cookie-partitioned=false -cookie-same-site=Lax
+-use-remote-address
+```
+
+`-use-remote-address` is there because without a proxy in front, Anubis has no
+`X-Real-IP` header and answers every request with a 500. Over https none of this
+applies.
 
 ## Try it in a browser
 

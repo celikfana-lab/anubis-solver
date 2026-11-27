@@ -450,17 +450,6 @@ else
 	@false
 endif
 
-# Raw i915: the GPU through DRM ioctls only. No Mesa, no OpenCL, no Level
-# Zero. Three tools: a probe (identity, submission, benchmarks), an LD_PRELOAD
-# capture shim, and a replay that re-submits a captured dispatch and times it.
-# See src/i915raw/README.md for the numbers and the protocol.
-#
-#   make i915-raw        -> build/i915-probe, build/i915-dump.so, build/i915-replay
-#   bash src/i915raw/capture.sh   -> capture a vendor dispatch, replay it raw
-.PHONY: i915-raw
-i915-raw:
-	$(MAKE) -C src/i915raw all
-
 # ---------------------------------------------------------------------------
 # The universal .so: every backend that can be compiled in, is. Vendor driver
 # libraries are dlopen()ed at runtime, so the result runs everywhere; the

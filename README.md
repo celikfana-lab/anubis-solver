@@ -547,10 +547,6 @@ src/intel/levelzero/*.cl   their OpenCL C kernels (embedded SPIR-V)
 src/vulkan/vulkan.c        Vulkan backends
 src/vulkan/*.comp          their GLSL kernels (embedded SPIR-V)
 src/opencl/                portable OpenCL host + its sha256 kernel
-src/i915raw/               the Intel GPU through DRM ioctls only: identity,
-                           submission benchmarks, an LD_PRELOAD capture of a
-                           real dispatch, and a raw replay of it (241-262 M
-                           sha256/s, digest checked); see src/i915raw/README.md
 src/intel/xe/              Intel Xe (gen12lp) assembly for the SHA-256 kernel,
                            assembled with IGA and verified against hashlib; see
                            src/intel/xe/README.md

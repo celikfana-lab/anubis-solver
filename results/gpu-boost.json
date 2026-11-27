@@ -32,7 +32,10 @@
       "cold_mhs": 168.5,
       "cold_ms": 58.3,
       "steady_mhs_median": 245.6,
-      "steady_clock_mhz": [1100, 1150],
+      "steady_clock_mhz": [
+        1100,
+        1150
+      ],
       "cold_to_steady": 1.46
     },
     "difficulty_22": {
@@ -45,5 +48,29 @@
     "the iGPU idles at 300 MHz and reaches 1400 MHz only in a short burst",
     "sustained clock settles at 1100-1150 MHz under the performance profile (power/thermal)",
     "discard the first solve when benchmarking a GPU: it measures the governor, not the kernel"
-  ]
+  ],
+  "raw_i915": {
+    "tool": "build/i915-replay --upto 8 --solve 24 --bench 16 --idle 2 --boost",
+    "nonces_per_dispatch": 4194304,
+    "first_dispatch": {
+      "ms": 45.881,
+      "mhs": 91.4,
+      "clock": "300 -> 1400 MHz"
+    },
+    "second_dispatch": {
+      "ms": 16.088,
+      "mhs": 260.7,
+      "clock": "1400 MHz"
+    },
+    "steady_dispatches_8_15": {
+      "ms": 21.77,
+      "mhs": 192.6,
+      "clock_mhz": [
+        950,
+        1000
+      ]
+    },
+    "cold_to_warm": 2.11,
+    "boost_pin": "EACCES (gt_min_freq_mhz is root-only)"
+  }
 }

@@ -144,6 +144,18 @@ So the ramp is 1.46x on a 40 ms solve, and the sustained clock sits below the
 benchmarking a GPU, discard the first solve — it measures the governor, not the
 kernel.
 
+The raw i915 replay (`src/i915raw/`) times one dispatch fence to fence, which
+shows the same thing without a runtime in the way:
+
+| raw dispatch, 4 Mi nonces, difficulty 24 | ms | MH/s | clock |
+|---|---:|---:|---|
+| first, after 2 s idle | 45.9 | 91.4 | 300 → 1400 MHz |
+| second | 16.1 | 260.7 | 1400 MHz |
+| steady (dispatches 8–15) | 21.8 | ~192 | 950–1000 MHz |
+
+`./build/i915-replay --dump /tmp/i915dump --upto 8 --solve 24 --bench 16 --idle 2 --boost`
+reproduces it; `--boost` reads the clock and tries the same pin (EACCES here).
+
 ## Raspberry Pi 5
 
 Mesa's V3DV driver is detected but the compute kernels do not produce verified

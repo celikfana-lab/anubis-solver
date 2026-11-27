@@ -36,6 +36,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 #include <drm/drm.h>
 #include <drm/i915_drm.h>
@@ -115,6 +116,90 @@ static double now_ms(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+/* ------------------------------------------------------------------ */
+/* the GPU clock, from the same sysfs the library reads               */
+
+static char g_card[32];
+
+static int gt_card(void)
+{
+	DIR *d;
+	struct dirent *e;
+
+	if (g_card[0])
+		return 0;
+	d = opendir("/sys/class/drm");
+	if (!d)
+		return -1;
+	while ((e = readdir(d)) != NULL) {
+		char path[256];
+		FILE *f;
+
+		if (strncmp(e->d_name, "card", 4) != 0 || !e->d_name[4] ||
+		    strlen(e->d_name) >= sizeof(g_card))
+			continue;
+		snprintf(path, sizeof(path), "/sys/class/drm/%s/gt_max_freq_mhz",
+			 e->d_name);
+		f = fopen(path, "r");
+		if (f) {
+			fclose(f);
+			snprintf(g_card, sizeof(g_card), "%s", e->d_name);
+			break;
+		}
+	}
+	closedir(d);
+	return g_card[0] ? 0 : -1;
+}
+
+static int gt_read(const char *what)
+{
+	char path[256];
+	FILE *f;
+	int v = -1;
+
+	if (gt_card() != 0)
+		return -1;
+	snprintf(path, sizeof(path), "/sys/class/drm/%s/%s", g_card, what);
+	f = fopen(path, "r");
+	if (!f)
+		return -1;
+	if (fscanf(f, "%d", &v) != 1)
+		v = -1;
+	fclose(f);
+	return v;
+}
+
+/* the clock the GPU is actually at right now */
+static int gt_mhz(void)
+{
+	int v = gt_read("gt_act_freq_mhz");
+
+	if (v <= 0)
+		v = gt_read("gt_cur_freq_mhz");
+	return v > 0 ? v : 0;
+}
+
+/* pin the floor at the boost clock; -1 with EACCES on a stock system */
+static int gt_pin(int enable)
+{
+	char path[256];
+	FILE *f;
+	int target = gt_read("gt_boost_freq_mhz");
+
+	if (target <= 0)
+		target = gt_read("gt_max_freq_mhz");
+	if (target <= 0)
+		return -1;
+	snprintf(path, sizeof(path), "/sys/class/drm/%s/gt_min_freq_mhz", g_card);
+	f = fopen(path, "w");
+	if (!f)
+		return -1;
+	fprintf(f, "%d\n", enable ? target : gt_read("gt_RPn_freq_mhz"));
+	if (fclose(f) != 0)
+		return -1;
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -269,6 +354,8 @@ int main(int argc, char **argv)
 	unsigned npokes = 0;
 	uint64_t clear_va = 0;
 	unsigned solve_diff = 0, have_solve = 0;
+	int want_boost = 0;
+	double idle_s = 0;
 	uint64_t solve_base = 0, solve_count = 0;
 	uint32_t ctx;
 	struct sub *subs;
@@ -299,7 +386,11 @@ int main(int argc, char **argv)
 			pokes[npokes].off = off;
 			pokes[npokes].val = val;
 			npokes++;
-		} else if (!strcmp(argv[argi], "--solve") && argi + 1 < argc) {
+		} else if (!strcmp(argv[argi], "--boost"))
+			want_boost = 1;
+		else if (!strcmp(argv[argi], "--idle") && argi + 1 < argc)
+			idle_s = strtod(argv[++argi], NULL);
+		else if (!strcmp(argv[argi], "--solve") && argi + 1 < argc) {
 			solve_diff = strtoul(argv[++argi], NULL, 0);
 			have_solve = 1;
 		} else if (!strcmp(argv[argi], "--base") && argi + 1 < argc)
@@ -489,6 +580,18 @@ int main(int argc, char **argv)
 		       pokes[i].off, pokes[i].val);
 	}
 
+	if (want_boost) {
+		printf("clock before: %d MHz (min %d, max %d, boost %d)\n",
+		       gt_mhz(), gt_read("gt_min_freq_mhz"),
+		       gt_read("gt_max_freq_mhz"), gt_read("gt_boost_freq_mhz"));
+		if (gt_pin(1) != 0) {
+			printf("boost pin: not permitted (%s)\n", strerror(errno));
+		} else {
+			printf("boost pin: floor raised to %d MHz\n",
+			       gt_read("gt_min_freq_mhz"));
+		}
+	}
+
 	t0 = now_ms();
 	for (i = 0; i < upto; i++)
 		if (submit(&subs[i], ctx) < 0)
@@ -503,6 +606,15 @@ int main(int argc, char **argv)
 			memset(c->map, 0, c->size);
 			printf("cleared object at 0x%llx\n", (unsigned long long)clear_va);
 		}
+	}
+
+	if (have_solve && idle_s > 0) {
+		struct timespec ts;
+
+		ts.tv_sec = (time_t)idle_s;
+		ts.tv_nsec = (long)((idle_s - (double)ts.tv_sec) * 1e9);
+		printf("idle %.2f s so the GPU clocks down...\n", idle_s);
+		nanosleep(&ts, NULL);
 	}
 
 	if (have_solve) {
@@ -527,16 +639,36 @@ int main(int argc, char **argv)
 			fprintf(stderr, "solve: results buffer not found\n");
 			return 1;
 		}
-		for (k = 0; k < bench; k++) {
-			memset(res->map, 0, res->size);
-			t0 = now_ms();
-			if (submit(s0, ctx) < 0)
-				return 1;
-			t1 = now_ms();
-			total = res->map[0];
-			printf("dispatch %u: %u hits in %.3f ms (%.1f M hashes/s)\n",
-			       k, total, t1 - t0,
-			       nonces ? nonces / ((t1 - t0) * 1e3) : 0.0);
+		{
+			double *ms = calloc(bench ? bench : 1, sizeof(double));
+
+			for (k = 0; k < bench; k++) {
+				int f0, f1;
+
+				memset(res->map, 0, res->size);
+				f0 = gt_mhz();
+				t0 = now_ms();
+				if (submit(s0, ctx) < 0)
+					return 1;
+				t1 = now_ms();
+				f1 = gt_mhz();
+				total = res->map[0];
+				ms[k] = t1 - t0;
+				printf("dispatch %u: %u hits in %.3f ms (%.1f M hashes/s) "
+				       "%d -> %d MHz\n", k, total, ms[k],
+				       nonces ? nonces / (ms[k] * 1e3) : 0.0, f0, f1);
+			}
+			if (bench > 3) {
+				double cold = ms[0], steady = 0;
+				unsigned j;
+
+				for (j = bench / 2; j < bench; j++)
+					steady += ms[j];
+				steady /= (double)(bench - bench / 2);
+				printf("cold %.3f ms -> steady %.3f ms (%.2fx faster warm)\n",
+				       cold, steady, cold / steady);
+			}
+			free(ms);
 		}
 		{
 			uint32_t nhit = total < 8 ? total : 8, j;
@@ -606,5 +738,7 @@ int main(int argc, char **argv)
 		}
 	}
 
+	if (want_boost)
+		gt_pin(0);
 	return 0;
 }

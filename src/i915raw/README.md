@@ -15,7 +15,8 @@ there is nothing left under it to be wrong.
 | `i915_probe.c` | device identity, engine list, GEM objects, submission benchmarks, and a store instruction executed by the GPU as proof |
 | `i915_dump.c` | `LD_PRELOAD` shim that records what a real driver (NEO/IGC) submits: every execbuffer, every buffer, the batch bytes |
 | `i915_replay.c` | recreates a recorded dispatch at the same virtual addresses and submits it through raw i915; verified digest, timed |
-| `capture.sh` | capture + replay end to end |
+| `verify_solve.py` | recomputes every hit with `hashlib` and checks the difficulty |
+| `capture.sh` | capture + replay + solve + verify, end to end |
 
 ## The number
 
@@ -39,6 +40,30 @@ For scale, on the same GPU and the same kernel:
 
 The raw path is not faster because we outsmarted IGC: it runs the same machine
 code. It is at least as fast, and it is ours.
+
+And it **solves**. Patching the dispatch's argument block (below) turns the
+replay into a search: any nonce range, any difficulty, hits read back and
+checked. Every digest below was recomputed with `hashlib` and verified to carry
+at least `difficulty` leading zero bits:
+
+```
+dispatch 0: 71 hits in 16.235 ms (258.4 M hashes/s)
+hits 71
+hit 1969 00009a6e7e9ec626094375229f3b38b64822e2f49bc95ec73009d1720f9a42ec
+...
+8/8 hits verified (total reported: 71, difficulty 16)
+```
+
+| solve test | result |
+|---|---|
+| scan 0 .. 4,194,303 at difficulty 16 | **71 hits, 258–279 M hashes/s**, 8/8 verified |
+| same, base 4,194,304 (a different range) | 74 hits, all in the new range, 8/8 verified |
+| difficulty 22 | 1 hit per dispatch (4 Mi / 2^22), verified |
+| difficulty 24 | ~0.25 hits per dispatch — no hit in 8 dispatches is expected |
+
+The nonce is **little-endian** at the front of the block (`w[0] = bswap(nonce)`),
+so verification is `sha256(nonce.to_bytes(4, "little") + tail)`. A big-endian
+check calls every hit wrong; that cost an hour.
 
 ## What the uapi makes you learn the hard way
 
@@ -145,25 +170,40 @@ bash src/i915raw/capture.sh      # needs intel-opencl-icd for the capture
 `capture.sh` prints the per-dispatch time (16.0–17.4 ms for 4,194,304 nonces)
 and the digest.
 
-## The next step: our own dispatch, not Intel's
+## Solving: the argument block
 
-The pieces are known and small:
+The walker points at a payload, and the payload has the kernel arguments at
+fixed offsets. There is one payload per dispatch; a 64 KiB heap object holds
+them all, spaced `0xc80` bytes apart after the first two (0x0000, 0x0200 then
+0x0e80, 0x1b00, ...).
 
-1. **Patch the arguments.** The per-dispatch argument structures live in the
-   heap buffer; one structure begins near `+0x248` and holds, in order, a
-   pointer, difficulty, `count`, `base` (u64) and another pointer. Rewriting
-   `difficulty`/`count`/`base` and the walker's thread-group count turns the
-   replay into a dispatcher.
-2. **Supply our own kernel.** `src/intel/xe/intelXe_sha256.xe` is a
-   hand-written gen12lp listing for exactly this part, assembled by `iga64`
-   (`make xe-asm`). It has no result store yet; the `send.dc1` write and one
-   surface state are the missing code.
-3. **Then measure our code against IGC's**, which is the comparison the
-   `src/intel/xe/README.md` was unable to make.
+```
+payload + 0x30  message buffer pointer   (u64)
+payload + 0x38  results buffer pointer   (u64)
+payload + 0x40  base                     (u32)
+payload + 0x44  difficulty               (u32)
+payload + 0x48  count                    (u32)
+```
 
-Until (1) and (2) exist, the honest claim is: *raw submission works, raw replay
-of the vendor dispatch works and is correct at 241–262 M hashes/s; a raw
-dispatcher of our own kernel is the next commit.*
+`--solve` finds the chosen submission's walker, resolves its 32-bit payload
+address against our objects (the high half comes from the state base), patches
+base/difficulty/count, clears the results buffer and dispatches. `hits` and the
+first eight `nonce digest` pairs are read straight out of the results buffer;
+`verify_solve.py` recomputes them.
+
+```sh
+./build/i915-replay --dump /tmp/i915dump --upto 8 --solve 16 --bench 1 \
+    | python3 src/i915raw/verify_solve.py --difficulty 16
+```
+
+Expected time to one hit at 265 M hashes/s: 4 ms at difficulty 20, 63 ms at 24,
+1 s at 28, 16 s at 32. Anubis caps difficulty at 64.
+
+What is still not ours: the kernel. The payload is Intel's IGC output; what we
+own is the submission and the scan parameters. Replacing the kernel with
+`src/intel/xe/intelXe_sha256.xe` needs a result store (`send.dc1` plus one
+surface state) — that is the next commit, and then the comparison that
+`src/intel/xe/README.md` could not make becomes possible.
 
 ## Reproducing
 
@@ -178,6 +218,11 @@ bash src/i915raw/capture.sh
 # or step by step
 LD_PRELOAD=./build/i915-dump.so /tmp/anubis-i915-clrun
 ./build/i915-replay --dump /tmp/i915dump --upto 8 --bench 12
+./build/i915-replay --dump /tmp/i915dump --upto 8 --solve 16 --bench 1
+
+# verify the hits the GPU reported
+./build/i915-replay --dump /tmp/i915dump --upto 8 --solve 16 --bench 1 \
+    | python3 src/i915raw/verify_solve.py --difficulty 16
 ```
 
 Requirements: `drm/i915_drm.h` (libdrm-dev) to build; membership of the

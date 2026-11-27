@@ -26,8 +26,14 @@ rm -rf "$dir"
 mkdir -p "$dir"
 LD_PRELOAD="$here/../../build/i915-dump.so" "$clrun" | tail -3
 
-echo "== replaying it through raw i915"
+echo "== replaying it through raw i915 (timed)"
 "$here/../../build/i915-replay" --dump "$dir" --upto 8 --bench 12 --nonces 4194304
+
+echo "== solving: scan nonces 0..4M at difficulty 16, raw i915"
+"$here/../../build/i915-replay" --dump "$dir" --upto 8 --solve 16 --bench 1 \
+    --nonces 4194304 | tee "$dir/solve.txt" | grep -E 'dispatch|hits|hit '
+python3 "$here/verify_solve.py" --difficulty 16 --base 0 --count 4194304 \
+    < "$dir/solve.txt"
 
 echo
 echo "capture kept in $dir (log.txt is the manifest)"

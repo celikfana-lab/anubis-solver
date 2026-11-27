@@ -61,6 +61,45 @@ struct sub {
 };
 
 static const char *dumpdir = "/tmp/i915dump";
+
+struct created {
+	uint64_t va;
+	uint32_t *map;
+	uint32_t size;
+};
+static struct created created[1024];
+static unsigned ncreated;
+
+/*
+ * The walker stores the payload as a 32-bit low address; the high half comes
+ * from the general state base.  We only need to find which of our objects
+ * contains it, so match on the low 32 bits.
+ */
+static struct created *find_low(uint32_t low, unsigned *off)
+{
+	unsigned i;
+
+	for (i = 0; i < ncreated; i++) {
+		uint32_t base = (uint32_t)created[i].va;
+
+		if (low >= base && low - base < created[i].size) {
+			if (off)
+				*off = low - base;
+			return &created[i];
+		}
+	}
+	return NULL;
+}
+
+static struct created *find_created(uint64_t va)
+{
+	unsigned i;
+
+	for (i = 0; i < ncreated; i++)
+		if (created[i].va == va)
+			return &created[i];
+	return NULL;
+}
 static int verbose;
 static int fd;
 
@@ -226,6 +265,11 @@ static int submit(struct sub *s, uint32_t ctx)
 int main(int argc, char **argv)
 {
 	unsigned nsubs = 0, upto = 0, bench = 1, nonces = 4194304;
+	struct { uint64_t va; uint32_t off, val; } pokes[16];
+	unsigned npokes = 0;
+	uint64_t clear_va = 0;
+	unsigned solve_diff = 0, have_solve = 0;
+	uint64_t solve_base = 0, solve_count = 0;
 	uint32_t ctx;
 	struct sub *subs;
 	struct drm_i915_gem_vm_control vm = { 0 };
@@ -244,11 +288,32 @@ int main(int argc, char **argv)
 			bench = strtoul(argv[++argi], NULL, 0);
 		else if (!strcmp(argv[argi], "--nonces") && argi + 1 < argc)
 			nonces = strtoul(argv[++argi], NULL, 0);
+		else if (!strcmp(argv[argi], "--poke") && argi + 1 < argc) {
+			unsigned long long va, off, val;
+
+			if (sscanf(argv[++argi], "%llx:%llx:%llx", &va, &off, &val) != 3) {
+				fprintf(stderr, "poke wants VA:OFFSET:VALUE in hex\n");
+				return 2;
+			}
+			pokes[npokes].va = va;
+			pokes[npokes].off = off;
+			pokes[npokes].val = val;
+			npokes++;
+		} else if (!strcmp(argv[argi], "--solve") && argi + 1 < argc) {
+			solve_diff = strtoul(argv[++argi], NULL, 0);
+			have_solve = 1;
+		} else if (!strcmp(argv[argi], "--base") && argi + 1 < argc)
+			solve_base = strtoull(argv[++argi], NULL, 0);
+		else if (!strcmp(argv[argi], "--count") && argi + 1 < argc)
+			solve_count = strtoull(argv[++argi], NULL, 0);
+		else if (!strcmp(argv[argi], "--clear") && argi + 1 < argc)
+			clear_va = strtoull(argv[++argi], NULL, 0);
 		else if (!strcmp(argv[argi], "-v"))
 			verbose = 1;
 		else {
 			fprintf(stderr, "usage: %s [--dump DIR] [--upto N] "
-				"[--bench N] [-v]\n", argv[0]);
+				"[--bench N] [--solve DIFF] [--base B] [--count C] "
+				"[--clear VA] [--poke VA:OFF:VAL] [-v]\n", argv[0]);
 			return 2;
 		}
 	}
@@ -337,6 +402,10 @@ int main(int argc, char **argv)
 			u[i].handle = tmp.handle;
 			u[i].map = tmp.map;
 			u[i].size = tmp.size;
+			created[ncreated].va = u[i].va;
+			created[ncreated].map = u[i].map;
+			created[ncreated].size = u[i].size;
+			ncreated++;
 		}
 		for (i = 0; i < upto; i++)
 			for (j = 0; j < subs[i].n; j++) {
@@ -353,6 +422,73 @@ int main(int argc, char **argv)
 		free(u);
 	}
 
+	/*
+	 * In solve mode, find the chosen submission's GPGPU walker and patch the
+	 * argument block it points at:
+	 *
+	 *   payload + 0x30  message buffer pointer (u64)
+	 *   payload + 0x38  results buffer pointer (u64)
+	 *   payload + 0x40  base    (u32)
+	 *   payload + 0x44  difficulty (u32)
+	 *   payload + 0x48  count   (u32)
+	 */
+	if (have_solve) {
+		struct sub *s0 = &subs[upto - 1];
+		struct obj *batch = &s0->objs[s0->n - 1];
+		uint32_t *blk = (uint32_t *)((char *)batch->map + s0->batch_start);
+		uint32_t wi = 6;	/* walker is the 7th dword of a block */
+		unsigned poff = 0;
+		struct created *c, *msg, *res;
+		uint32_t *pl;
+
+		if (blk[wi] != 0x7105000d) {
+			fprintf(stderr, "solve: no GPGPU walker at batch_start 0x%x "
+				"(found 0x%08x)\n", s0->batch_start, blk[wi]);
+			return 1;
+		}
+		c = find_low(blk[wi + 3], &poff);
+		if (!c) {
+			fprintf(stderr, "solve: payload 0x%x is not inside one of our objects\n",
+				blk[wi + 3]);
+			return 1;
+		}
+		pl = (uint32_t *)((char *)c->map + poff);
+		msg = find_low(pl[0x30 / 4], NULL);
+		res = find_low(pl[0x38 / 4], NULL);
+		if (!msg || !res) {
+			fprintf(stderr, "solve: message/results pointers not in our objects\n");
+			return 1;
+		}
+		pl[0x40 / 4] = (uint32_t)solve_base;
+		pl[0x44 / 4] = solve_diff;
+		if (solve_count)
+			pl[0x48 / 4] = (uint32_t)solve_count;
+		printf("solve: payload 0x%llx+0x%x, msg 0x%llx, res 0x%llx, "
+		       "base %llu, difficulty %u, count %u\n",
+		       (unsigned long long)c->va, poff,
+		       (unsigned long long)msg->va, (unsigned long long)res->va,
+		       (unsigned long long)solve_base, solve_diff,
+		       pl[0x48 / 4]);
+		printf("tail ");
+		for (i = 0; i < 44; i++)
+			printf("%02x", ((unsigned char *)msg->map)[(i & ~3) + 3 - (i & 3)]);
+		printf("\n");
+		clear_va = res->va;
+	}
+
+	for (i = 0; i < npokes; i++) {
+		struct created *c = find_created(pokes[i].va);
+
+		if (!c || pokes[i].off + 4 > c->size) {
+			fprintf(stderr, "poke: no object at 0x%llx or offset out of range\n",
+				(unsigned long long)pokes[i].va);
+			return 1;
+		}
+		*(uint32_t *)((char *)c->map + pokes[i].off) = pokes[i].val;
+		printf("poke 0x%llx+0x%x = 0x%x\n", (unsigned long long)pokes[i].va,
+		       pokes[i].off, pokes[i].val);
+	}
+
 	t0 = now_ms();
 	for (i = 0; i < upto; i++)
 		if (submit(&subs[i], ctx) < 0)
@@ -360,7 +496,60 @@ int main(int argc, char **argv)
 	t1 = now_ms();
 	printf("replayed %u submissions in %.2f ms\n", upto, t1 - t0);
 
-	if (bench > 1) {
+	if (clear_va) {
+		struct created *c = find_created(clear_va);
+
+		if (c) {
+			memset(c->map, 0, c->size);
+			printf("cleared object at 0x%llx\n", (unsigned long long)clear_va);
+		}
+	}
+
+	if (have_solve) {
+		/*
+		 * Solve: one dispatch per repetition, results cleared each time so
+		 * the hit count is this dispatch's, not a running total.
+		 */
+		struct sub *s0 = &subs[upto - 1];
+		struct obj *batch = &s0->objs[s0->n - 1];
+		uint32_t *blk = (uint32_t *)((char *)batch->map + s0->batch_start);
+		unsigned poff = 0, k;
+		struct created *c = find_low(blk[9], &poff);
+		struct created *res = NULL;
+		uint32_t total = 0;
+
+		if (c) {
+			uint32_t *pl = (uint32_t *)((char *)c->map + poff);
+
+			res = find_low(pl[0x38 / 4], NULL);
+		}
+		if (!res) {
+			fprintf(stderr, "solve: results buffer not found\n");
+			return 1;
+		}
+		for (k = 0; k < bench; k++) {
+			memset(res->map, 0, res->size);
+			t0 = now_ms();
+			if (submit(s0, ctx) < 0)
+				return 1;
+			t1 = now_ms();
+			total = res->map[0];
+			printf("dispatch %u: %u hits in %.3f ms (%.1f M hashes/s)\n",
+			       k, total, t1 - t0,
+			       nonces ? nonces / ((t1 - t0) * 1e3) : 0.0);
+		}
+		{
+			uint32_t nhit = total < 8 ? total : 8, j;
+
+			printf("hits %u\n", total);
+			for (k = 0; k < nhit; k++) {
+				printf("hit %u ", res->map[1 + k]);
+				for (j = 0; j < 8; j++)
+					printf("%08x", res->map[9 + k * 8 + j]);
+				printf("\n");
+			}
+		}
+	} else if (bench > 1) {
 		/*
 		 * Repeat the last dispatch (the prologue has already run, so the
 		 * pipeline state is live).  Same nonces every time - this measures
@@ -416,5 +605,6 @@ int main(int argc, char **argv)
 			}
 		}
 	}
+
 	return 0;
 }

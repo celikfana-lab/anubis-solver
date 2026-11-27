@@ -78,6 +78,10 @@ function solveForTab(tabId, tabUrl, challenge) {
   port.onDisconnect.addListener(() => {
     solving.delete(tabId);
     if (finished) return;
+    // Nothing came back: no host on this machine (Windows/macOS without
+    // install.sh). Tell the page so it can use the wasm kernel in a Worker.
+    relay(tabId, { event: "unavailable" });
+    browser.tabs.sendMessage(tabId, { type: "anubis-native-mode" }).catch(() => {});
     const err = browser.runtime.lastError?.message ?? "the native host exited";
     relay(tabId, { event: "done", ok: false, error: err });
     notify("native host stopped", withInstallHint(err));

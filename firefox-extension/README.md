@@ -90,6 +90,41 @@ built with them).
 
 ## It runs by itself
 
+Anubis's own page already has a status line and a bar — this takes them over
+instead of adding a second one. `#status` becomes
+
+```
+Solving natively · sha256 · difficulty 26 — 17.83 MH/s — 4 threads — 43%
+```
+
+`#progress .bar-inner` is driven with the real percentage, `aria-valuenow`
+included, and a `MutationObserver` puts the text back over the page's own solver,
+which keeps writing to the same elements until the tab is navigated away. The
+panel in the corner only exists for Anubis versions without those elements.
+
+Modes, chosen by what answers:
+
+| mode | when | says |
+|---|---|---|
+| `native` | the native host is installed | `Solving natively · <kernel>` |
+| `wasm` | no host (Windows/macOS without install.sh), algorithm is `sha256` | `Solving with better wasm` |
+| `page` | no host and no faster kernel of ours for that algorithm | nothing, Anubis's solver keeps the bar |
+
+The wasm mode packages `wasm/sha256_pow_batch.wasm` (4 nonces wide, 5.1 MH/s here
+against Anubis's ~1.9) plus `wasm/pow-worker.js`, which speaks the same ABI as
+Anubis's own modules (`data_ptr`/`set_data_length`/`result_hash_ptr`/
+`anubis_work`) and posts the nonce and digest back. Proofs from it were checked
+against the C library: nonce 5133809 at difficulty 20 verifies with digest
+`00000dcaf513…`.
+
+`hashx` deliberately stays in `page` mode: our wasm interpreter does 0.48 MH/s
+where Anubis's per-challenge compiled module does ~3.2, so taking it over would
+be slower. A `WebGPU` mode is **not** implemented — the repository has WGSL for
+`meatrider`, not for the `sha256`/`hashx` challenges a website issues, and a label
+that promises WebGPU while running wasm is worse than no label.
+
+## Auto-detection
+
 The add-on now watches for Anubis pages instead of waiting for a click: a content
 script runs at `document_start` on every page, returns immediately if there is no
 `<script id="anubis_challenge">`, and otherwise parses the challenge and hands it

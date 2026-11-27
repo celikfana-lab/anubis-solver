@@ -1,26 +1,52 @@
-// content.js — find an Anubis challenge, show the native solver working.
+// content.js — take over Anubis's own progress bar, and drive it with whichever
+// solver this machine actually has.
 //
-// Runs at document_start on every page (the manifest asks for <all_urls>) and
-// does nothing at all unless the page carries Anubis's challenge element, so an
-// ordinary page pays one getElementById. When there is one, this:
+// Anubis renders:
+//   <p id="status">Calculating… Difficulty: 26, Speed: 1103 kH/s</p>
+//   <div id="progress"><div class="bar-inner"></div></div>
+// and its own single-core wasm keeps updating both. This replaces the text and
+// the bar with the real solver's numbers, and re-asserts them over Anubis's
+// writes (an observer, because the page's solver is still running and will keep
+// overwriting #status until it is navigated away from).
 //
-//   1. parses it and asks the background script to solve it natively,
-//   2. draws a panel with the engine that is actually working (avx512, avx2,
-//      cpu, cuda, hashx, ...), the rate and a bar,
-//   3. leaves the page alone; the background navigates to the pass URL when the
-//      native host answers.
-//
-// The panel lives in a shadow root: Anubis ships its own styles and a nested
-// shadow tree cannot be reached by them.
+// Three modes, chosen by what answers:
+//   native   the Firefox native host (libanubis_solver.so: SHA-NI/AVX2/AVX-512,
+//            every core, an accelerator when one exists) — "solving natively"
+//   wasm     this repository's wasm kernel in a Worker, when the host is missing
+//            (Windows/macOS without install.sh) — "solving with better wasm"
+//   page     nothing of ours: Anubis's own solver keeps the bar
+// WebGPU is not a mode yet: the repository has WGSL for meatrider, not for the
+// hashx/sha256 challenges a website issues, and a label without a kernel behind
+// it would be a lie.
 (() => {
   "use strict";
 
-  const CHALLENGE_ID = "anubis_challenge";
-  const PANEL_ID = "anubis-native-panel";
-  let panel = null;
+  // Only where our kernel is actually faster than the page's: the 4-wide
+  // SHA-256 does 5.1 MH/s against Anubis's ~1.9, while our hashx interpreter
+  // does 0.48 MH/s against the page's compiled ~3.2, so hashx stays with the
+  // page's solver rather than being taken over by something slower.
+  const WASM_FOR = {
+    sha256: "sha256_pow_batch.wasm",
+    "wasm-sha256": "sha256_pow_batch.wasm",
+  };
+
+  const state = {
+    mode: null,          // "native" | "wasm" | "page"
+    challenge: null,
+    kernel: "",
+    rate: 0,
+    estimateMs: 0,
+    started: 0,
+    ticker: 0,
+    worker: null,
+  };
+
+  function $(id) {
+    return document.getElementById(id);
+  }
 
   function challenge() {
-    const el = document.getElementById(CHALLENGE_ID);
+    const el = $("anubis_challenge");
     if (!el) return null;
     try {
       const payload = JSON.parse(el.textContent);
@@ -30,7 +56,7 @@
       const randomData = chal.randomData ?? rules.randomData ?? null;
       if (difficulty == null || !randomData) return null;
       return {
-        algorithm: rules.algorithm ?? chal.method ?? "sha256",
+        algorithm: String(rules.algorithm ?? chal.method ?? "sha256"),
         difficulty: Number(difficulty),
         randomData: String(randomData),
         id: chal.id ?? "",
@@ -40,105 +66,220 @@
     }
   }
 
-  const CSS = `
-    :host { all: initial; }
-    .panel {
-      position: fixed; right: 18px; bottom: 18px; z-index: 2147483647;
-      width: 300px; padding: 12px 14px; border-radius: 12px;
-      background: #1c1f26; color: #e8eaf0; border: 1px solid #3a4150;
-      font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
-      box-shadow: 0 10px 30px rgba(0,0,0,.45);
-    }
-    .title { display: flex; justify-content: space-between; align-items: baseline; }
-    .title b { font-size: 13px; letter-spacing: .2px; }
-    .engine { color: #8fe3a8; font-family: ui-monospace, monospace; font-size: 12px; }
-    .bar { height: 8px; margin: 10px 0 6px; border-radius: 999px; background: #2a303c; overflow: hidden; }
-    .fill { height: 100%; width: 0%; border-radius: 999px;
-            background: linear-gradient(90deg, #58c8ff, #8fe3a8); transition: width .15s linear; }
-    .meta { display: flex; justify-content: space-between; color: #9aa3b2;
-            font-family: ui-monospace, monospace; font-size: 11.5px; }
-    .done .fill { background: linear-gradient(90deg, #8fe3a8, #b7ff99); }
-    .done .engine { color: #b7ff99; }
-    .err .fill { background: #ff7a7a; }
-    .err .engine { color: #ff9a9a; }
-  `;
-
-  function ensurePanel() {
-    if (panel) return panel;
-    const host = document.createElement("div");
-    host.id = PANEL_ID;
-    const root = host.attachShadow({ mode: "closed" });
-    const style = document.createElement("style");
-    style.textContent = CSS;
-    const box = document.createElement("div");
-    box.className = "panel";
-    box.innerHTML = `
-      <div class="title"><b>anubis-solver</b><span class="engine">connecting…</span></div>
-      <div class="bar"><div class="fill"></div></div>
-      <div class="meta"><span class="pct">0%</span><span class="rate">—</span><span class="time">—</span></div>
-    `;
-    root.append(style, box);
-    document.documentElement.appendChild(host);
-    panel = {
-      host,
-      box,
-      engine: box.querySelector(".engine"),
-      fill: box.querySelector(".fill"),
-      pct: box.querySelector(".pct"),
-      rate: box.querySelector(".rate"),
-      time: box.querySelector(".time"),
-    };
-    return panel;
-  }
-
   function humanRate(hps) {
-    if (!hps || !isFinite(hps)) return "—";
+    if (!hps || !isFinite(hps)) return "";
     if (hps >= 1e9) return `${(hps / 1e9).toFixed(2)} GH/s`;
     if (hps >= 1e6) return `${(hps / 1e6).toFixed(2)} MH/s`;
-    if (hps >= 1e3) return `${(hps / 1e3).toFixed(1)} kH/s`;
+    if (hps >= 1e3) return `${(hps / 1e3).toFixed(0)} kH/s`;
     return `${Math.round(hps)} H/s`;
   }
 
-  function showStart(frame) {
-    const p = ensurePanel();
-    p.engine.textContent = `${frame.kernel ?? "native"} · difficulty ${frame.difficulty ?? "?"}`;
-    p.rate.textContent = `${humanRate(frame.rate)} · ${frame.threads ?? "?"} threads`;
-    p.time.textContent = `~${((frame.estimateMs ?? 0) / 1000).toFixed(0)} s`;
+  // ---- painting Anubis's own elements ---------------------------------
+
+  function wantStatus() {
+    const pct = state.pct ?? 0;
+    if (state.phase === "done") {
+      return `Solved with ${state.kernel} in ${(state.elapsedMs / 1000).toFixed(2)} s`;
+    }
+    const label = state.mode === "native" ? "Solving natively"
+                : state.mode === "wasm" ? "Solving with better wasm"
+                : "Solving";
+    const bits = [`${label} · ${state.challenge?.algorithm ?? ""} · difficulty ${state.challenge?.difficulty ?? "?"}`];
+    if (state.rate) bits.push(humanRate(state.rate));
+    if (state.threads) bits.push(`${state.threads} threads`);
+    if (state.phase === "error") bits.push(String(state.error ?? "failed").slice(0, 48));
+    else if (pct) bits.push(`${pct.toFixed(0)}%`);
+    return bits.join(" — ");
   }
 
-  function showProgress(frame) {
-    const p = ensurePanel();
-    const pct = Math.max(0, Math.min(99, Number(frame.pct) || 0));
-    p.fill.style.width = `${pct}%`;
-    p.pct.textContent = `${pct.toFixed(0)}%`;
-    p.rate.textContent = humanRate(frame.rate);
-    p.time.textContent = `${((frame.elapsedMs ?? 0) / 1000).toFixed(1)} s`;
+  function paint(force) {
+    const status = $("status");
+    if (status) {
+      const text = wantStatus();
+      if (force || status.textContent !== text) status.textContent = text;
+      status.style.display = "";
+    }
+    const progress = $("progress");
+    const inner = progress?.querySelector?.(".bar-inner");
+    const pct = state.phase === "done" ? 100 : Math.min(99, state.pct ?? 0);
+    if (inner) inner.style.width = `${pct}%`;
+    if (progress && progress.setAttribute) {
+      progress.setAttribute("aria-valuenow", String(Math.round(pct)));
+      progress.setAttribute("aria-valuemin", "0");
+      progress.setAttribute("aria-valuemax", "100");
+    }
+    // if the page has no such elements (some Anubis versions), fall back to a panel
+    if (!status && !progress) ensurePanel();
+    if (panelRefs) {
+      panelRefs.engine.textContent =
+        state.mode === "native" ? `${state.kernel}`
+        : state.mode === "wasm" ? `wasm · ${state.kernel}`
+        : "page solver";
+      panelRefs.fill.style.width = `${pct}%`;
+      panelRefs.pct.textContent = `${pct.toFixed(0)}%`;
+      panelRefs.rate.textContent = humanRate(state.rate);
+    }
   }
 
-  function showDone(frame) {
-    const p = ensurePanel();
-    p.box.classList.add(frame.ok ? "done" : "err");
-    p.fill.style.width = "100%";
-    p.pct.textContent = frame.ok ? "solved" : "failed";
-    p.engine.textContent = frame.ok
-      ? `${frame.kernel} · ${frame.algorithm}`
-      : String(frame.error ?? "error").slice(0, 40);
-    p.rate.textContent = frame.ok ? humanRate(frame.rate) : "";
-    p.time.textContent = frame.ok ? `${(frame.elapsedMs / 1000).toFixed(2)} s` : "";
+  let panelRefs = null;
+  function ensurePanel() {
+    if (panelRefs) return;
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:2147483647";
+    const root = host.attachShadow({ mode: "closed" });
+    root.innerHTML = `
+      <style>
+        .p{width:280px;padding:10px 12px;border-radius:10px;background:#1c1f26;color:#e8eaf0;
+           border:1px solid #3a4150;font:12px/1.4 system-ui,sans-serif}
+        .b{display:flex;justify-content:space-between;margin-bottom:8px}
+        .e{color:#8fe3a8;font-family:ui-monospace,monospace}
+        .t{height:6px;border-radius:999px;background:#2a303c;overflow:hidden}
+        .f{height:100%;width:0;background:linear-gradient(90deg,#58c8ff,#8fe3a8)}
+        .m{display:flex;justify-content:space-between;color:#9aa3b2;margin-top:6px;
+           font-family:ui-monospace,monospace}
+      </style>
+      <div class="p"><div class="b"><b>anubis-solver</b><span class="e">…</span></div>
+      <div class="t"><div class="f"></div></div>
+      <div class="m"><span class="pct">0%</span><span class="rate"></span></div></div>`;
+    document.documentElement.appendChild(host);
+    panelRefs = {
+      engine: root.querySelector(".e"),
+      fill: root.querySelector(".f"),
+      pct: root.querySelector(".pct"),
+      rate: root.querySelector(".rate"),
+    };
   }
+
+  // Anubis's solver keeps writing to #status; put ours back.
+  const observer = new MutationObserver(() => paint(false));
+  function watch() {
+    const status = $("status");
+    if (status) observer.observe(status, { childList: true, characterData: true, subtree: true });
+    const progress = $("progress");
+    if (progress) observer.observe(progress, { attributes: true, attributeFilter: ["aria-valuenow"] });
+  }
+
+  // ---- native mode -----------------------------------------------------
 
   browser.runtime.onMessage.addListener((message) => {
-    if (!message || message.type !== "anubis-native-progress") return;
-    const frame = message.frame ?? {};
-    if (frame.event === "start") showStart(frame);
-    else if (frame.event === "progress") showProgress(frame);
-    else if (frame.event === "done") showDone(frame);
+    if (!message) return;
+    if (message.type === "anubis-native-progress") {
+      const frame = message.frame ?? {};
+      if (frame.event === "start") {
+        state.mode = "native";
+        state.kernel = frame.kernel ?? "native";
+        state.rate = frame.rate ?? 0;
+        state.estimateMs = frame.estimateMs ?? 0;
+        state.threads = frame.threads ?? 0;
+        state.started = performance.now();
+        state.phase = "running";
+      } else if (frame.event === "progress") {
+        state.pct = frame.pct ?? 0;
+        state.rate = frame.rate ?? state.rate;
+      } else if (frame.event === "done") {
+        state.phase = frame.ok ? "done" : "error";
+        state.error = frame.error;
+        state.elapsedMs = frame.elapsedMs ?? performance.now() - state.started;
+        state.rate = frame.rate ?? state.rate;
+        state.kernel = frame.kernel ?? state.kernel;
+      }
+      paint(true);
+    } else if (message.type === "anubis-native-mode") {
+      // the host is not there: pick the in-page kernel if we have one
+      startFallback();
+    }
   });
+
+  // ---- wasm mode -------------------------------------------------------
+
+  function baseUrl(path) {
+    return browser.runtime.getURL(path);
+  }
+
+  function startFallback() {
+    if (state.mode === "wasm" || state.mode === "page") return;
+    const chal = state.challenge;
+    if (!chal) return;
+    const wasmName = WASM_FOR[chal.algorithm];
+    if (!wasmName) {
+      state.mode = "page";             // no kernel of ours for this algorithm
+      state.kernel = "page wasm";
+      state.phase = "running";
+      paint(true);
+      return;
+    }
+    state.mode = "wasm";
+    state.kernel = wasmName.includes("batch") ? "wasm 4-wide" : "wasm";
+    state.phase = "running";
+    state.started = performance.now();
+    paint(true);
+
+    const wasmUrl = baseUrl(`wasm/${wasmName}`);
+    const worker = new Worker(baseUrl("wasm/pow-worker.js"));
+    state.worker = worker;
+    let calibrated = false;
+
+    worker.onmessage = (event) => {
+      const msg = event.data ?? {};
+      if (msg.kind === "calibrated") {
+        calibrated = true;
+        state.rate = msg.rate;
+        state.estimateMs = (2 ** chal.difficulty) / Math.max(msg.rate, 1) * 1000;
+        state.ticker = setInterval(() => {
+          const elapsed = performance.now() - state.started;
+          state.pct = Math.min(99, (elapsed / Math.max(state.estimateMs, 1)) * 100);
+          paint(false);
+        }, 120);
+        worker.postMessage({ kind: "solve", wasmUrl, algorithm: chal.algorithm,
+                             challengeHex: chal.randomData, difficulty: chal.difficulty });
+        return;
+      }
+      clearInterval(state.ticker);
+      if (!calibrated && !msg.ok) {
+        // the module would not load: leave Anubis's own solver to it
+        state.mode = "page";
+        state.kernel = "page wasm";
+        state.phase = "running";
+        paint(true);
+        return;
+      }
+      if (msg.ok) {
+        state.phase = "done";
+        state.elapsedMs = msg.elapsedMs;
+        paint(true);
+        passThrough(chal, msg);
+      } else {
+        state.phase = "error";
+        state.error = msg.error;
+        paint(true);
+      }
+    };
+
+    const cal = Math.max(8, Math.min(chal.difficulty - 4, 18));
+    worker.postMessage({ kind: "calibrate", wasmUrl, algorithm: chal.algorithm,
+                         challengeHex: chal.randomData, difficulty: cal });
+  }
+
+  function passThrough(chal, solution) {
+    const url = new URL("/.within.website/x/cmd/anubis/api/pass-challenge", location.href);
+    url.searchParams.set("id", chal.id ?? "");
+    url.searchParams.set("response", solution.response);
+    url.searchParams.set("nonce", String(solution.nonce));
+    url.searchParams.set("redir", location.href);
+    url.searchParams.set("elapsedTime", String(Math.max(1, Math.round(solution.elapsedMs))));
+    location.assign(url.toString());
+  }
+
+  // ---- start -----------------------------------------------------------
 
   const chal = challenge();
   if (!chal) return;
-  // The page's own solver starts immediately too; ours is orders of magnitude
-  // faster, so it wins the race and the page then navigates to the pass URL.
-  browser.runtime.sendMessage({ type: "anubis-native-detected", challenge: chal })
-    .catch(() => {});
+  state.challenge = chal;
+  state.mode = "native";             // until the host says otherwise
+  state.phase = "running";
+  watch();
+  paint(true);
+  browser.runtime
+    .sendMessage({ type: "anubis-native-detected", challenge: chal })
+    .catch(() => startFallback());
 })();

@@ -57,6 +57,15 @@ for key in ("content_scripts",):
         referenced.extend(block.get("js", []))
 for table in ("icons",):
     referenced.extend((man.get(table) or {}).values())
+for entry in man.get("web_accessible_resources", []):
+    # a glob like "wasm/*": every file under it must exist and be packaged
+    if entry.endswith("*"):
+        base = here / entry[:-1]
+        if not base.is_dir():
+            fail.append(f"web_accessible_resources names {entry}, which is not a directory")
+        else:
+            referenced.extend(str(p.relative_to(here)) for p in base.rglob("*")
+                              if p.is_file())
 referenced.extend((man.get("browser_action", {}).get("default_icon") or {}).values())
 for rel in dict.fromkeys(referenced):
     if not (here / rel).exists():
@@ -77,7 +86,7 @@ rm -f "$OUT"
 
 # -X keeps timestamps and extra attributes out, so the same tree gives the same
 # bytes; that makes the sha256 below meaningful rather than decorative.
-zip -q -X -r "$OUT" manifest.json background.js content.js icons
+zip -q -X -r "$OUT" manifest.json background.js content.js icons wasm
 
 echo
 echo "built $OUT"

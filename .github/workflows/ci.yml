@@ -94,6 +94,9 @@ jobs:
       - name: SVE2 batch kernel parity
         run: python3 tests/test_cpu_sve2.py
 
+      - name: TEMP arm ISA benchmark tool
+        run: python3 tools/bench_arm_isa.py --reps 5
+
       - name: Unit tests (cross-checked against hashlib and argon2-cffi)
         run: python3 tests/test_core.py
 

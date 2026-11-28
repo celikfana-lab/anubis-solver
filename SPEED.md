@@ -246,6 +246,54 @@ The HashX JIT is ~5.3× the interpreter: 0.30 / 0.60 / 1.20 MH/s for
 peaks at two threads on this board.
 
 
+## GitHub arm64 runner (Cobalt 100): `sha256h` vs SVE2
+
+Measured 2026-11-28 on GitHub's hosted arm64 runners — `ubuntu-24.04-arm` and
+`ubuntu-22.04-arm`, an Arm Neoverse N2 ("Cobalt 100") at 4 vCPU and 2 GHz
+nominal — one thread, `-O3`. The two images agree within noise (262 / 261 ns,
+18.6 / 19.4 MH/s); the 24.04 numbers are below.
+
+`python3 tools/bench_arm_isa.py` reproduces this. It is a C harness rather than
+a Python one on purpose: one ctypes call is microseconds, roughly 10x the
+kernel, so a Python loop measures the FFI boundary instead of the kernel.
+
+| path | per candidate | `sha256` b20 |
+|---|---:|---:|
+| `src/cpu/arm/neon.s` — one block via `sha256h` (default) | **31 ns** (~62 cycles) | **18.6 MH/s** |
+| `src/cpu/arm/sve2.s` — four candidates, `ANUBIS_SVE2=1` | 262 ns | 3.9 MH/s |
+| ratio | 8.5x slower | 4.8x slower |
+
+The cause is instruction count, not stalls — both paths run at about 2 IPC:
+
+| | instructions | covers |
+|---|---:|---|
+| `neon.s` | 118 | one block |
+| `sve2.s` | 4528 | four candidates (1132 per candidate) |
+
+- `sha256h`/`sha256h2` perform **four SHA-256 rounds per instruction**, so all
+  64 rounds are 32 instructions; `sha256su0`/`sha256su1` do the schedule in 24
+  more.
+- SVE2 has no SHA-2 instruction, so each round is generic vector arithmetic:
+  three rotates, Ch, Sigma0, Maj, the adds and a K broadcast — about 45
+  instructions per round. Four rounds cost ~180 instructions instead of 5.
+- About 40% of the SVE2 kernel is rotate plumbing (`lsr`+`mov`+`lsl`+`orr`,
+  1824 of 4528 instructions): SVE2 has no vector `ROR`, and the rotate has to
+  go through a scratch register.
+- SVE2 also lacks the fused three-input logic that x86 gets from `vpternlogd`
+  and Arm from FEAT_SHA3's `EOR3`, so Ch costs 4 instructions and Maj 6, and
+  the destructive predication makes `mov` the most frequent instruction (1018
+  of 4528).
+
+The four lanes divide the ~38x per-block instruction ratio down to the 8.5x
+measured. Wider vectors would help (16 lanes at VL=512 is ~130 cycles per
+candidate) but the 256- and 512-bit SVE cores implement SVE1 rather than SVE2,
+and every SVE2 core also has the crypto extension. So the SVE2 batch kernel is
+off by default and `ANUBIS_SVE2=1` opts in; it exists as the batch path for a
+core without FEAT_SHA2, and the `arm64 asm` CI job plus
+`tests/test_cpu_sve2.py` keep it correct. Under qemu-user,
+`-cpu max,sve-max-vq=1` pins the vector length to 128 bits, which runs the
+4-lane path without arm64 hardware.
+
 ## ISA comparison
 
 Measured on one Kaggle Xeon core (2.00 GHz, `avx512f/bw/cd/dq/vl`, no SHA-NI),

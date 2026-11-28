@@ -67,9 +67,51 @@ changes.
 | `tools/build_l0_argon2.sh` | `src/intel/levelzero/argon2id_l0.cl` → `src/intel/levelzero/argon2id_l0.spv(.h)` |
 | `tools/build_argon2_vk.sh` | `src/vulkan/argon2id.comp` → `src/vulkan/argon2id.spv` (needs `glslangValidator`) |
 | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` | generate the x86-64 assembly kernels |
+| `tools/gen_sve2_s.py` | generate the aarch64 SVE2 batch kernel, `src/cpu/arm/sve2.s` |
 | `tools/gen_meatrider_s.py` | re-emit the `sha256` tier's kernels as `src/meatrider/meatrider_{avx2,avx512,shani}.s` (`--check` fails when stale) |
 | `tools/build_meatrider_vk.sh` | `src/vulkan/meatrider_comp.comp` → `src/vulkan/meatrider_comp.spv(.h)` (needs `glslangValidator`) |
 | `tools/gen_meatrider_ptx.py` | the `meatrider` PTX kernel, `src/meatrider/meatrider.ptx` |
+
+## The CPU kernels
+
+`src/cpu/` is split by the instruction set it is written for:
+
+| path | kernel |
+|---|---|
+| `src/cpu/x64/avx2.s` | `sha256_compress8_avx2()`, eight candidates per compression |
+| `src/cpu/x64/avx512.s` | `sha256_compress16_avx512()`, sixteen |
+| `src/cpu/x64/shani.s` | `sha256_block_shani()`, one block via the Intel SHA extension |
+| `src/cpu/arm/neon.s` | `sha256_block_neon()`, one block via ARMv8 SHA-2 (`sha256h`) |
+| `src/cpu/arm/sve2.s` | `sha256_compress_sve2()`, `svcntw()` candidates per compression |
+
+The x86-64 batched kernels and the SVE2 one hash N *independent* candidate
+messages that share a midstate (the prefix is folded once, then each candidate
+only hashes its own padded tail block): lane i of every vector register is
+candidate i. `neon.s` and `shani.s` are the single-block paths for one-off
+hashing (`verify_*`, `anubis_sha256`), and they use the CPU's own SHA-2
+instructions.
+
+Dispatch is at run time and per arch: `anubis_batch_lanes()` returns 16
+(AVX-512), 8 (AVX2) or `svcntw()` (SVE2), or 0, and the `fast`/`slow` and
+wasm-`sha256` search loops hash that many nonces per call. Kill switches for
+A/B measurements: `ANUBIS_NO_AVX512`, `ANUBIS_NO_AVX2`, `ANUBIS_NO_SHANI`,
+`ANUBIS_NO_NEON`, `ANUBIS_NO_SVE2`.
+
+### What SVE2 does and does not buy
+
+Every CPU that implements SVE2 also implements FEAT_SHA256, and one `sha256h`
+block is about 60 cycles. A vectorized SVE2 kernel has no crypto-extension
+shortcut -- it is a plain 64-round vector SHA-256 -- so on a Neoverse N2
+(128-bit SVE) it is roughly 2x *slower* per block than the crypto path. What
+it is for is the batch path on a core where FEAT_SHA2 is missing, and the
+`arm64 asm` CI job, which runs `tests/test_cpu_sve2.py` on real SVE2 hardware
+and prints both numbers from the same binary. Do not quote the SVE2 row as a
+speedup over `neon.s` on a core that has both.
+
+The kernel is vector-length agnostic: it uses gather/scatter with an index
+vector, so the same code hashes 4 candidates on a 128-bit core, 8 on 256-bit
+and 16 on 512-bit, and `sha256_sve2_width()` reports which. 4 <= width <= 16
+is enforced because the batch buffers are 16 lanes wide.
 
 `src/opencl/opencl_kernels.h` embeds the `.cl` sources for the portable OpenCL
 backend; regenerate it with `python3 tools/embed_opencl_kernels.py` after

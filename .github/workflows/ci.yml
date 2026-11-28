@@ -71,6 +71,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Python dependencies
+        run: pip install requests argon2-cffi
+
       - name: Build the native library
         run: make -j"$(nproc)"
 

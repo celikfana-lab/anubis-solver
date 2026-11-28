@@ -25,8 +25,9 @@
 //            the above is there
 //   page     nothing of ours: the tab is unblocked and Anubis's solver resumes
 // A GPU that fails the self-check is not used: wrong answers are not fast.
-(() => {
+(async () => {
   "use strict";
+
 
   // Only where our kernel is actually faster than the page's: the 4-wide
   // SHA-256 does 5.1 MH/s against Anubis's ~1.9, while our hashx interpreter
@@ -46,6 +47,8 @@
     started: 0,
     ticker: 0,
     worker: null,
+    titleHtml: null,
+    imageSrc: null,
   };
 
   const MODE_LABEL = {
@@ -57,6 +60,33 @@
 
   function $(id) {
     return document.getElementById(id);
+  }
+
+  /**
+   * The challenge JSON lives in <head>, but a document_start script can run
+   * before the parser has inserted it, so wait for the node instead of reading
+   * once. Resolves with null if the page turns out not to be Anubis.
+   */
+  function whenChallenge() {
+    const now = challenge();
+    if (now) return Promise.resolve(now);
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        observer.disconnect();
+        resolve(value);
+      };
+      const observer = new MutationObserver(() => {
+        const found = challenge();
+        if (found) finish(found);
+      });
+      observer.observe(document.documentElement ?? document, {
+        childList: true, subtree: true,
+      });
+      addEventListener("load", () => finish(challenge()), { once: true });
+    });
   }
 
   function challenge() {
@@ -105,6 +135,19 @@
   }
 
   function paint(force) {
+    // The page's solver is not allowed to run, so it can land in its own error
+    // state ('Calculation error', red mascot) while we are solving. Put the
+    // original headline and mascot back: the bar is ours, the page is not dead.
+    if (state.phase !== "done") {
+      const title = $("title");
+      if (title && state.titleHtml != null && title.innerHTML !== state.titleHtml) {
+        title.innerHTML = state.titleHtml;
+      }
+      const image = $("image");
+      if (image && state.imageSrc != null && image.src !== state.imageSrc) {
+        image.src = state.imageSrc;
+      }
+    }
     const status = $("status");
     if (status) {
       const text = wantStatus();
@@ -114,6 +157,7 @@
     const progress = $("progress");
     const inner = progress?.querySelector?.(".bar-inner");
     const pct = state.phase === "done" ? 100 : Math.min(99, state.pct ?? 0);
+    if (progress) progress.style.display = "";   // the page hides it on error
     if (inner) inner.style.width = `${pct}%`;
     if (progress && progress.setAttribute) {
       progress.setAttribute("aria-valuenow", String(Math.round(pct)));
@@ -338,9 +382,11 @@
 
   // ---- start -----------------------------------------------------------
 
-  const chal = challenge();
+  const chal = await whenChallenge();
   if (!chal) return;
   state.challenge = chal;
+  state.titleHtml = $("title")?.innerHTML ?? null;
+  state.imageSrc = $("image")?.src ?? null;
   state.mode = "native";             // until the host says otherwise
   state.phase = "running";
   watch();

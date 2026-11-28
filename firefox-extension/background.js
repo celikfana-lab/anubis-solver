@@ -32,11 +32,10 @@ const challenged = new Set();
 browser.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.tabId < 0 || !challenged.has(details.tabId)) return {};
-    const url = details.url;
-    // only the proof-of-work module: the page still needs its own scripts and
-    // the pass-challenge navigation, which is not a sub-resource request.
-    if (/\/\.within\.website\//.test(url) && /\.wasm($|\?)/i.test(url)) {
-      console.log(`[anubis-native] blocked the page's wasm: ${url}`);
+    // Only the module Anubis's own solver would compile (see block.js). The
+    // page keeps its scripts and its pass-challenge navigation.
+    if (typeof AnubisBlock !== "undefined" && AnubisBlock.isAnubisSolver(details.url)) {
+      console.log(`[anubis-native] blocked the page's wasm: ${details.url}`);
       return { cancel: true };
     }
     return {};

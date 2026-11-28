@@ -13,10 +13,20 @@ engines, and paints the result into Anubis's own progress bar:
 3. **wasm 4-wide** — the repository's `wasm/sha256_pow_batch.wasm` in a Worker,
    when neither of the above is available.
 
-Before any of that, the page's own solver is stopped: once a challenge is seen,
-the background script cancels the challenge page's `.wasm` requests, so the
-single-core in-page miner never starts. If nothing of ours works, the tab is
-unblocked again and Anubis's solver resumes.
+Before any of that, the page's own solver is stopped. Anubis's `main.mjs`
+fetches `…/.within.website/x/cmd/anubis/static/wasm/{simd128,baseline}/{alg}.wasm`,
+compiles it with `WebAssembly.compileStreaming`, and posts the module into a
+worker — so the module is a request the extension can cancel, and cancelling it
+means the miner never compiles anything. `block.js` matches exactly that path
+(including a base prefix), and `test-block.js` checks the rule against the URLs
+a live page builds from its own `anubis_base_prefix`/`anubis_version`.
+
+The page reacts to the missing module by showing its own error state, so the
+content script remembers the original headline and mascot and puts them back
+while it solves. `fast`/`slow` have no wasm module to cancel (their worker is
+plain JS), so those tiers are left to the page — the extension still paints the
+bar and navigates first. If nothing of ours works, the tab is unblocked again and
+Anubis's solver resumes.
 
 Measured on the same challenge (`difficulty 18–22`, this machine):
 
@@ -76,6 +86,8 @@ runs, it only sees whether the host answers.
 ## Tests
 
 ```bash
+node test-block.js                               # the block rule vs Anubis's own solver URLs
+node test-block.js --url http://127.0.0.1:8080/  # ...and against a live challenge page
 node test-webgpu.js                              # shader nonce placement vs node crypto (25 checks)
 python3 test-native.py --start-gate              # betterAnusbis, sha256, difficulty 20
 python3 test-native.py --start-anubis            # the real Anubis, built from $ANUBIS_SRC

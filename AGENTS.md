@@ -48,6 +48,7 @@ python3 tools/test_wallet.py --check       # the payout fixture derives from its
 ./firefox-extension/build-xpi.sh           # the Firefox add-on: build/anubis-solver-firefox-<ver>.xpi
 python3 firefox-extension/test-native.py --start-gate   # native host vs a real sha256 challenge (--start-anubis for upstream Anubis)
 node firefox-extension/test-webgpu.js       # the WebGPU nonce placement vs node's crypto
+node firefox-extension/test-block.js        # the rule that stops Anubis's own wasm module
 python3 tools/test_wallet.py --new --out ~/w/Name.json --label Name   # a wallet of your own, outside git
 python3 tools/bench-server-resources.py   # RAM and CPU, from /proc
 node tools/bench-client-resources.mjs     # wasm vs native memory and CPU

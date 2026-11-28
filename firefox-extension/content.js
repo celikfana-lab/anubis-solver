@@ -47,8 +47,6 @@
     started: 0,
     ticker: 0,
     worker: null,
-    titleHtml: null,
-    imageSrc: null,
     gpu: null,
   };
 
@@ -79,6 +77,13 @@
     hashx: "HashX",
   };
   const CPU_KERNELS = new Set(["avx512", "avx2", "shani", "cpu"]);
+
+  // What the page shows while we work: the anti-anti-AI mascot in place of
+  // Anubis's reject/happy art, and a headline that says who is driving. The
+  // page draws its own "Calculation error!" state when its solver cannot load
+  // (we cancel its wasm), so both are re-asserted, not just set once.
+  const TITLE = "Hijacked Anubis";
+  const MASCOT = "mascot/anti-anti-ai.webp";
 
   const MODE_LABEL = {
     native: "Solving natively",
@@ -160,23 +165,20 @@
     if (state.rate) bits.push(humanRate(state.rate));
     if (state.phase === "error") bits.push(String(state.error ?? "failed").slice(0, 48));
     else if (pct) bits.push(`${pct.toFixed(0)}%`);
+    const elapsed = state.elapsedMs ?? (state.started ? performance.now() - state.started : 0);
+    if (elapsed > 1000 && state.phase !== "done") bits.push(`${(elapsed / 1000).toFixed(0)} s`);
     return bits.join(" — ");
   }
 
   function paint(force) {
-    // The page's solver is not allowed to run, so it can land in its own error
-    // state ('Calculation error', red mascot) while we are solving. Put the
-    // original headline and mascot back: the bar is ours, the page is not dead.
-    if (state.phase !== "done") {
-      const title = $("title");
-      if (title && state.titleHtml != null && title.innerHTML !== state.titleHtml) {
-        title.innerHTML = state.titleHtml;
-      }
-      const image = $("image");
-      if (image && state.imageSrc != null && image.src !== state.imageSrc) {
-        image.src = state.imageSrc;
-      }
-    }
+    // The page's own solver cannot start (its wasm is cancelled), so it paints
+    // "Calculation error!" and the reject mascot. Keep our headline and our
+    // mascot there instead, on every repaint.
+    const title = $("title");
+    if (title && title.textContent !== TITLE) title.textContent = TITLE;
+    const image = $("image");
+    const mascot = browser.runtime.getURL(MASCOT);
+    if (image && image.getAttribute("src") !== mascot) image.setAttribute("src", mascot);
     const status = $("status");
     if (status) {
       const text = wantStatus();
@@ -239,6 +241,10 @@
     if (status) observer.observe(status, { childList: true, characterData: true, subtree: true });
     const progress = $("progress");
     if (progress) observer.observe(progress, { attributes: true, attributeFilter: ["aria-valuenow"] });
+    for (const id of ["title", "image"]) {
+      const el = $(id);
+      if (el) observer.observe(el, { childList: true, characterData: true, subtree: true, attributes: true });
+    }
   }
 
   // ---- native mode -----------------------------------------------------
@@ -413,8 +419,6 @@
   const chal = await whenChallenge();
   if (!chal) return;
   state.challenge = chal;
-  state.titleHtml = $("title")?.innerHTML ?? null;
-  state.imageSrc = $("image")?.src ?? null;
   state.mode = "native";             // until the host says otherwise
   state.phase = "running";
   watch();

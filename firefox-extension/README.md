@@ -13,6 +13,12 @@ engines, and paints the result into Anubis's own progress bar:
 3. **wasm 4-wide** — the repository's `wasm/sha256_pow_batch.wasm` in a Worker,
    when neither of the above is available.
 
+While it works, the page carries the repository's anti-anti-AI mascot in place
+of Anubis's art and the headline **Hijacked Anubis**, re-asserted on every
+repaint because the page's own solver fails to start (its wasm is cancelled) and
+falls back to a "Calculation error!" panel. The status line also counts seconds,
+so a long solve never looks frozen at 99%.
+
 The bar names the engine, not just the tier: the native host reports which
 backend actually ran (`vulkan`, `levelzero`, `cuda`, `opencl`, `avx512`, `avx2`,
 `shani`, `cpu`) and the device it ran on, so the line reads

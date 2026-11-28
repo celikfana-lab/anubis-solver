@@ -78,12 +78,10 @@
   };
   const CPU_KERNELS = new Set(["avx512", "avx2", "shani", "cpu"]);
 
-  // What the page shows while we work: the anti-anti-AI mascot in place of
-  // Anubis's reject/happy art, and a headline that says who is driving. The
-  // page draws its own "Calculation error!" state when its solver cannot load
-  // (we cancel its wasm), so both are re-asserted, not just set once.
-  const TITLE = "Hijacked Anubis";
-  const MASCOT = "mascot/anti-anti-ai.webp";
+  // What the page shows while we work: our mascot and headline in place of the
+  // page's own error state (its solver cannot start, we cancelled its wasm).
+  // look.js owns the choice, including the one-page-in-a-thousand variant.
+  const LOOK = AnubisLook.pickLook(location.search);
 
   const MODE_LABEL = {
     native: "Solving natively",
@@ -178,9 +176,9 @@
     // "Calculation error!" and the reject mascot. Keep our headline and our
     // mascot there instead, on every repaint.
     const title = $("title");
-    if (title && title.textContent !== TITLE) title.textContent = TITLE;
+    if (title && title.textContent !== LOOK.title) title.textContent = LOOK.title;
     const image = $("image");
-    const mascot = browser.runtime.getURL(MASCOT);
+    const mascot = browser.runtime.getURL(LOOK.mascot);
     if (image && image.getAttribute("src") !== mascot) image.setAttribute("src", mascot);
     const status = $("status");
     if (status) {

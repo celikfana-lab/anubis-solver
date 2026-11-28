@@ -14,7 +14,10 @@ engines, and paints the result into Anubis's own progress bar:
    when neither of the above is available.
 
 While it works, the page carries the repository's anti-anti-AI mascot in place
-of Anubis's art and the headline **Hijacked Anubis**, re-asserted on every
+of Anubis's art and the headline **Hijacked Anubis** (one page in a thousand
+gets `mascot/deepseek-chan.webp` and *"what is the point of life? to like and
+sub"* instead; `?anubis-easter=1` or `=0` forces either, and
+`node test-look.js` checks the odds), re-asserted on every
 repaint because the page's own solver fails to start (its wasm is cancelled) and
 falls back to a "Calculation error!" panel. The status line also counts seconds,
 so a long solve never looks frozen at 99%.
@@ -133,6 +136,7 @@ session totals are the part worth reading.
 node test-block.js                               # the block rule vs Anubis's own solver URLs
 node test-block.js --url http://127.0.0.1:8080/  # ...and against a live challenge page
 node test-stats.js                               # the panel's arithmetic (21 checks)
+node test-look.js                                # the mascot/headline odds (13 checks)
 node test-webgpu.js                              # shader nonce placement vs node crypto (25 checks)
 python3 test-native.py --start-gate              # betterAnusbis, sha256, difficulty 20
 python3 test-native.py --start-anubis            # the real Anubis, built from $ANUBIS_SRC

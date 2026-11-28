@@ -50,6 +50,7 @@ python3 firefox-extension/test-native.py --start-gate   # native host vs a real 
 node firefox-extension/test-webgpu.js       # the WebGPU nonce placement vs node's crypto
 node firefox-extension/test-block.js        # the rule that stops Anubis's own wasm module
 node firefox-extension/test-stats.js        # the toolbar panel's arithmetic
+node firefox-extension/test-look.js         # the takeover mascot and its 1/1000 variant
 python3 tools/test_wallet.py --new --out ~/w/Name.json --label Name   # a wallet of your own, outside git
 python3 tools/bench-server-resources.py   # RAM and CPU, from /proc
 node tools/bench-client-resources.mjs     # wasm vs native memory and CPU

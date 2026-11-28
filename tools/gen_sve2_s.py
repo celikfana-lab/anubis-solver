@@ -221,7 +221,9 @@ def main():
     L += ["", "    // W[0..15]: gather word w of every candidate, then swap to host order",
           "    mov     w4, #16                 // lane stride: 64 bytes = 16 words"]
     for w in range(16):
-        L.append("    mov     w3, #%d" % (4 * w))
+        # index is in elements: the gather's UXTW #2 scales it by 4 bytes, so
+        # word w of lane i sits at w + 16*i (64-byte lane stride).
+        L.append("    mov     w3, #%d" % w)
         L.append("    index   %s%s, w3, w4" % (IDX, P))
         L.append("    ld1w    {%s%s}, p0/z, [x1, %s%s, uxtw #2]" % (W[w], P, IDX, P))
         L.append("    revb    %s%s, %s, %s%s" % (W[w], P, PRED, W[w], P))

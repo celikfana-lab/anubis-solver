@@ -71,63 +71,63 @@ sha256_compress_sve2:
     index   z31.s, w3, w4
     ld1w    {z8.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z8.s, p0/m, z8.s
-    mov     w3, #4
+    mov     w3, #1
     index   z31.s, w3, w4
     ld1w    {z9.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z9.s, p0/m, z9.s
-    mov     w3, #8
+    mov     w3, #2
     index   z31.s, w3, w4
     ld1w    {z10.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z10.s, p0/m, z10.s
-    mov     w3, #12
+    mov     w3, #3
     index   z31.s, w3, w4
     ld1w    {z11.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z11.s, p0/m, z11.s
-    mov     w3, #16
+    mov     w3, #4
     index   z31.s, w3, w4
     ld1w    {z12.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z12.s, p0/m, z12.s
-    mov     w3, #20
+    mov     w3, #5
     index   z31.s, w3, w4
     ld1w    {z13.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z13.s, p0/m, z13.s
-    mov     w3, #24
+    mov     w3, #6
     index   z31.s, w3, w4
     ld1w    {z14.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z14.s, p0/m, z14.s
-    mov     w3, #28
+    mov     w3, #7
     index   z31.s, w3, w4
     ld1w    {z15.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z15.s, p0/m, z15.s
-    mov     w3, #32
+    mov     w3, #8
     index   z31.s, w3, w4
     ld1w    {z16.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z16.s, p0/m, z16.s
-    mov     w3, #36
+    mov     w3, #9
     index   z31.s, w3, w4
     ld1w    {z17.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z17.s, p0/m, z17.s
-    mov     w3, #40
+    mov     w3, #10
     index   z31.s, w3, w4
     ld1w    {z18.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z18.s, p0/m, z18.s
-    mov     w3, #44
+    mov     w3, #11
     index   z31.s, w3, w4
     ld1w    {z19.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z19.s, p0/m, z19.s
-    mov     w3, #48
+    mov     w3, #12
     index   z31.s, w3, w4
     ld1w    {z20.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z20.s, p0/m, z20.s
-    mov     w3, #52
+    mov     w3, #13
     index   z31.s, w3, w4
     ld1w    {z21.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z21.s, p0/m, z21.s
-    mov     w3, #56
+    mov     w3, #14
     index   z31.s, w3, w4
     ld1w    {z22.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z22.s, p0/m, z22.s
-    mov     w3, #60
+    mov     w3, #15
     index   z31.s, w3, w4
     ld1w    {z23.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z23.s, p0/m, z23.s

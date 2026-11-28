@@ -91,6 +91,9 @@ jobs:
               print("SVE2 kernel: not built")
           PY
 
+      - name: SVE2 batch kernel parity and speed
+        run: python3 tests/test_cpu_sve2.py
+
       - name: Unit tests (cross-checked against hashlib and argon2-cffi)
         run: python3 tests/test_core.py
 
@@ -98,6 +101,3 @@ jobs:
         env:
           ANUBIS_NO_SVE2: "1"
         run: python3 tests/test_core.py
-
-      - name: SVE2 batch kernel parity and speed
-        run: python3 tests/test_cpu_sve2.py

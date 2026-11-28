@@ -157,7 +157,8 @@
   function wantStatus() {
     const pct = state.pct ?? 0;
     if (state.phase === "done") {
-      return `Solved with ${state.kernel} in ${(state.elapsedMs / 1000).toFixed(2)} s`;
+      const rate = state.rate ? ` at ${humanRate(state.rate)}` : "";
+      return `Solved with ${state.kernel} in ${(state.elapsedMs / 1000).toFixed(2)} s${rate}`;
     }
     const label = MODE_LABEL[state.mode] ?? "Solving";
     const bits = [`${label} · ${state.challenge?.algorithm ?? ""} · difficulty ${state.challenge?.difficulty ?? "?"}`];

@@ -111,28 +111,60 @@ def _payload_solution(module, solver, payload: dict):
     })
 
 
-# Throughput this process has actually measured, per (algorithm, payload size).
-# A solve stops at its first hit, so its own work/elapsed is a true sample; the
-# first solve for a shape has no denominator and reports no percentage instead
-# of inventing one. Every solve after that gets a real estimate.
-_RATES: dict[tuple[str, int], float] = {}
+# Throughput actually measured, per (algorithm, payload size, kernel). A solve
+# stops at its first hit, so its own nonces-hashed/elapsed is a true sample;
+# anything derived from a short probe is not (each solve pays its backend's
+# start-up, which swamps small work). The first solve for a shape therefore
+# reports no percentage instead of inventing one, and what it measures is kept
+# in a small cache so the next solve - and the next browser session - has a real
+# denominator.
+_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "anubis-solver" / "speeds.json"
+_RATES: dict[str, float] | None = None
 
 
-def _rate_key(algorithm: str, random_data: str) -> tuple[str, int]:
-    return (algorithm, max(0, len(random_data) // 2))
+def _cache_key(algorithm: str, size: int, kernel: str) -> str:
+    return f"{algorithm}|{size}|{kernel}"
 
 
-def _known_rate(algorithm: str, random_data: str) -> float | None:
-    return _RATES.get(_rate_key(algorithm, random_data))
+def _load_rates() -> dict[str, float]:
+    global _RATES
+    if _RATES is None:
+        try:
+            _RATES = {k: float(v) for k, v in json.loads(_CACHE.read_text()).items()}
+        except Exception:
+            _RATES = {}
+    return _RATES
 
 
-def _remember_rate(algorithm: str, random_data: str, nonce: int, elapsed: float) -> float:
-    if elapsed > 0 and nonce >= 0:
-        rate = (nonce + 1) / elapsed
-        if rate > 0 and rate < 1e12:
-            _RATES[_rate_key(algorithm, random_data)] = rate
-            return rate
-    return 0.0
+def _known_rate(algorithm: str, size: int, kernel: str) -> tuple[float | None, str | None]:
+    """A measured rate for this shape: exact kernel first, then any kernel."""
+    rates = _load_rates()
+    exact = rates.get(_cache_key(algorithm, size, kernel))
+    if exact:
+        return exact, "measured"
+    for key, value in rates.items():
+        parts = key.split("|")
+        if len(parts) == 3 and parts[0] == algorithm and parts[1] == str(size) and value:
+            return value, "previous"
+    return None, None
+
+
+def _remember_rate(algorithm: str, size: int, kernel: str, nonce: int, elapsed: float) -> float:
+    if not (elapsed > 0 and nonce >= 0):
+        return 0.0
+    rate = (nonce + 1) / elapsed
+    if not (0 < rate < 1e12):
+        return 0.0
+    rates = _load_rates()
+    rates[_cache_key(algorithm, size, kernel)] = rate
+    try:
+        _CACHE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _CACHE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(rates, indent=1, sort_keys=True))
+        tmp.replace(_CACHE)
+    except Exception:
+        pass
+    return rate
 
 
 def solve_streaming(solver, payload: dict, emit) -> None:
@@ -144,7 +176,9 @@ def solve_streaming(solver, payload: dict, emit) -> None:
     algorithm = str(payload.get("algorithm", "sha256")).lower()
     difficulty = int(payload.get("difficulty", 0))
     random_data = str(payload.get("randomData", ""))
-    rate = _known_rate(algorithm, random_data)
+    size = max(0, len(random_data) // 2)
+    kernel_hint = _engine_hint(solver)
+    rate, rate_source = _known_rate(algorithm, size, kernel_hint)
     estimate_ms = ((2 ** difficulty) / rate * 1000.0) if rate else None
     result: dict = {}
     started = time.perf_counter()
@@ -166,7 +200,7 @@ def solve_streaming(solver, payload: dict, emit) -> None:
     # names the best backend this machine has and the progress frames replace
     # it with what is actually running.
     emit({"event": "start", "algorithm": algorithm, "difficulty": difficulty,
-          "kernel": _engine_hint(solver), "rate": rate,
+          "kernel": kernel_hint, "rate": rate, "rateSource": rate_source,
           "estimateMs": estimate_ms, "threads": solver.threads,
           "gpu": solver.gpu, "backends": solver.backends()})
     thread = threading.Thread(target=work, daemon=True)
@@ -183,7 +217,7 @@ def solve_streaming(solver, payload: dict, emit) -> None:
     thread.join()
     measured = 0.0
     if result.get("ok"):
-        measured = _remember_rate(algorithm, random_data,
+        measured = _remember_rate(algorithm, size, solver.active_kernel(),
                                   int(result.get("nonce") or 0),
                                   float(result.get("elapsedMs") or 0) / 1000.0)
     done = {"event": "done", "kernel": solver.active_kernel(),

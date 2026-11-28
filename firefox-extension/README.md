@@ -25,7 +25,10 @@ the rate with short searches measured 1.8-127 MH/s on an engine that actually
 runs at ~25-90 MH/s. The first solve of a given (algorithm, payload size) now
 reports **no percentage** and the bar pulses; the host then remembers the rate it
 really got (`nonces hashed / seconds`) and the next solve has a real estimate.
-The status also counts seconds, so it never looks frozen.
+That rate is cached in `~/.cache/anubis-solver/speeds.json`, keyed by algorithm,
+payload size and kernel, so it survives restarts and the next page load shows
+speed immediately. The status counts seconds either way, so it never looks
+frozen.
 
 The bar names the engine, not just the tier: the native host reports which
 backend actually ran (`vulkan`, `levelzero`, `cuda`, `opencl`, `avx512`, `avx2`,

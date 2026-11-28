@@ -70,24 +70,28 @@ K = [
 ST = ["z%d" % i for i in range(8)]           # a..h
 W = ["z%d" % i for i in range(8, 24)]        # 16 schedule words
 ACC, R1, R2, MISC = "z24", "z25", "z26", "z27"
-TMP = "z28"   # rotate scratch
+TMP = "z28"    # rotate scratch
+TMP2 = "z30"   # second rotate scratch (z29 = K, z31 = index)
 KV, IDX = "z29", "z31"
 
 P = ".s"          # element type
 PRED = "p0/m"
 
 
-def ror(dst, src, n):
+def ror(dst, src, n, scratch=None):
     """dst = ror(src, n) as (src >> n) | (src << (32-n)).
 
     SVE2 has no vector ROR and its SLI insert mask is easy to get wrong, so
     this spells the rotation out with three unambiguous shift/or instructions.
+    `scratch` must differ from dst: a caller that rotates into TMP passes TMP2.
     """
+    sc = scratch or TMP
+    assert sc != dst, "ror into its own scratch register"
     return [
         "    lsr     %s%s, %s%s, #%d" % (dst, P, src, P, n),
-        "    mov     %s%s, %s, %s%s" % (TMP, P, PRED, src, P),
-        "    lsl     %s%s, %s, %s%s, #%d" % (TMP, P, PRED, TMP, P, 32 - n),
-        "    orr     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, TMP, P),
+        "    mov     %s%s, %s, %s%s" % (sc, P, PRED, src, P),
+        "    lsl     %s%s, %s, %s%s, #%d" % (sc, P, PRED, sc, P, 32 - n),
+        "    orr     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, sc, P),
     ]
 
 
@@ -102,48 +106,48 @@ def eor3(dst, a, b):
             "    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, b, P)]
 
 
-def big_sigma1(dst, x):
-    """Sigma1(x) = ror6 ^ ror11 ^ ror25."""
-    out = ["    // Sigma1(%s)" % x]
-    out += ror(dst, x, 6)
-    out += ror(R1, x, 11)
-    out += ror(R2, x, 25)
-    out += ["    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, R1, P),
-            "    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, R2, P)]
+def sigma(dst, x, r1, r2, r3, terms, scratch, lsr_bits=None, note=""):
+    """dst = ror(x,r1) ^ ror(x,r2) ^ (ror(x,r3) or x >> lsr_bits).
+
+    Five registers must be pairwise distinct: dst, the three terms and the
+    rotate scratch. Getting that wrong twice is what made Sigma0 come out as
+    a single rotate or as zero -- the vector rotate has to go through a
+    scratch register, so every term needs a register of its own.
+    """
+    t1, t2, t3 = terms
+    regs = [dst, t1, t2, t3, scratch]
+    assert len(set(regs)) == 5, "sigma register collision: %s" % regs
+    out = ["    // %s(%s)" % (note, x)]
+    out += ror(t1, x, r1, scratch=scratch)
+    out += ror(t2, x, r2, scratch=scratch)
+    if r3 is not None:
+        out += ror(t3, x, r3, scratch=scratch)
+    else:
+        out += ["    lsr     %s%s, %s%s, #%d" % (t3, P, x, P, lsr_bits)]
+    out += [
+        "    mov     %s%s, %s, %s%s" % (dst, P, PRED, t1, P),
+        "    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, t2, P),
+        "    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, t3, P),
+    ]
     return out
+
+
+def big_sigma1(dst, x):
+    # dst, TMP, TMP2, R2 + R1 scratch (Ch has not run yet; R1 is free)
+    return sigma(dst, x, 6, 11, 25, (TMP, TMP2, R2), R1, note="Sigma1")
 
 
 def big_sigma0(dst, x):
-    """Sigma0(x) = ror2 ^ ror13 ^ ror22."""
-    out = ["    // Sigma0(%s)" % x]
-    out += ror(dst, x, 2)
-    out += ror(R1, x, 13)
-    out += ror(R2, x, 22)
-    out += ["    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, R1, P),
-            "    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, R2, P)]
-    return out
+    # dst=R2, terms TMP/TMP2/R1, MISC as scratch (Ch result already in T1)
+    return sigma(dst, x, 2, 13, 22, (TMP, TMP2, R1), MISC, note="Sigma0")
 
 
 def small_sigma0(dst, x):
-    """sigma0(x) = ror7 ^ ror18 ^ (x >> 3)."""
-    out = ["    // sigma0(%s)" % x]
-    out += ror(dst, x, 7)
-    out += ror(R1, x, 18)
-    out += ["    lsr     %s%s, %s%s, #3" % (R2, P, x, P)]
-    out += ["    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, R1, P),
-            "    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, R2, P)]
-    return out
+    return sigma(dst, x, 7, 18, None, (TMP, TMP2, R2), R1, lsr_bits=3, note="sigma0")
 
 
 def small_sigma1(dst, x):
-    """sigma1(x) = ror17 ^ ror19 ^ (x >> 10)."""
-    out = ["    // sigma1(%s)" % x]
-    out += ror(dst, x, 17)
-    out += ror(R1, x, 19)
-    out += ["    lsr     %s%s, %s%s, #10" % (R2, P, x, P)]
-    out += ["    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, R1, P),
-            "    eor     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, R2, P)]
-    return out
+    return sigma(dst, x, 17, 19, None, (TMP, TMP2, R2), R1, lsr_bits=10, note="sigma1")
 
 
 def ch(dst, e, f, g):
@@ -192,12 +196,12 @@ def round_step(t, a, b, c, d, e, f, g, h):
     out += ["    add     %s%s, %s, %s%s, %s%s" % (ACC, P, PRED, ACC, P, h, P)]
     out += ["    add     %s%s, %s, %s%s, %s%s" % (ACC, P, PRED, ACC, P, KV, P)]
     out += ["    add     %s%s, %s, %s%s, %s%s" % (ACC, P, PRED, ACC, P, W[t % 16], P)]
-    out += big_sigma0(R1, a)
-    out += maj(R2, MISC, a, b, c)
-    out += ["    add     %s%s, %s, %s%s, %s%s" % (R1, P, PRED, R1, P, R2, P)]
+    out += big_sigma0(R2, a)
+    out += maj(R1, MISC, a, b, c)
+    out += ["    add     %s%s, %s, %s%s, %s%s" % (R2, P, PRED, R2, P, R1, P)]
     out += ["    // d += T1 ; the register that held h becomes the new a"]
     out += ["    add     %s%s, %s, %s%s, %s%s" % (d, P, PRED, d, P, ACC, P)]
-    out += ["    add     %s%s, %s%s, %s%s" % (h, P, ACC, P, R1, P)]
+    out += ["    add     %s%s, %s%s, %s%s" % (h, P, ACC, P, R2, P)]
     return out
 
 

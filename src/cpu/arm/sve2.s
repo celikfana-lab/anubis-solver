@@ -137,19 +137,20 @@ sha256_compress_sve2:
     // round 0: z0..z7
     ld1rw   {z29.s}, p0/z, [x3, #0]
     // Sigma1(z4)
-    lsr     z24.s, z4.s, #6
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z4.s, #11
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z4.s, #6
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z4.s, #11
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z4.s, #25
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z4,z5,z6)
     mov     z27.s, p0/m, z5.s
@@ -161,48 +162,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z8.s
     // Sigma0(z0)
-    lsr     z25.s, z0.s, #2
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z0.s, #13
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z0.s, #22
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z0.s, #2
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z0.s, #13
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z0.s, #22
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z0,z1,z2)
-    mov     z26.s, p0/m, z0.s
-    and     z26.s, p0/m, z26.s, z1.s
+    mov     z25.s, p0/m, z0.s
+    and     z25.s, p0/m, z25.s, z1.s
     mov     z27.s, p0/m, z0.s
     eor     z27.s, p0/m, z27.s, z1.s
     and     z27.s, p0/m, z27.s, z2.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z3.s, p0/m, z3.s, z24.s
-    add     z7.s, z24.s, z25.s
+    add     z7.s, z24.s, z26.s
 
     // round 1: z7..z6
     ld1rw   {z29.s}, p0/z, [x3, #4]
     // Sigma1(z3)
-    lsr     z24.s, z3.s, #6
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z3.s, #11
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z3.s, #6
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z3.s, #11
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z3.s, #25
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z3,z4,z5)
     mov     z27.s, p0/m, z4.s
@@ -214,48 +217,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z9.s
     // Sigma0(z7)
-    lsr     z25.s, z7.s, #2
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z7.s, #13
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z7.s, #22
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z7.s, #2
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z7.s, #13
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z7.s, #22
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z7,z0,z1)
-    mov     z26.s, p0/m, z7.s
-    and     z26.s, p0/m, z26.s, z0.s
+    mov     z25.s, p0/m, z7.s
+    and     z25.s, p0/m, z25.s, z0.s
     mov     z27.s, p0/m, z7.s
     eor     z27.s, p0/m, z27.s, z0.s
     and     z27.s, p0/m, z27.s, z1.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z2.s, p0/m, z2.s, z24.s
-    add     z6.s, z24.s, z25.s
+    add     z6.s, z24.s, z26.s
 
     // round 2: z6..z5
     ld1rw   {z29.s}, p0/z, [x3, #8]
     // Sigma1(z2)
-    lsr     z24.s, z2.s, #6
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z2.s, #11
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z2.s, #6
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z2.s, #11
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z2.s, #25
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z2,z3,z4)
     mov     z27.s, p0/m, z3.s
@@ -267,48 +272,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z10.s
     // Sigma0(z6)
-    lsr     z25.s, z6.s, #2
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z6.s, #13
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z6.s, #22
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z6.s, #2
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z6.s, #13
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z6.s, #22
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z6,z7,z0)
-    mov     z26.s, p0/m, z6.s
-    and     z26.s, p0/m, z26.s, z7.s
+    mov     z25.s, p0/m, z6.s
+    and     z25.s, p0/m, z25.s, z7.s
     mov     z27.s, p0/m, z6.s
     eor     z27.s, p0/m, z27.s, z7.s
     and     z27.s, p0/m, z27.s, z0.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z1.s, p0/m, z1.s, z24.s
-    add     z5.s, z24.s, z25.s
+    add     z5.s, z24.s, z26.s
 
     // round 3: z5..z4
     ld1rw   {z29.s}, p0/z, [x3, #12]
     // Sigma1(z1)
-    lsr     z24.s, z1.s, #6
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z1.s, #11
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z1.s, #6
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z1.s, #11
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z1.s, #25
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z1,z2,z3)
     mov     z27.s, p0/m, z2.s
@@ -320,48 +327,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z11.s
     // Sigma0(z5)
-    lsr     z25.s, z5.s, #2
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z5.s, #13
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z5.s, #22
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z5.s, #2
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z5.s, #13
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z5.s, #22
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z5,z6,z7)
-    mov     z26.s, p0/m, z5.s
-    and     z26.s, p0/m, z26.s, z6.s
+    mov     z25.s, p0/m, z5.s
+    and     z25.s, p0/m, z25.s, z6.s
     mov     z27.s, p0/m, z5.s
     eor     z27.s, p0/m, z27.s, z6.s
     and     z27.s, p0/m, z27.s, z7.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z0.s, p0/m, z0.s, z24.s
-    add     z4.s, z24.s, z25.s
+    add     z4.s, z24.s, z26.s
 
     // round 4: z4..z3
     ld1rw   {z29.s}, p0/z, [x3, #16]
     // Sigma1(z0)
-    lsr     z24.s, z0.s, #6
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z0.s, #11
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z0.s, #6
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z0.s, #11
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z0.s, #25
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z0,z1,z2)
     mov     z27.s, p0/m, z1.s
@@ -373,48 +382,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z12.s
     // Sigma0(z4)
-    lsr     z25.s, z4.s, #2
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z4.s, #13
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z4.s, #22
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z4.s, #2
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z4.s, #13
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z4.s, #22
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z4,z5,z6)
-    mov     z26.s, p0/m, z4.s
-    and     z26.s, p0/m, z26.s, z5.s
+    mov     z25.s, p0/m, z4.s
+    and     z25.s, p0/m, z25.s, z5.s
     mov     z27.s, p0/m, z4.s
     eor     z27.s, p0/m, z27.s, z5.s
     and     z27.s, p0/m, z27.s, z6.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z7.s, p0/m, z7.s, z24.s
-    add     z3.s, z24.s, z25.s
+    add     z3.s, z24.s, z26.s
 
     // round 5: z3..z2
     ld1rw   {z29.s}, p0/z, [x3, #20]
     // Sigma1(z7)
-    lsr     z24.s, z7.s, #6
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z7.s, #11
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z7.s, #6
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z7.s, #11
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z7.s, #25
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z7,z0,z1)
     mov     z27.s, p0/m, z0.s
@@ -426,48 +437,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z13.s
     // Sigma0(z3)
-    lsr     z25.s, z3.s, #2
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z3.s, #13
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z3.s, #22
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z3.s, #2
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z3.s, #13
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z3.s, #22
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z3,z4,z5)
-    mov     z26.s, p0/m, z3.s
-    and     z26.s, p0/m, z26.s, z4.s
+    mov     z25.s, p0/m, z3.s
+    and     z25.s, p0/m, z25.s, z4.s
     mov     z27.s, p0/m, z3.s
     eor     z27.s, p0/m, z27.s, z4.s
     and     z27.s, p0/m, z27.s, z5.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z6.s, p0/m, z6.s, z24.s
-    add     z2.s, z24.s, z25.s
+    add     z2.s, z24.s, z26.s
 
     // round 6: z2..z1
     ld1rw   {z29.s}, p0/z, [x3, #24]
     // Sigma1(z6)
-    lsr     z24.s, z6.s, #6
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z6.s, #11
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z6.s, #6
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z6.s, #11
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z6.s, #25
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z6,z7,z0)
     mov     z27.s, p0/m, z7.s
@@ -479,48 +492,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z14.s
     // Sigma0(z2)
-    lsr     z25.s, z2.s, #2
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z2.s, #13
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z2.s, #22
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z2.s, #2
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z2.s, #13
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z2.s, #22
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z2,z3,z4)
-    mov     z26.s, p0/m, z2.s
-    and     z26.s, p0/m, z26.s, z3.s
+    mov     z25.s, p0/m, z2.s
+    and     z25.s, p0/m, z25.s, z3.s
     mov     z27.s, p0/m, z2.s
     eor     z27.s, p0/m, z27.s, z3.s
     and     z27.s, p0/m, z27.s, z4.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z5.s, p0/m, z5.s, z24.s
-    add     z1.s, z24.s, z25.s
+    add     z1.s, z24.s, z26.s
 
     // round 7: z1..z0
     ld1rw   {z29.s}, p0/z, [x3, #28]
     // Sigma1(z5)
-    lsr     z24.s, z5.s, #6
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z5.s, #11
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z5.s, #6
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z5.s, #11
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z5.s, #25
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z5,z6,z7)
     mov     z27.s, p0/m, z6.s
@@ -532,48 +547,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z15.s
     // Sigma0(z1)
-    lsr     z25.s, z1.s, #2
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z1.s, #13
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z1.s, #22
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z1.s, #2
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z1.s, #13
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z1.s, #22
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z1,z2,z3)
-    mov     z26.s, p0/m, z1.s
-    and     z26.s, p0/m, z26.s, z2.s
+    mov     z25.s, p0/m, z1.s
+    and     z25.s, p0/m, z25.s, z2.s
     mov     z27.s, p0/m, z1.s
     eor     z27.s, p0/m, z27.s, z2.s
     and     z27.s, p0/m, z27.s, z3.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z4.s, p0/m, z4.s, z24.s
-    add     z0.s, z24.s, z25.s
+    add     z0.s, z24.s, z26.s
 
     // round 8: z0..z7
     ld1rw   {z29.s}, p0/z, [x3, #32]
     // Sigma1(z4)
-    lsr     z24.s, z4.s, #6
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z4.s, #11
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z4.s, #6
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z4.s, #11
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z4.s, #25
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z4,z5,z6)
     mov     z27.s, p0/m, z5.s
@@ -585,48 +602,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z16.s
     // Sigma0(z0)
-    lsr     z25.s, z0.s, #2
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z0.s, #13
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z0.s, #22
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z0.s, #2
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z0.s, #13
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z0.s, #22
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z0,z1,z2)
-    mov     z26.s, p0/m, z0.s
-    and     z26.s, p0/m, z26.s, z1.s
+    mov     z25.s, p0/m, z0.s
+    and     z25.s, p0/m, z25.s, z1.s
     mov     z27.s, p0/m, z0.s
     eor     z27.s, p0/m, z27.s, z1.s
     and     z27.s, p0/m, z27.s, z2.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z3.s, p0/m, z3.s, z24.s
-    add     z7.s, z24.s, z25.s
+    add     z7.s, z24.s, z26.s
 
     // round 9: z7..z6
     ld1rw   {z29.s}, p0/z, [x3, #36]
     // Sigma1(z3)
-    lsr     z24.s, z3.s, #6
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z3.s, #11
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z3.s, #6
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z3.s, #11
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z3.s, #25
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z3,z4,z5)
     mov     z27.s, p0/m, z4.s
@@ -638,48 +657,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z17.s
     // Sigma0(z7)
-    lsr     z25.s, z7.s, #2
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z7.s, #13
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z7.s, #22
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z7.s, #2
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z7.s, #13
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z7.s, #22
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z7,z0,z1)
-    mov     z26.s, p0/m, z7.s
-    and     z26.s, p0/m, z26.s, z0.s
+    mov     z25.s, p0/m, z7.s
+    and     z25.s, p0/m, z25.s, z0.s
     mov     z27.s, p0/m, z7.s
     eor     z27.s, p0/m, z27.s, z0.s
     and     z27.s, p0/m, z27.s, z1.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z2.s, p0/m, z2.s, z24.s
-    add     z6.s, z24.s, z25.s
+    add     z6.s, z24.s, z26.s
 
     // round 10: z6..z5
     ld1rw   {z29.s}, p0/z, [x3, #40]
     // Sigma1(z2)
-    lsr     z24.s, z2.s, #6
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z2.s, #11
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z2.s, #6
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z2.s, #11
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z2.s, #25
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z2,z3,z4)
     mov     z27.s, p0/m, z3.s
@@ -691,48 +712,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z18.s
     // Sigma0(z6)
-    lsr     z25.s, z6.s, #2
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z6.s, #13
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z6.s, #22
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z6.s, #2
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z6.s, #13
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z6.s, #22
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z6,z7,z0)
-    mov     z26.s, p0/m, z6.s
-    and     z26.s, p0/m, z26.s, z7.s
+    mov     z25.s, p0/m, z6.s
+    and     z25.s, p0/m, z25.s, z7.s
     mov     z27.s, p0/m, z6.s
     eor     z27.s, p0/m, z27.s, z7.s
     and     z27.s, p0/m, z27.s, z0.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z1.s, p0/m, z1.s, z24.s
-    add     z5.s, z24.s, z25.s
+    add     z5.s, z24.s, z26.s
 
     // round 11: z5..z4
     ld1rw   {z29.s}, p0/z, [x3, #44]
     // Sigma1(z1)
-    lsr     z24.s, z1.s, #6
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z1.s, #11
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z1.s, #6
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z1.s, #11
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z1.s, #25
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z1,z2,z3)
     mov     z27.s, p0/m, z2.s
@@ -744,48 +767,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z19.s
     // Sigma0(z5)
-    lsr     z25.s, z5.s, #2
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z5.s, #13
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z5.s, #22
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z5.s, #2
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z5.s, #13
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z5.s, #22
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z5,z6,z7)
-    mov     z26.s, p0/m, z5.s
-    and     z26.s, p0/m, z26.s, z6.s
+    mov     z25.s, p0/m, z5.s
+    and     z25.s, p0/m, z25.s, z6.s
     mov     z27.s, p0/m, z5.s
     eor     z27.s, p0/m, z27.s, z6.s
     and     z27.s, p0/m, z27.s, z7.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z0.s, p0/m, z0.s, z24.s
-    add     z4.s, z24.s, z25.s
+    add     z4.s, z24.s, z26.s
 
     // round 12: z4..z3
     ld1rw   {z29.s}, p0/z, [x3, #48]
     // Sigma1(z0)
-    lsr     z24.s, z0.s, #6
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z0.s, #11
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z0.s, #6
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z0.s, #11
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z0.s, #25
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z0,z1,z2)
     mov     z27.s, p0/m, z1.s
@@ -797,48 +822,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z20.s
     // Sigma0(z4)
-    lsr     z25.s, z4.s, #2
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z4.s, #13
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z4.s, #22
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z4.s, #2
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z4.s, #13
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z4.s, #22
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z4,z5,z6)
-    mov     z26.s, p0/m, z4.s
-    and     z26.s, p0/m, z26.s, z5.s
+    mov     z25.s, p0/m, z4.s
+    and     z25.s, p0/m, z25.s, z5.s
     mov     z27.s, p0/m, z4.s
     eor     z27.s, p0/m, z27.s, z5.s
     and     z27.s, p0/m, z27.s, z6.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z7.s, p0/m, z7.s, z24.s
-    add     z3.s, z24.s, z25.s
+    add     z3.s, z24.s, z26.s
 
     // round 13: z3..z2
     ld1rw   {z29.s}, p0/z, [x3, #52]
     // Sigma1(z7)
-    lsr     z24.s, z7.s, #6
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z7.s, #11
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z7.s, #6
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z7.s, #11
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z7.s, #25
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z7,z0,z1)
     mov     z27.s, p0/m, z0.s
@@ -850,48 +877,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z21.s
     // Sigma0(z3)
-    lsr     z25.s, z3.s, #2
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z3.s, #13
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z3.s, #22
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z3.s, #2
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z3.s, #13
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z3.s, #22
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z3,z4,z5)
-    mov     z26.s, p0/m, z3.s
-    and     z26.s, p0/m, z26.s, z4.s
+    mov     z25.s, p0/m, z3.s
+    and     z25.s, p0/m, z25.s, z4.s
     mov     z27.s, p0/m, z3.s
     eor     z27.s, p0/m, z27.s, z4.s
     and     z27.s, p0/m, z27.s, z5.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z6.s, p0/m, z6.s, z24.s
-    add     z2.s, z24.s, z25.s
+    add     z2.s, z24.s, z26.s
 
     // round 14: z2..z1
     ld1rw   {z29.s}, p0/z, [x3, #56]
     // Sigma1(z6)
-    lsr     z24.s, z6.s, #6
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z6.s, #11
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z6.s, #6
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z6.s, #11
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z6.s, #25
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z6,z7,z0)
     mov     z27.s, p0/m, z7.s
@@ -903,48 +932,50 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z22.s
     // Sigma0(z2)
-    lsr     z25.s, z2.s, #2
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z2.s, #13
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z2.s, #22
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z2.s, #2
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z2.s, #13
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z2.s, #22
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z2,z3,z4)
-    mov     z26.s, p0/m, z2.s
-    and     z26.s, p0/m, z26.s, z3.s
+    mov     z25.s, p0/m, z2.s
+    and     z25.s, p0/m, z25.s, z3.s
     mov     z27.s, p0/m, z2.s
     eor     z27.s, p0/m, z27.s, z3.s
     and     z27.s, p0/m, z27.s, z4.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z5.s, p0/m, z5.s, z24.s
-    add     z1.s, z24.s, z25.s
+    add     z1.s, z24.s, z26.s
 
     // round 15: z1..z0
     ld1rw   {z29.s}, p0/z, [x3, #60]
     // Sigma1(z5)
-    lsr     z24.s, z5.s, #6
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z5.s, #11
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z5.s, #6
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z5.s, #11
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z5.s, #25
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z5,z6,z7)
     mov     z27.s, p0/m, z6.s
@@ -956,56 +987,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z23.s
     // Sigma0(z1)
-    lsr     z25.s, z1.s, #2
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z1.s, #13
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z1.s, #22
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z1.s, #2
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z1.s, #13
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z1.s, #22
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z1,z2,z3)
-    mov     z26.s, p0/m, z1.s
-    and     z26.s, p0/m, z26.s, z2.s
+    mov     z25.s, p0/m, z1.s
+    and     z25.s, p0/m, z25.s, z2.s
     mov     z27.s, p0/m, z1.s
     eor     z27.s, p0/m, z27.s, z2.s
     and     z27.s, p0/m, z27.s, z3.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z4.s, p0/m, z4.s, z24.s
-    add     z0.s, z24.s, z25.s
+    add     z0.s, z24.s, z26.s
 
     // W[16]
     // sigma0(z9)
-    lsr     z24.s, z9.s, #7
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z9.s, #18
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z9.s, #7
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z9.s, #18
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z9.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z22)
-    lsr     z27.s, z22.s, #17
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z22.s, #19
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z22.s, #17
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z22.s, #19
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z22.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z8.s, p0/m, z8.s, z24.s
     add     z8.s, p0/m, z8.s, z27.s
@@ -1014,19 +1048,20 @@ sha256_compress_sve2:
     // round 16: z0..z7
     ld1rw   {z29.s}, p0/z, [x3, #64]
     // Sigma1(z4)
-    lsr     z24.s, z4.s, #6
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z4.s, #11
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z4.s, #6
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z4.s, #11
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z4.s, #25
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z4,z5,z6)
     mov     z27.s, p0/m, z5.s
@@ -1038,56 +1073,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z8.s
     // Sigma0(z0)
-    lsr     z25.s, z0.s, #2
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z0.s, #13
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z0.s, #22
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z0.s, #2
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z0.s, #13
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z0.s, #22
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z0,z1,z2)
-    mov     z26.s, p0/m, z0.s
-    and     z26.s, p0/m, z26.s, z1.s
+    mov     z25.s, p0/m, z0.s
+    and     z25.s, p0/m, z25.s, z1.s
     mov     z27.s, p0/m, z0.s
     eor     z27.s, p0/m, z27.s, z1.s
     and     z27.s, p0/m, z27.s, z2.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z3.s, p0/m, z3.s, z24.s
-    add     z7.s, z24.s, z25.s
+    add     z7.s, z24.s, z26.s
 
     // W[17]
     // sigma0(z10)
-    lsr     z24.s, z10.s, #7
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z10.s, #18
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z10.s, #7
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z10.s, #18
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z10.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z23)
-    lsr     z27.s, z23.s, #17
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z23.s, #19
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z23.s, #17
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z23.s, #19
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z23.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z9.s, p0/m, z9.s, z24.s
     add     z9.s, p0/m, z9.s, z27.s
@@ -1096,19 +1134,20 @@ sha256_compress_sve2:
     // round 17: z7..z6
     ld1rw   {z29.s}, p0/z, [x3, #68]
     // Sigma1(z3)
-    lsr     z24.s, z3.s, #6
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z3.s, #11
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z3.s, #6
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z3.s, #11
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z3.s, #25
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z3,z4,z5)
     mov     z27.s, p0/m, z4.s
@@ -1120,56 +1159,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z9.s
     // Sigma0(z7)
-    lsr     z25.s, z7.s, #2
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z7.s, #13
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z7.s, #22
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z7.s, #2
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z7.s, #13
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z7.s, #22
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z7,z0,z1)
-    mov     z26.s, p0/m, z7.s
-    and     z26.s, p0/m, z26.s, z0.s
+    mov     z25.s, p0/m, z7.s
+    and     z25.s, p0/m, z25.s, z0.s
     mov     z27.s, p0/m, z7.s
     eor     z27.s, p0/m, z27.s, z0.s
     and     z27.s, p0/m, z27.s, z1.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z2.s, p0/m, z2.s, z24.s
-    add     z6.s, z24.s, z25.s
+    add     z6.s, z24.s, z26.s
 
     // W[18]
     // sigma0(z11)
-    lsr     z24.s, z11.s, #7
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z11.s, #18
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z11.s, #7
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z11.s, #18
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z11.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z8)
-    lsr     z27.s, z8.s, #17
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z8.s, #19
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z8.s, #17
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z8.s, #19
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z8.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z10.s, p0/m, z10.s, z24.s
     add     z10.s, p0/m, z10.s, z27.s
@@ -1178,19 +1220,20 @@ sha256_compress_sve2:
     // round 18: z6..z5
     ld1rw   {z29.s}, p0/z, [x3, #72]
     // Sigma1(z2)
-    lsr     z24.s, z2.s, #6
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z2.s, #11
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z2.s, #6
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z2.s, #11
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z2.s, #25
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z2,z3,z4)
     mov     z27.s, p0/m, z3.s
@@ -1202,56 +1245,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z10.s
     // Sigma0(z6)
-    lsr     z25.s, z6.s, #2
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z6.s, #13
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z6.s, #22
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z6.s, #2
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z6.s, #13
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z6.s, #22
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z6,z7,z0)
-    mov     z26.s, p0/m, z6.s
-    and     z26.s, p0/m, z26.s, z7.s
+    mov     z25.s, p0/m, z6.s
+    and     z25.s, p0/m, z25.s, z7.s
     mov     z27.s, p0/m, z6.s
     eor     z27.s, p0/m, z27.s, z7.s
     and     z27.s, p0/m, z27.s, z0.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z1.s, p0/m, z1.s, z24.s
-    add     z5.s, z24.s, z25.s
+    add     z5.s, z24.s, z26.s
 
     // W[19]
     // sigma0(z12)
-    lsr     z24.s, z12.s, #7
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z12.s, #18
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z12.s, #7
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z12.s, #18
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z12.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z9)
-    lsr     z27.s, z9.s, #17
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z9.s, #19
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z9.s, #17
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z9.s, #19
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z9.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z11.s, p0/m, z11.s, z24.s
     add     z11.s, p0/m, z11.s, z27.s
@@ -1260,19 +1306,20 @@ sha256_compress_sve2:
     // round 19: z5..z4
     ld1rw   {z29.s}, p0/z, [x3, #76]
     // Sigma1(z1)
-    lsr     z24.s, z1.s, #6
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z1.s, #11
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z1.s, #6
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z1.s, #11
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z1.s, #25
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z1,z2,z3)
     mov     z27.s, p0/m, z2.s
@@ -1284,56 +1331,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z11.s
     // Sigma0(z5)
-    lsr     z25.s, z5.s, #2
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z5.s, #13
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z5.s, #22
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z5.s, #2
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z5.s, #13
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z5.s, #22
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z5,z6,z7)
-    mov     z26.s, p0/m, z5.s
-    and     z26.s, p0/m, z26.s, z6.s
+    mov     z25.s, p0/m, z5.s
+    and     z25.s, p0/m, z25.s, z6.s
     mov     z27.s, p0/m, z5.s
     eor     z27.s, p0/m, z27.s, z6.s
     and     z27.s, p0/m, z27.s, z7.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z0.s, p0/m, z0.s, z24.s
-    add     z4.s, z24.s, z25.s
+    add     z4.s, z24.s, z26.s
 
     // W[20]
     // sigma0(z13)
-    lsr     z24.s, z13.s, #7
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z13.s, #18
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z13.s, #7
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z13.s, #18
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z13.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z10)
-    lsr     z27.s, z10.s, #17
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z10.s, #19
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z10.s, #17
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z10.s, #19
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z10.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z12.s, p0/m, z12.s, z24.s
     add     z12.s, p0/m, z12.s, z27.s
@@ -1342,19 +1392,20 @@ sha256_compress_sve2:
     // round 20: z4..z3
     ld1rw   {z29.s}, p0/z, [x3, #80]
     // Sigma1(z0)
-    lsr     z24.s, z0.s, #6
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z0.s, #11
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z0.s, #6
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z0.s, #11
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z0.s, #25
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z0,z1,z2)
     mov     z27.s, p0/m, z1.s
@@ -1366,56 +1417,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z12.s
     // Sigma0(z4)
-    lsr     z25.s, z4.s, #2
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z4.s, #13
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z4.s, #22
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z4.s, #2
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z4.s, #13
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z4.s, #22
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z4,z5,z6)
-    mov     z26.s, p0/m, z4.s
-    and     z26.s, p0/m, z26.s, z5.s
+    mov     z25.s, p0/m, z4.s
+    and     z25.s, p0/m, z25.s, z5.s
     mov     z27.s, p0/m, z4.s
     eor     z27.s, p0/m, z27.s, z5.s
     and     z27.s, p0/m, z27.s, z6.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z7.s, p0/m, z7.s, z24.s
-    add     z3.s, z24.s, z25.s
+    add     z3.s, z24.s, z26.s
 
     // W[21]
     // sigma0(z14)
-    lsr     z24.s, z14.s, #7
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z14.s, #18
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z14.s, #7
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z14.s, #18
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z14.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z11)
-    lsr     z27.s, z11.s, #17
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z11.s, #19
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z11.s, #17
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z11.s, #19
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z11.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z13.s, p0/m, z13.s, z24.s
     add     z13.s, p0/m, z13.s, z27.s
@@ -1424,19 +1478,20 @@ sha256_compress_sve2:
     // round 21: z3..z2
     ld1rw   {z29.s}, p0/z, [x3, #84]
     // Sigma1(z7)
-    lsr     z24.s, z7.s, #6
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z7.s, #11
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z7.s, #6
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z7.s, #11
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z7.s, #25
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z7,z0,z1)
     mov     z27.s, p0/m, z0.s
@@ -1448,56 +1503,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z13.s
     // Sigma0(z3)
-    lsr     z25.s, z3.s, #2
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z3.s, #13
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z3.s, #22
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z3.s, #2
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z3.s, #13
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z3.s, #22
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z3,z4,z5)
-    mov     z26.s, p0/m, z3.s
-    and     z26.s, p0/m, z26.s, z4.s
+    mov     z25.s, p0/m, z3.s
+    and     z25.s, p0/m, z25.s, z4.s
     mov     z27.s, p0/m, z3.s
     eor     z27.s, p0/m, z27.s, z4.s
     and     z27.s, p0/m, z27.s, z5.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z6.s, p0/m, z6.s, z24.s
-    add     z2.s, z24.s, z25.s
+    add     z2.s, z24.s, z26.s
 
     // W[22]
     // sigma0(z15)
-    lsr     z24.s, z15.s, #7
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z15.s, #18
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z15.s, #7
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z15.s, #18
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z15.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z12)
-    lsr     z27.s, z12.s, #17
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z12.s, #19
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z12.s, #17
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z12.s, #19
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z12.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z14.s, p0/m, z14.s, z24.s
     add     z14.s, p0/m, z14.s, z27.s
@@ -1506,19 +1564,20 @@ sha256_compress_sve2:
     // round 22: z2..z1
     ld1rw   {z29.s}, p0/z, [x3, #88]
     // Sigma1(z6)
-    lsr     z24.s, z6.s, #6
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z6.s, #11
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z6.s, #6
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z6.s, #11
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z6.s, #25
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z6,z7,z0)
     mov     z27.s, p0/m, z7.s
@@ -1530,56 +1589,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z14.s
     // Sigma0(z2)
-    lsr     z25.s, z2.s, #2
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z2.s, #13
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z2.s, #22
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z2.s, #2
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z2.s, #13
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z2.s, #22
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z2,z3,z4)
-    mov     z26.s, p0/m, z2.s
-    and     z26.s, p0/m, z26.s, z3.s
+    mov     z25.s, p0/m, z2.s
+    and     z25.s, p0/m, z25.s, z3.s
     mov     z27.s, p0/m, z2.s
     eor     z27.s, p0/m, z27.s, z3.s
     and     z27.s, p0/m, z27.s, z4.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z5.s, p0/m, z5.s, z24.s
-    add     z1.s, z24.s, z25.s
+    add     z1.s, z24.s, z26.s
 
     // W[23]
     // sigma0(z16)
-    lsr     z24.s, z16.s, #7
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z16.s, #18
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z16.s, #7
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z16.s, #18
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z16.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z13)
-    lsr     z27.s, z13.s, #17
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z13.s, #19
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z13.s, #17
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z13.s, #19
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z13.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z15.s, p0/m, z15.s, z24.s
     add     z15.s, p0/m, z15.s, z27.s
@@ -1588,19 +1650,20 @@ sha256_compress_sve2:
     // round 23: z1..z0
     ld1rw   {z29.s}, p0/z, [x3, #92]
     // Sigma1(z5)
-    lsr     z24.s, z5.s, #6
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z5.s, #11
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z5.s, #6
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z5.s, #11
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z5.s, #25
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z5,z6,z7)
     mov     z27.s, p0/m, z6.s
@@ -1612,56 +1675,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z15.s
     // Sigma0(z1)
-    lsr     z25.s, z1.s, #2
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z1.s, #13
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z1.s, #22
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z1.s, #2
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z1.s, #13
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z1.s, #22
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z1,z2,z3)
-    mov     z26.s, p0/m, z1.s
-    and     z26.s, p0/m, z26.s, z2.s
+    mov     z25.s, p0/m, z1.s
+    and     z25.s, p0/m, z25.s, z2.s
     mov     z27.s, p0/m, z1.s
     eor     z27.s, p0/m, z27.s, z2.s
     and     z27.s, p0/m, z27.s, z3.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z4.s, p0/m, z4.s, z24.s
-    add     z0.s, z24.s, z25.s
+    add     z0.s, z24.s, z26.s
 
     // W[24]
     // sigma0(z17)
-    lsr     z24.s, z17.s, #7
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z17.s, #18
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z17.s, #7
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z17.s, #18
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z17.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z14)
-    lsr     z27.s, z14.s, #17
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z14.s, #19
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z14.s, #17
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z14.s, #19
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z14.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z16.s, p0/m, z16.s, z24.s
     add     z16.s, p0/m, z16.s, z27.s
@@ -1670,19 +1736,20 @@ sha256_compress_sve2:
     // round 24: z0..z7
     ld1rw   {z29.s}, p0/z, [x3, #96]
     // Sigma1(z4)
-    lsr     z24.s, z4.s, #6
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z4.s, #11
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z4.s, #6
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z4.s, #11
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z4.s, #25
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z4,z5,z6)
     mov     z27.s, p0/m, z5.s
@@ -1694,56 +1761,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z16.s
     // Sigma0(z0)
-    lsr     z25.s, z0.s, #2
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z0.s, #13
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z0.s, #22
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z0.s, #2
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z0.s, #13
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z0.s, #22
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z0,z1,z2)
-    mov     z26.s, p0/m, z0.s
-    and     z26.s, p0/m, z26.s, z1.s
+    mov     z25.s, p0/m, z0.s
+    and     z25.s, p0/m, z25.s, z1.s
     mov     z27.s, p0/m, z0.s
     eor     z27.s, p0/m, z27.s, z1.s
     and     z27.s, p0/m, z27.s, z2.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z3.s, p0/m, z3.s, z24.s
-    add     z7.s, z24.s, z25.s
+    add     z7.s, z24.s, z26.s
 
     // W[25]
     // sigma0(z18)
-    lsr     z24.s, z18.s, #7
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z18.s, #18
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z18.s, #7
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z18.s, #18
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z18.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z15)
-    lsr     z27.s, z15.s, #17
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z15.s, #19
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z15.s, #17
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z15.s, #19
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z15.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z17.s, p0/m, z17.s, z24.s
     add     z17.s, p0/m, z17.s, z27.s
@@ -1752,19 +1822,20 @@ sha256_compress_sve2:
     // round 25: z7..z6
     ld1rw   {z29.s}, p0/z, [x3, #100]
     // Sigma1(z3)
-    lsr     z24.s, z3.s, #6
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z3.s, #11
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z3.s, #6
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z3.s, #11
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z3.s, #25
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z3,z4,z5)
     mov     z27.s, p0/m, z4.s
@@ -1776,56 +1847,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z17.s
     // Sigma0(z7)
-    lsr     z25.s, z7.s, #2
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z7.s, #13
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z7.s, #22
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z7.s, #2
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z7.s, #13
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z7.s, #22
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z7,z0,z1)
-    mov     z26.s, p0/m, z7.s
-    and     z26.s, p0/m, z26.s, z0.s
+    mov     z25.s, p0/m, z7.s
+    and     z25.s, p0/m, z25.s, z0.s
     mov     z27.s, p0/m, z7.s
     eor     z27.s, p0/m, z27.s, z0.s
     and     z27.s, p0/m, z27.s, z1.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z2.s, p0/m, z2.s, z24.s
-    add     z6.s, z24.s, z25.s
+    add     z6.s, z24.s, z26.s
 
     // W[26]
     // sigma0(z19)
-    lsr     z24.s, z19.s, #7
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z19.s, #18
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z19.s, #7
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z19.s, #18
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z19.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z16)
-    lsr     z27.s, z16.s, #17
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z16.s, #19
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z16.s, #17
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z16.s, #19
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z16.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z18.s, p0/m, z18.s, z24.s
     add     z18.s, p0/m, z18.s, z27.s
@@ -1834,19 +1908,20 @@ sha256_compress_sve2:
     // round 26: z6..z5
     ld1rw   {z29.s}, p0/z, [x3, #104]
     // Sigma1(z2)
-    lsr     z24.s, z2.s, #6
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z2.s, #11
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z2.s, #6
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z2.s, #11
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z2.s, #25
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z2,z3,z4)
     mov     z27.s, p0/m, z3.s
@@ -1858,56 +1933,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z18.s
     // Sigma0(z6)
-    lsr     z25.s, z6.s, #2
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z6.s, #13
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z6.s, #22
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z6.s, #2
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z6.s, #13
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z6.s, #22
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z6,z7,z0)
-    mov     z26.s, p0/m, z6.s
-    and     z26.s, p0/m, z26.s, z7.s
+    mov     z25.s, p0/m, z6.s
+    and     z25.s, p0/m, z25.s, z7.s
     mov     z27.s, p0/m, z6.s
     eor     z27.s, p0/m, z27.s, z7.s
     and     z27.s, p0/m, z27.s, z0.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z1.s, p0/m, z1.s, z24.s
-    add     z5.s, z24.s, z25.s
+    add     z5.s, z24.s, z26.s
 
     // W[27]
     // sigma0(z20)
-    lsr     z24.s, z20.s, #7
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z20.s, #18
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z20.s, #7
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z20.s, #18
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z20.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z17)
-    lsr     z27.s, z17.s, #17
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z17.s, #19
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z17.s, #17
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z17.s, #19
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z17.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z19.s, p0/m, z19.s, z24.s
     add     z19.s, p0/m, z19.s, z27.s
@@ -1916,19 +1994,20 @@ sha256_compress_sve2:
     // round 27: z5..z4
     ld1rw   {z29.s}, p0/z, [x3, #108]
     // Sigma1(z1)
-    lsr     z24.s, z1.s, #6
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z1.s, #11
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z1.s, #6
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z1.s, #11
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z1.s, #25
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z1,z2,z3)
     mov     z27.s, p0/m, z2.s
@@ -1940,56 +2019,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z19.s
     // Sigma0(z5)
-    lsr     z25.s, z5.s, #2
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z5.s, #13
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z5.s, #22
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z5.s, #2
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z5.s, #13
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z5.s, #22
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z5,z6,z7)
-    mov     z26.s, p0/m, z5.s
-    and     z26.s, p0/m, z26.s, z6.s
+    mov     z25.s, p0/m, z5.s
+    and     z25.s, p0/m, z25.s, z6.s
     mov     z27.s, p0/m, z5.s
     eor     z27.s, p0/m, z27.s, z6.s
     and     z27.s, p0/m, z27.s, z7.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z0.s, p0/m, z0.s, z24.s
-    add     z4.s, z24.s, z25.s
+    add     z4.s, z24.s, z26.s
 
     // W[28]
     // sigma0(z21)
-    lsr     z24.s, z21.s, #7
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z21.s, #18
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z21.s, #7
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z21.s, #18
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z21.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z18)
-    lsr     z27.s, z18.s, #17
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z18.s, #19
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z18.s, #17
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z18.s, #19
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z18.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z20.s, p0/m, z20.s, z24.s
     add     z20.s, p0/m, z20.s, z27.s
@@ -1998,19 +2080,20 @@ sha256_compress_sve2:
     // round 28: z4..z3
     ld1rw   {z29.s}, p0/z, [x3, #112]
     // Sigma1(z0)
-    lsr     z24.s, z0.s, #6
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z0.s, #11
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z0.s, #6
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z0.s, #11
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z0.s, #25
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z0,z1,z2)
     mov     z27.s, p0/m, z1.s
@@ -2022,56 +2105,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z20.s
     // Sigma0(z4)
-    lsr     z25.s, z4.s, #2
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z4.s, #13
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z4.s, #22
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z4.s, #2
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z4.s, #13
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z4.s, #22
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z4,z5,z6)
-    mov     z26.s, p0/m, z4.s
-    and     z26.s, p0/m, z26.s, z5.s
+    mov     z25.s, p0/m, z4.s
+    and     z25.s, p0/m, z25.s, z5.s
     mov     z27.s, p0/m, z4.s
     eor     z27.s, p0/m, z27.s, z5.s
     and     z27.s, p0/m, z27.s, z6.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z7.s, p0/m, z7.s, z24.s
-    add     z3.s, z24.s, z25.s
+    add     z3.s, z24.s, z26.s
 
     // W[29]
     // sigma0(z22)
-    lsr     z24.s, z22.s, #7
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z22.s, #18
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z22.s, #7
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z22.s, #18
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z22.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z19)
-    lsr     z27.s, z19.s, #17
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z19.s, #19
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z19.s, #17
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z19.s, #19
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z19.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z21.s, p0/m, z21.s, z24.s
     add     z21.s, p0/m, z21.s, z27.s
@@ -2080,19 +2166,20 @@ sha256_compress_sve2:
     // round 29: z3..z2
     ld1rw   {z29.s}, p0/z, [x3, #116]
     // Sigma1(z7)
-    lsr     z24.s, z7.s, #6
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z7.s, #11
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z7.s, #6
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z7.s, #11
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z7.s, #25
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z7,z0,z1)
     mov     z27.s, p0/m, z0.s
@@ -2104,56 +2191,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z21.s
     // Sigma0(z3)
-    lsr     z25.s, z3.s, #2
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z3.s, #13
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z3.s, #22
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z3.s, #2
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z3.s, #13
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z3.s, #22
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z3,z4,z5)
-    mov     z26.s, p0/m, z3.s
-    and     z26.s, p0/m, z26.s, z4.s
+    mov     z25.s, p0/m, z3.s
+    and     z25.s, p0/m, z25.s, z4.s
     mov     z27.s, p0/m, z3.s
     eor     z27.s, p0/m, z27.s, z4.s
     and     z27.s, p0/m, z27.s, z5.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z6.s, p0/m, z6.s, z24.s
-    add     z2.s, z24.s, z25.s
+    add     z2.s, z24.s, z26.s
 
     // W[30]
     // sigma0(z23)
-    lsr     z24.s, z23.s, #7
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z23.s, #18
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z23.s, #7
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z23.s, #18
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z23.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z20)
-    lsr     z27.s, z20.s, #17
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z20.s, #19
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z20.s, #17
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z20.s, #19
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z20.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z22.s, p0/m, z22.s, z24.s
     add     z22.s, p0/m, z22.s, z27.s
@@ -2162,19 +2252,20 @@ sha256_compress_sve2:
     // round 30: z2..z1
     ld1rw   {z29.s}, p0/z, [x3, #120]
     // Sigma1(z6)
-    lsr     z24.s, z6.s, #6
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z6.s, #11
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z6.s, #6
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z6.s, #11
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z6.s, #25
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z6,z7,z0)
     mov     z27.s, p0/m, z7.s
@@ -2186,56 +2277,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z22.s
     // Sigma0(z2)
-    lsr     z25.s, z2.s, #2
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z2.s, #13
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z2.s, #22
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z2.s, #2
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z2.s, #13
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z2.s, #22
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z2,z3,z4)
-    mov     z26.s, p0/m, z2.s
-    and     z26.s, p0/m, z26.s, z3.s
+    mov     z25.s, p0/m, z2.s
+    and     z25.s, p0/m, z25.s, z3.s
     mov     z27.s, p0/m, z2.s
     eor     z27.s, p0/m, z27.s, z3.s
     and     z27.s, p0/m, z27.s, z4.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z5.s, p0/m, z5.s, z24.s
-    add     z1.s, z24.s, z25.s
+    add     z1.s, z24.s, z26.s
 
     // W[31]
     // sigma0(z8)
-    lsr     z24.s, z8.s, #7
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z8.s, #18
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z8.s, #7
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z8.s, #18
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z8.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z21)
-    lsr     z27.s, z21.s, #17
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z21.s, #19
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z21.s, #17
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z21.s, #19
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z21.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z23.s, p0/m, z23.s, z24.s
     add     z23.s, p0/m, z23.s, z27.s
@@ -2244,19 +2338,20 @@ sha256_compress_sve2:
     // round 31: z1..z0
     ld1rw   {z29.s}, p0/z, [x3, #124]
     // Sigma1(z5)
-    lsr     z24.s, z5.s, #6
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z5.s, #11
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z5.s, #6
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z5.s, #11
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z5.s, #25
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z5,z6,z7)
     mov     z27.s, p0/m, z6.s
@@ -2268,56 +2363,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z23.s
     // Sigma0(z1)
-    lsr     z25.s, z1.s, #2
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z1.s, #13
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z1.s, #22
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z1.s, #2
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z1.s, #13
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z1.s, #22
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z1,z2,z3)
-    mov     z26.s, p0/m, z1.s
-    and     z26.s, p0/m, z26.s, z2.s
+    mov     z25.s, p0/m, z1.s
+    and     z25.s, p0/m, z25.s, z2.s
     mov     z27.s, p0/m, z1.s
     eor     z27.s, p0/m, z27.s, z2.s
     and     z27.s, p0/m, z27.s, z3.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z4.s, p0/m, z4.s, z24.s
-    add     z0.s, z24.s, z25.s
+    add     z0.s, z24.s, z26.s
 
     // W[32]
     // sigma0(z9)
-    lsr     z24.s, z9.s, #7
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z9.s, #18
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z9.s, #7
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z9.s, #18
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z9.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z22)
-    lsr     z27.s, z22.s, #17
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z22.s, #19
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z22.s, #17
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z22.s, #19
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z22.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z8.s, p0/m, z8.s, z24.s
     add     z8.s, p0/m, z8.s, z27.s
@@ -2326,19 +2424,20 @@ sha256_compress_sve2:
     // round 32: z0..z7
     ld1rw   {z29.s}, p0/z, [x3, #128]
     // Sigma1(z4)
-    lsr     z24.s, z4.s, #6
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z4.s, #11
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z4.s, #6
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z4.s, #11
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z4.s, #25
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z4,z5,z6)
     mov     z27.s, p0/m, z5.s
@@ -2350,56 +2449,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z8.s
     // Sigma0(z0)
-    lsr     z25.s, z0.s, #2
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z0.s, #13
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z0.s, #22
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z0.s, #2
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z0.s, #13
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z0.s, #22
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z0,z1,z2)
-    mov     z26.s, p0/m, z0.s
-    and     z26.s, p0/m, z26.s, z1.s
+    mov     z25.s, p0/m, z0.s
+    and     z25.s, p0/m, z25.s, z1.s
     mov     z27.s, p0/m, z0.s
     eor     z27.s, p0/m, z27.s, z1.s
     and     z27.s, p0/m, z27.s, z2.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z3.s, p0/m, z3.s, z24.s
-    add     z7.s, z24.s, z25.s
+    add     z7.s, z24.s, z26.s
 
     // W[33]
     // sigma0(z10)
-    lsr     z24.s, z10.s, #7
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z10.s, #18
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z10.s, #7
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z10.s, #18
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z10.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z23)
-    lsr     z27.s, z23.s, #17
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z23.s, #19
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z23.s, #17
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z23.s, #19
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z23.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z9.s, p0/m, z9.s, z24.s
     add     z9.s, p0/m, z9.s, z27.s
@@ -2408,19 +2510,20 @@ sha256_compress_sve2:
     // round 33: z7..z6
     ld1rw   {z29.s}, p0/z, [x3, #132]
     // Sigma1(z3)
-    lsr     z24.s, z3.s, #6
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z3.s, #11
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z3.s, #6
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z3.s, #11
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z3.s, #25
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z3,z4,z5)
     mov     z27.s, p0/m, z4.s
@@ -2432,56 +2535,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z9.s
     // Sigma0(z7)
-    lsr     z25.s, z7.s, #2
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z7.s, #13
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z7.s, #22
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z7.s, #2
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z7.s, #13
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z7.s, #22
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z7,z0,z1)
-    mov     z26.s, p0/m, z7.s
-    and     z26.s, p0/m, z26.s, z0.s
+    mov     z25.s, p0/m, z7.s
+    and     z25.s, p0/m, z25.s, z0.s
     mov     z27.s, p0/m, z7.s
     eor     z27.s, p0/m, z27.s, z0.s
     and     z27.s, p0/m, z27.s, z1.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z2.s, p0/m, z2.s, z24.s
-    add     z6.s, z24.s, z25.s
+    add     z6.s, z24.s, z26.s
 
     // W[34]
     // sigma0(z11)
-    lsr     z24.s, z11.s, #7
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z11.s, #18
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z11.s, #7
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z11.s, #18
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z11.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z8)
-    lsr     z27.s, z8.s, #17
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z8.s, #19
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z8.s, #17
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z8.s, #19
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z8.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z10.s, p0/m, z10.s, z24.s
     add     z10.s, p0/m, z10.s, z27.s
@@ -2490,19 +2596,20 @@ sha256_compress_sve2:
     // round 34: z6..z5
     ld1rw   {z29.s}, p0/z, [x3, #136]
     // Sigma1(z2)
-    lsr     z24.s, z2.s, #6
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z2.s, #11
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z2.s, #6
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z2.s, #11
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z2.s, #25
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z2,z3,z4)
     mov     z27.s, p0/m, z3.s
@@ -2514,56 +2621,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z10.s
     // Sigma0(z6)
-    lsr     z25.s, z6.s, #2
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z6.s, #13
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z6.s, #22
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z6.s, #2
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z6.s, #13
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z6.s, #22
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z6,z7,z0)
-    mov     z26.s, p0/m, z6.s
-    and     z26.s, p0/m, z26.s, z7.s
+    mov     z25.s, p0/m, z6.s
+    and     z25.s, p0/m, z25.s, z7.s
     mov     z27.s, p0/m, z6.s
     eor     z27.s, p0/m, z27.s, z7.s
     and     z27.s, p0/m, z27.s, z0.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z1.s, p0/m, z1.s, z24.s
-    add     z5.s, z24.s, z25.s
+    add     z5.s, z24.s, z26.s
 
     // W[35]
     // sigma0(z12)
-    lsr     z24.s, z12.s, #7
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z12.s, #18
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z12.s, #7
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z12.s, #18
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z12.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z9)
-    lsr     z27.s, z9.s, #17
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z9.s, #19
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z9.s, #17
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z9.s, #19
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z9.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z11.s, p0/m, z11.s, z24.s
     add     z11.s, p0/m, z11.s, z27.s
@@ -2572,19 +2682,20 @@ sha256_compress_sve2:
     // round 35: z5..z4
     ld1rw   {z29.s}, p0/z, [x3, #140]
     // Sigma1(z1)
-    lsr     z24.s, z1.s, #6
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z1.s, #11
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z1.s, #6
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z1.s, #11
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z1.s, #25
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z1,z2,z3)
     mov     z27.s, p0/m, z2.s
@@ -2596,56 +2707,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z11.s
     // Sigma0(z5)
-    lsr     z25.s, z5.s, #2
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z5.s, #13
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z5.s, #22
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z5.s, #2
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z5.s, #13
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z5.s, #22
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z5,z6,z7)
-    mov     z26.s, p0/m, z5.s
-    and     z26.s, p0/m, z26.s, z6.s
+    mov     z25.s, p0/m, z5.s
+    and     z25.s, p0/m, z25.s, z6.s
     mov     z27.s, p0/m, z5.s
     eor     z27.s, p0/m, z27.s, z6.s
     and     z27.s, p0/m, z27.s, z7.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z0.s, p0/m, z0.s, z24.s
-    add     z4.s, z24.s, z25.s
+    add     z4.s, z24.s, z26.s
 
     // W[36]
     // sigma0(z13)
-    lsr     z24.s, z13.s, #7
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z13.s, #18
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z13.s, #7
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z13.s, #18
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z13.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z10)
-    lsr     z27.s, z10.s, #17
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z10.s, #19
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z10.s, #17
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z10.s, #19
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z10.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z12.s, p0/m, z12.s, z24.s
     add     z12.s, p0/m, z12.s, z27.s
@@ -2654,19 +2768,20 @@ sha256_compress_sve2:
     // round 36: z4..z3
     ld1rw   {z29.s}, p0/z, [x3, #144]
     // Sigma1(z0)
-    lsr     z24.s, z0.s, #6
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z0.s, #11
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z0.s, #6
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z0.s, #11
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z0.s, #25
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z0,z1,z2)
     mov     z27.s, p0/m, z1.s
@@ -2678,56 +2793,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z12.s
     // Sigma0(z4)
-    lsr     z25.s, z4.s, #2
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z4.s, #13
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z4.s, #22
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z4.s, #2
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z4.s, #13
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z4.s, #22
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z4,z5,z6)
-    mov     z26.s, p0/m, z4.s
-    and     z26.s, p0/m, z26.s, z5.s
+    mov     z25.s, p0/m, z4.s
+    and     z25.s, p0/m, z25.s, z5.s
     mov     z27.s, p0/m, z4.s
     eor     z27.s, p0/m, z27.s, z5.s
     and     z27.s, p0/m, z27.s, z6.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z7.s, p0/m, z7.s, z24.s
-    add     z3.s, z24.s, z25.s
+    add     z3.s, z24.s, z26.s
 
     // W[37]
     // sigma0(z14)
-    lsr     z24.s, z14.s, #7
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z14.s, #18
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z14.s, #7
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z14.s, #18
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z14.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z11)
-    lsr     z27.s, z11.s, #17
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z11.s, #19
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z11.s, #17
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z11.s, #19
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z11.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z13.s, p0/m, z13.s, z24.s
     add     z13.s, p0/m, z13.s, z27.s
@@ -2736,19 +2854,20 @@ sha256_compress_sve2:
     // round 37: z3..z2
     ld1rw   {z29.s}, p0/z, [x3, #148]
     // Sigma1(z7)
-    lsr     z24.s, z7.s, #6
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z7.s, #11
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z7.s, #6
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z7.s, #11
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z7.s, #25
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z7,z0,z1)
     mov     z27.s, p0/m, z0.s
@@ -2760,56 +2879,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z13.s
     // Sigma0(z3)
-    lsr     z25.s, z3.s, #2
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z3.s, #13
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z3.s, #22
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z3.s, #2
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z3.s, #13
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z3.s, #22
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z3,z4,z5)
-    mov     z26.s, p0/m, z3.s
-    and     z26.s, p0/m, z26.s, z4.s
+    mov     z25.s, p0/m, z3.s
+    and     z25.s, p0/m, z25.s, z4.s
     mov     z27.s, p0/m, z3.s
     eor     z27.s, p0/m, z27.s, z4.s
     and     z27.s, p0/m, z27.s, z5.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z6.s, p0/m, z6.s, z24.s
-    add     z2.s, z24.s, z25.s
+    add     z2.s, z24.s, z26.s
 
     // W[38]
     // sigma0(z15)
-    lsr     z24.s, z15.s, #7
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z15.s, #18
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z15.s, #7
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z15.s, #18
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z15.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z12)
-    lsr     z27.s, z12.s, #17
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z12.s, #19
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z12.s, #17
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z12.s, #19
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z12.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z14.s, p0/m, z14.s, z24.s
     add     z14.s, p0/m, z14.s, z27.s
@@ -2818,19 +2940,20 @@ sha256_compress_sve2:
     // round 38: z2..z1
     ld1rw   {z29.s}, p0/z, [x3, #152]
     // Sigma1(z6)
-    lsr     z24.s, z6.s, #6
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z6.s, #11
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z6.s, #6
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z6.s, #11
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z6.s, #25
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z6,z7,z0)
     mov     z27.s, p0/m, z7.s
@@ -2842,56 +2965,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z14.s
     // Sigma0(z2)
-    lsr     z25.s, z2.s, #2
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z2.s, #13
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z2.s, #22
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z2.s, #2
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z2.s, #13
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z2.s, #22
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z2,z3,z4)
-    mov     z26.s, p0/m, z2.s
-    and     z26.s, p0/m, z26.s, z3.s
+    mov     z25.s, p0/m, z2.s
+    and     z25.s, p0/m, z25.s, z3.s
     mov     z27.s, p0/m, z2.s
     eor     z27.s, p0/m, z27.s, z3.s
     and     z27.s, p0/m, z27.s, z4.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z5.s, p0/m, z5.s, z24.s
-    add     z1.s, z24.s, z25.s
+    add     z1.s, z24.s, z26.s
 
     // W[39]
     // sigma0(z16)
-    lsr     z24.s, z16.s, #7
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z16.s, #18
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z16.s, #7
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z16.s, #18
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z16.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z13)
-    lsr     z27.s, z13.s, #17
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z13.s, #19
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z13.s, #17
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z13.s, #19
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z13.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z15.s, p0/m, z15.s, z24.s
     add     z15.s, p0/m, z15.s, z27.s
@@ -2900,19 +3026,20 @@ sha256_compress_sve2:
     // round 39: z1..z0
     ld1rw   {z29.s}, p0/z, [x3, #156]
     // Sigma1(z5)
-    lsr     z24.s, z5.s, #6
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z5.s, #11
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z5.s, #6
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z5.s, #11
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z5.s, #25
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z5,z6,z7)
     mov     z27.s, p0/m, z6.s
@@ -2924,56 +3051,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z15.s
     // Sigma0(z1)
-    lsr     z25.s, z1.s, #2
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z1.s, #13
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z1.s, #22
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z1.s, #2
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z1.s, #13
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z1.s, #22
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z1,z2,z3)
-    mov     z26.s, p0/m, z1.s
-    and     z26.s, p0/m, z26.s, z2.s
+    mov     z25.s, p0/m, z1.s
+    and     z25.s, p0/m, z25.s, z2.s
     mov     z27.s, p0/m, z1.s
     eor     z27.s, p0/m, z27.s, z2.s
     and     z27.s, p0/m, z27.s, z3.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z4.s, p0/m, z4.s, z24.s
-    add     z0.s, z24.s, z25.s
+    add     z0.s, z24.s, z26.s
 
     // W[40]
     // sigma0(z17)
-    lsr     z24.s, z17.s, #7
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z17.s, #18
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z17.s, #7
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z17.s, #18
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z17.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z14)
-    lsr     z27.s, z14.s, #17
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z14.s, #19
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z14.s, #17
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z14.s, #19
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z14.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z16.s, p0/m, z16.s, z24.s
     add     z16.s, p0/m, z16.s, z27.s
@@ -2982,19 +3112,20 @@ sha256_compress_sve2:
     // round 40: z0..z7
     ld1rw   {z29.s}, p0/z, [x3, #160]
     // Sigma1(z4)
-    lsr     z24.s, z4.s, #6
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z4.s, #11
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z4.s, #6
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z4.s, #11
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z4.s, #25
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z4,z5,z6)
     mov     z27.s, p0/m, z5.s
@@ -3006,56 +3137,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z16.s
     // Sigma0(z0)
-    lsr     z25.s, z0.s, #2
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z0.s, #13
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z0.s, #22
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z0.s, #2
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z0.s, #13
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z0.s, #22
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z0,z1,z2)
-    mov     z26.s, p0/m, z0.s
-    and     z26.s, p0/m, z26.s, z1.s
+    mov     z25.s, p0/m, z0.s
+    and     z25.s, p0/m, z25.s, z1.s
     mov     z27.s, p0/m, z0.s
     eor     z27.s, p0/m, z27.s, z1.s
     and     z27.s, p0/m, z27.s, z2.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z3.s, p0/m, z3.s, z24.s
-    add     z7.s, z24.s, z25.s
+    add     z7.s, z24.s, z26.s
 
     // W[41]
     // sigma0(z18)
-    lsr     z24.s, z18.s, #7
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z18.s, #18
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z18.s, #7
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z18.s, #18
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z18.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z15)
-    lsr     z27.s, z15.s, #17
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z15.s, #19
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z15.s, #17
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z15.s, #19
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z15.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z17.s, p0/m, z17.s, z24.s
     add     z17.s, p0/m, z17.s, z27.s
@@ -3064,19 +3198,20 @@ sha256_compress_sve2:
     // round 41: z7..z6
     ld1rw   {z29.s}, p0/z, [x3, #164]
     // Sigma1(z3)
-    lsr     z24.s, z3.s, #6
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z3.s, #11
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z3.s, #6
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z3.s, #11
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z3.s, #25
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z3,z4,z5)
     mov     z27.s, p0/m, z4.s
@@ -3088,56 +3223,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z17.s
     // Sigma0(z7)
-    lsr     z25.s, z7.s, #2
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z7.s, #13
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z7.s, #22
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z7.s, #2
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z7.s, #13
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z7.s, #22
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z7,z0,z1)
-    mov     z26.s, p0/m, z7.s
-    and     z26.s, p0/m, z26.s, z0.s
+    mov     z25.s, p0/m, z7.s
+    and     z25.s, p0/m, z25.s, z0.s
     mov     z27.s, p0/m, z7.s
     eor     z27.s, p0/m, z27.s, z0.s
     and     z27.s, p0/m, z27.s, z1.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z2.s, p0/m, z2.s, z24.s
-    add     z6.s, z24.s, z25.s
+    add     z6.s, z24.s, z26.s
 
     // W[42]
     // sigma0(z19)
-    lsr     z24.s, z19.s, #7
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z19.s, #18
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z19.s, #7
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z19.s, #18
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z19.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z16)
-    lsr     z27.s, z16.s, #17
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z16.s, #19
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z16.s, #17
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z16.s, #19
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z16.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z18.s, p0/m, z18.s, z24.s
     add     z18.s, p0/m, z18.s, z27.s
@@ -3146,19 +3284,20 @@ sha256_compress_sve2:
     // round 42: z6..z5
     ld1rw   {z29.s}, p0/z, [x3, #168]
     // Sigma1(z2)
-    lsr     z24.s, z2.s, #6
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z2.s, #11
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z2.s, #6
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z2.s, #11
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z2.s, #25
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z2,z3,z4)
     mov     z27.s, p0/m, z3.s
@@ -3170,56 +3309,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z18.s
     // Sigma0(z6)
-    lsr     z25.s, z6.s, #2
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z6.s, #13
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z6.s, #22
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z6.s, #2
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z6.s, #13
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z6.s, #22
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z6,z7,z0)
-    mov     z26.s, p0/m, z6.s
-    and     z26.s, p0/m, z26.s, z7.s
+    mov     z25.s, p0/m, z6.s
+    and     z25.s, p0/m, z25.s, z7.s
     mov     z27.s, p0/m, z6.s
     eor     z27.s, p0/m, z27.s, z7.s
     and     z27.s, p0/m, z27.s, z0.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z1.s, p0/m, z1.s, z24.s
-    add     z5.s, z24.s, z25.s
+    add     z5.s, z24.s, z26.s
 
     // W[43]
     // sigma0(z20)
-    lsr     z24.s, z20.s, #7
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z20.s, #18
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z20.s, #7
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z20.s, #18
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z20.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z17)
-    lsr     z27.s, z17.s, #17
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z17.s, #19
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z17.s, #17
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z17.s, #19
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z17.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z19.s, p0/m, z19.s, z24.s
     add     z19.s, p0/m, z19.s, z27.s
@@ -3228,19 +3370,20 @@ sha256_compress_sve2:
     // round 43: z5..z4
     ld1rw   {z29.s}, p0/z, [x3, #172]
     // Sigma1(z1)
-    lsr     z24.s, z1.s, #6
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z1.s, #11
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z1.s, #6
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z1.s, #11
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z1.s, #25
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z1,z2,z3)
     mov     z27.s, p0/m, z2.s
@@ -3252,56 +3395,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z19.s
     // Sigma0(z5)
-    lsr     z25.s, z5.s, #2
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z5.s, #13
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z5.s, #22
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z5.s, #2
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z5.s, #13
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z5.s, #22
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z5,z6,z7)
-    mov     z26.s, p0/m, z5.s
-    and     z26.s, p0/m, z26.s, z6.s
+    mov     z25.s, p0/m, z5.s
+    and     z25.s, p0/m, z25.s, z6.s
     mov     z27.s, p0/m, z5.s
     eor     z27.s, p0/m, z27.s, z6.s
     and     z27.s, p0/m, z27.s, z7.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z0.s, p0/m, z0.s, z24.s
-    add     z4.s, z24.s, z25.s
+    add     z4.s, z24.s, z26.s
 
     // W[44]
     // sigma0(z21)
-    lsr     z24.s, z21.s, #7
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z21.s, #18
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z21.s, #7
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z21.s, #18
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z21.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z18)
-    lsr     z27.s, z18.s, #17
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z18.s, #19
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z18.s, #17
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z18.s, #19
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z18.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z20.s, p0/m, z20.s, z24.s
     add     z20.s, p0/m, z20.s, z27.s
@@ -3310,19 +3456,20 @@ sha256_compress_sve2:
     // round 44: z4..z3
     ld1rw   {z29.s}, p0/z, [x3, #176]
     // Sigma1(z0)
-    lsr     z24.s, z0.s, #6
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z0.s, #11
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z0.s, #6
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z0.s, #11
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z0.s, #25
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z0,z1,z2)
     mov     z27.s, p0/m, z1.s
@@ -3334,56 +3481,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z20.s
     // Sigma0(z4)
-    lsr     z25.s, z4.s, #2
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z4.s, #13
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z4.s, #22
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z4.s, #2
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z4.s, #13
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z4.s, #22
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z4,z5,z6)
-    mov     z26.s, p0/m, z4.s
-    and     z26.s, p0/m, z26.s, z5.s
+    mov     z25.s, p0/m, z4.s
+    and     z25.s, p0/m, z25.s, z5.s
     mov     z27.s, p0/m, z4.s
     eor     z27.s, p0/m, z27.s, z5.s
     and     z27.s, p0/m, z27.s, z6.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z7.s, p0/m, z7.s, z24.s
-    add     z3.s, z24.s, z25.s
+    add     z3.s, z24.s, z26.s
 
     // W[45]
     // sigma0(z22)
-    lsr     z24.s, z22.s, #7
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z22.s, #18
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z22.s, #7
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z22.s, #18
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z22.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z19)
-    lsr     z27.s, z19.s, #17
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z19.s, #19
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z19.s, #17
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z19.s, #19
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z19.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z21.s, p0/m, z21.s, z24.s
     add     z21.s, p0/m, z21.s, z27.s
@@ -3392,19 +3542,20 @@ sha256_compress_sve2:
     // round 45: z3..z2
     ld1rw   {z29.s}, p0/z, [x3, #180]
     // Sigma1(z7)
-    lsr     z24.s, z7.s, #6
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z7.s, #11
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z7.s, #6
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z7.s, #11
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z7.s, #25
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z7,z0,z1)
     mov     z27.s, p0/m, z0.s
@@ -3416,56 +3567,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z21.s
     // Sigma0(z3)
-    lsr     z25.s, z3.s, #2
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z3.s, #13
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z3.s, #22
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z3.s, #2
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z3.s, #13
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z3.s, #22
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z3,z4,z5)
-    mov     z26.s, p0/m, z3.s
-    and     z26.s, p0/m, z26.s, z4.s
+    mov     z25.s, p0/m, z3.s
+    and     z25.s, p0/m, z25.s, z4.s
     mov     z27.s, p0/m, z3.s
     eor     z27.s, p0/m, z27.s, z4.s
     and     z27.s, p0/m, z27.s, z5.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z6.s, p0/m, z6.s, z24.s
-    add     z2.s, z24.s, z25.s
+    add     z2.s, z24.s, z26.s
 
     // W[46]
     // sigma0(z23)
-    lsr     z24.s, z23.s, #7
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z23.s, #18
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z23.s, #7
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z23.s, #18
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z23.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z20)
-    lsr     z27.s, z20.s, #17
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z20.s, #19
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z20.s, #17
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z20.s, #19
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z20.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z22.s, p0/m, z22.s, z24.s
     add     z22.s, p0/m, z22.s, z27.s
@@ -3474,19 +3628,20 @@ sha256_compress_sve2:
     // round 46: z2..z1
     ld1rw   {z29.s}, p0/z, [x3, #184]
     // Sigma1(z6)
-    lsr     z24.s, z6.s, #6
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z6.s, #11
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z6.s, #6
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z6.s, #11
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z6.s, #25
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z6,z7,z0)
     mov     z27.s, p0/m, z7.s
@@ -3498,56 +3653,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z22.s
     // Sigma0(z2)
-    lsr     z25.s, z2.s, #2
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z2.s, #13
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z2.s, #22
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z2.s, #2
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z2.s, #13
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z2.s, #22
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z2,z3,z4)
-    mov     z26.s, p0/m, z2.s
-    and     z26.s, p0/m, z26.s, z3.s
+    mov     z25.s, p0/m, z2.s
+    and     z25.s, p0/m, z25.s, z3.s
     mov     z27.s, p0/m, z2.s
     eor     z27.s, p0/m, z27.s, z3.s
     and     z27.s, p0/m, z27.s, z4.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z5.s, p0/m, z5.s, z24.s
-    add     z1.s, z24.s, z25.s
+    add     z1.s, z24.s, z26.s
 
     // W[47]
     // sigma0(z8)
-    lsr     z24.s, z8.s, #7
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z8.s, #18
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z8.s, #7
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z8.s, #18
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z8.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z21)
-    lsr     z27.s, z21.s, #17
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z21.s, #19
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z21.s, #17
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z21.s, #19
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z21.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z23.s, p0/m, z23.s, z24.s
     add     z23.s, p0/m, z23.s, z27.s
@@ -3556,19 +3714,20 @@ sha256_compress_sve2:
     // round 47: z1..z0
     ld1rw   {z29.s}, p0/z, [x3, #188]
     // Sigma1(z5)
-    lsr     z24.s, z5.s, #6
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z5.s, #11
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z5.s, #6
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z5.s, #11
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z5.s, #25
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z5,z6,z7)
     mov     z27.s, p0/m, z6.s
@@ -3580,56 +3739,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z23.s
     // Sigma0(z1)
-    lsr     z25.s, z1.s, #2
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z1.s, #13
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z1.s, #22
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z1.s, #2
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z1.s, #13
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z1.s, #22
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z1,z2,z3)
-    mov     z26.s, p0/m, z1.s
-    and     z26.s, p0/m, z26.s, z2.s
+    mov     z25.s, p0/m, z1.s
+    and     z25.s, p0/m, z25.s, z2.s
     mov     z27.s, p0/m, z1.s
     eor     z27.s, p0/m, z27.s, z2.s
     and     z27.s, p0/m, z27.s, z3.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z4.s, p0/m, z4.s, z24.s
-    add     z0.s, z24.s, z25.s
+    add     z0.s, z24.s, z26.s
 
     // W[48]
     // sigma0(z9)
-    lsr     z24.s, z9.s, #7
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z9.s, #18
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z9.s, #7
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z9.s, #18
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z9.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z22)
-    lsr     z27.s, z22.s, #17
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z22.s, #19
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z22.s, #17
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z22.s, #19
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z22.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z8.s, p0/m, z8.s, z24.s
     add     z8.s, p0/m, z8.s, z27.s
@@ -3638,19 +3800,20 @@ sha256_compress_sve2:
     // round 48: z0..z7
     ld1rw   {z29.s}, p0/z, [x3, #192]
     // Sigma1(z4)
-    lsr     z24.s, z4.s, #6
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z4.s, #11
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z4.s, #6
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z4.s, #11
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z4.s, #25
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z4,z5,z6)
     mov     z27.s, p0/m, z5.s
@@ -3662,56 +3825,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z8.s
     // Sigma0(z0)
-    lsr     z25.s, z0.s, #2
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z0.s, #13
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z0.s, #22
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z0.s, #2
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z0.s, #13
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z0.s, #22
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z0,z1,z2)
-    mov     z26.s, p0/m, z0.s
-    and     z26.s, p0/m, z26.s, z1.s
+    mov     z25.s, p0/m, z0.s
+    and     z25.s, p0/m, z25.s, z1.s
     mov     z27.s, p0/m, z0.s
     eor     z27.s, p0/m, z27.s, z1.s
     and     z27.s, p0/m, z27.s, z2.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z3.s, p0/m, z3.s, z24.s
-    add     z7.s, z24.s, z25.s
+    add     z7.s, z24.s, z26.s
 
     // W[49]
     // sigma0(z10)
-    lsr     z24.s, z10.s, #7
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z10.s, #18
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z10.s, #7
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z10.s, #18
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z10.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z23)
-    lsr     z27.s, z23.s, #17
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z23.s, #19
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z23.s, #17
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z23.s, #19
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z23.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z9.s, p0/m, z9.s, z24.s
     add     z9.s, p0/m, z9.s, z27.s
@@ -3720,19 +3886,20 @@ sha256_compress_sve2:
     // round 49: z7..z6
     ld1rw   {z29.s}, p0/z, [x3, #196]
     // Sigma1(z3)
-    lsr     z24.s, z3.s, #6
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z3.s, #11
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z3.s, #6
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z3.s, #11
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z3.s, #25
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z3,z4,z5)
     mov     z27.s, p0/m, z4.s
@@ -3744,56 +3911,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z9.s
     // Sigma0(z7)
-    lsr     z25.s, z7.s, #2
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z7.s, #13
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z7.s, #22
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z7.s, #2
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z7.s, #13
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z7.s, #22
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z7,z0,z1)
-    mov     z26.s, p0/m, z7.s
-    and     z26.s, p0/m, z26.s, z0.s
+    mov     z25.s, p0/m, z7.s
+    and     z25.s, p0/m, z25.s, z0.s
     mov     z27.s, p0/m, z7.s
     eor     z27.s, p0/m, z27.s, z0.s
     and     z27.s, p0/m, z27.s, z1.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z2.s, p0/m, z2.s, z24.s
-    add     z6.s, z24.s, z25.s
+    add     z6.s, z24.s, z26.s
 
     // W[50]
     // sigma0(z11)
-    lsr     z24.s, z11.s, #7
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z11.s, #18
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z11.s, #7
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z11.s, #18
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z11.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z8)
-    lsr     z27.s, z8.s, #17
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z8.s, #19
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z8.s, #17
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z8.s, #19
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z8.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z10.s, p0/m, z10.s, z24.s
     add     z10.s, p0/m, z10.s, z27.s
@@ -3802,19 +3972,20 @@ sha256_compress_sve2:
     // round 50: z6..z5
     ld1rw   {z29.s}, p0/z, [x3, #200]
     // Sigma1(z2)
-    lsr     z24.s, z2.s, #6
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z2.s, #11
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z2.s, #6
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z2.s, #11
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z2.s, #25
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z2,z3,z4)
     mov     z27.s, p0/m, z3.s
@@ -3826,56 +3997,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z10.s
     // Sigma0(z6)
-    lsr     z25.s, z6.s, #2
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z6.s, #13
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z6.s, #22
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z6.s, #2
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z6.s, #13
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z6.s, #22
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z6,z7,z0)
-    mov     z26.s, p0/m, z6.s
-    and     z26.s, p0/m, z26.s, z7.s
+    mov     z25.s, p0/m, z6.s
+    and     z25.s, p0/m, z25.s, z7.s
     mov     z27.s, p0/m, z6.s
     eor     z27.s, p0/m, z27.s, z7.s
     and     z27.s, p0/m, z27.s, z0.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z1.s, p0/m, z1.s, z24.s
-    add     z5.s, z24.s, z25.s
+    add     z5.s, z24.s, z26.s
 
     // W[51]
     // sigma0(z12)
-    lsr     z24.s, z12.s, #7
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z12.s, #18
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z12.s, #7
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z12.s, #18
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z12.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z9)
-    lsr     z27.s, z9.s, #17
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z9.s, #19
-    mov     z28.s, p0/m, z9.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z9.s, #17
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z9.s, #19
+    mov     z25.s, p0/m, z9.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z9.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z11.s, p0/m, z11.s, z24.s
     add     z11.s, p0/m, z11.s, z27.s
@@ -3884,19 +4058,20 @@ sha256_compress_sve2:
     // round 51: z5..z4
     ld1rw   {z29.s}, p0/z, [x3, #204]
     // Sigma1(z1)
-    lsr     z24.s, z1.s, #6
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z1.s, #11
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z1.s, #6
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z1.s, #11
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z1.s, #25
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z1,z2,z3)
     mov     z27.s, p0/m, z2.s
@@ -3908,56 +4083,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z11.s
     // Sigma0(z5)
-    lsr     z25.s, z5.s, #2
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z5.s, #13
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z5.s, #22
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z5.s, #2
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z5.s, #13
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z5.s, #22
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z5,z6,z7)
-    mov     z26.s, p0/m, z5.s
-    and     z26.s, p0/m, z26.s, z6.s
+    mov     z25.s, p0/m, z5.s
+    and     z25.s, p0/m, z25.s, z6.s
     mov     z27.s, p0/m, z5.s
     eor     z27.s, p0/m, z27.s, z6.s
     and     z27.s, p0/m, z27.s, z7.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z0.s, p0/m, z0.s, z24.s
-    add     z4.s, z24.s, z25.s
+    add     z4.s, z24.s, z26.s
 
     // W[52]
     // sigma0(z13)
-    lsr     z24.s, z13.s, #7
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z13.s, #18
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z13.s, #7
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z13.s, #18
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z13.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z10)
-    lsr     z27.s, z10.s, #17
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z10.s, #19
-    mov     z28.s, p0/m, z10.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z10.s, #17
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z10.s, #19
+    mov     z25.s, p0/m, z10.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z10.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z12.s, p0/m, z12.s, z24.s
     add     z12.s, p0/m, z12.s, z27.s
@@ -3966,19 +4144,20 @@ sha256_compress_sve2:
     // round 52: z4..z3
     ld1rw   {z29.s}, p0/z, [x3, #208]
     // Sigma1(z0)
-    lsr     z24.s, z0.s, #6
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z0.s, #11
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z0.s, #6
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z0.s, #11
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z0.s, #25
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z0,z1,z2)
     mov     z27.s, p0/m, z1.s
@@ -3990,56 +4169,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z12.s
     // Sigma0(z4)
-    lsr     z25.s, z4.s, #2
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z4.s, #13
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z4.s, #22
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z4.s, #2
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z4.s, #13
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z4.s, #22
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z4,z5,z6)
-    mov     z26.s, p0/m, z4.s
-    and     z26.s, p0/m, z26.s, z5.s
+    mov     z25.s, p0/m, z4.s
+    and     z25.s, p0/m, z25.s, z5.s
     mov     z27.s, p0/m, z4.s
     eor     z27.s, p0/m, z27.s, z5.s
     and     z27.s, p0/m, z27.s, z6.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z7.s, p0/m, z7.s, z24.s
-    add     z3.s, z24.s, z25.s
+    add     z3.s, z24.s, z26.s
 
     // W[53]
     // sigma0(z14)
-    lsr     z24.s, z14.s, #7
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z14.s, #18
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z14.s, #7
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z14.s, #18
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z14.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z11)
-    lsr     z27.s, z11.s, #17
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z11.s, #19
-    mov     z28.s, p0/m, z11.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z11.s, #17
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z11.s, #19
+    mov     z25.s, p0/m, z11.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z11.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z13.s, p0/m, z13.s, z24.s
     add     z13.s, p0/m, z13.s, z27.s
@@ -4048,19 +4230,20 @@ sha256_compress_sve2:
     // round 53: z3..z2
     ld1rw   {z29.s}, p0/z, [x3, #212]
     // Sigma1(z7)
-    lsr     z24.s, z7.s, #6
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z7.s, #11
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z7.s, #6
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z7.s, #11
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z7.s, #25
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z7,z0,z1)
     mov     z27.s, p0/m, z0.s
@@ -4072,56 +4255,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z13.s
     // Sigma0(z3)
-    lsr     z25.s, z3.s, #2
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z3.s, #13
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z3.s, #22
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z3.s, #2
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z3.s, #13
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z3.s, #22
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z3,z4,z5)
-    mov     z26.s, p0/m, z3.s
-    and     z26.s, p0/m, z26.s, z4.s
+    mov     z25.s, p0/m, z3.s
+    and     z25.s, p0/m, z25.s, z4.s
     mov     z27.s, p0/m, z3.s
     eor     z27.s, p0/m, z27.s, z4.s
     and     z27.s, p0/m, z27.s, z5.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z6.s, p0/m, z6.s, z24.s
-    add     z2.s, z24.s, z25.s
+    add     z2.s, z24.s, z26.s
 
     // W[54]
     // sigma0(z15)
-    lsr     z24.s, z15.s, #7
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z15.s, #18
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z15.s, #7
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z15.s, #18
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z15.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z12)
-    lsr     z27.s, z12.s, #17
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z12.s, #19
-    mov     z28.s, p0/m, z12.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z12.s, #17
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z12.s, #19
+    mov     z25.s, p0/m, z12.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z12.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z14.s, p0/m, z14.s, z24.s
     add     z14.s, p0/m, z14.s, z27.s
@@ -4130,19 +4316,20 @@ sha256_compress_sve2:
     // round 54: z2..z1
     ld1rw   {z29.s}, p0/z, [x3, #216]
     // Sigma1(z6)
-    lsr     z24.s, z6.s, #6
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z6.s, #11
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z6.s, #6
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z6.s, #11
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z6.s, #25
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z6,z7,z0)
     mov     z27.s, p0/m, z7.s
@@ -4154,56 +4341,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z14.s
     // Sigma0(z2)
-    lsr     z25.s, z2.s, #2
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z2.s, #13
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z2.s, #22
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z2.s, #2
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z2.s, #13
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z2.s, #22
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z2,z3,z4)
-    mov     z26.s, p0/m, z2.s
-    and     z26.s, p0/m, z26.s, z3.s
+    mov     z25.s, p0/m, z2.s
+    and     z25.s, p0/m, z25.s, z3.s
     mov     z27.s, p0/m, z2.s
     eor     z27.s, p0/m, z27.s, z3.s
     and     z27.s, p0/m, z27.s, z4.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z5.s, p0/m, z5.s, z24.s
-    add     z1.s, z24.s, z25.s
+    add     z1.s, z24.s, z26.s
 
     // W[55]
     // sigma0(z16)
-    lsr     z24.s, z16.s, #7
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z16.s, #18
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z16.s, #7
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z16.s, #18
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z16.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z13)
-    lsr     z27.s, z13.s, #17
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z13.s, #19
-    mov     z28.s, p0/m, z13.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z13.s, #17
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z13.s, #19
+    mov     z25.s, p0/m, z13.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z13.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z15.s, p0/m, z15.s, z24.s
     add     z15.s, p0/m, z15.s, z27.s
@@ -4212,19 +4402,20 @@ sha256_compress_sve2:
     // round 55: z1..z0
     ld1rw   {z29.s}, p0/z, [x3, #220]
     // Sigma1(z5)
-    lsr     z24.s, z5.s, #6
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z5.s, #11
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z5.s, #6
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z5.s, #11
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z5.s, #25
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z5,z6,z7)
     mov     z27.s, p0/m, z6.s
@@ -4236,56 +4427,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z15.s
     // Sigma0(z1)
-    lsr     z25.s, z1.s, #2
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z1.s, #13
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z1.s, #22
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z1.s, #2
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z1.s, #13
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z1.s, #22
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z1,z2,z3)
-    mov     z26.s, p0/m, z1.s
-    and     z26.s, p0/m, z26.s, z2.s
+    mov     z25.s, p0/m, z1.s
+    and     z25.s, p0/m, z25.s, z2.s
     mov     z27.s, p0/m, z1.s
     eor     z27.s, p0/m, z27.s, z2.s
     and     z27.s, p0/m, z27.s, z3.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z4.s, p0/m, z4.s, z24.s
-    add     z0.s, z24.s, z25.s
+    add     z0.s, z24.s, z26.s
 
     // W[56]
     // sigma0(z17)
-    lsr     z24.s, z17.s, #7
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z17.s, #18
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z17.s, #7
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z17.s, #18
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z17.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z14)
-    lsr     z27.s, z14.s, #17
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z14.s, #19
-    mov     z28.s, p0/m, z14.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z14.s, #17
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z14.s, #19
+    mov     z25.s, p0/m, z14.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z14.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z16.s, p0/m, z16.s, z24.s
     add     z16.s, p0/m, z16.s, z27.s
@@ -4294,19 +4488,20 @@ sha256_compress_sve2:
     // round 56: z0..z7
     ld1rw   {z29.s}, p0/z, [x3, #224]
     // Sigma1(z4)
-    lsr     z24.s, z4.s, #6
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z4.s, #11
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z4.s, #6
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z4.s, #11
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z4.s, #25
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z4.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z4,z5,z6)
     mov     z27.s, p0/m, z5.s
@@ -4318,56 +4513,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z16.s
     // Sigma0(z0)
-    lsr     z25.s, z0.s, #2
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z0.s, #13
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z0.s, #22
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z0.s, #2
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z0.s, #13
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z0.s, #22
+    mov     z27.s, p0/m, z0.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z0,z1,z2)
-    mov     z26.s, p0/m, z0.s
-    and     z26.s, p0/m, z26.s, z1.s
+    mov     z25.s, p0/m, z0.s
+    and     z25.s, p0/m, z25.s, z1.s
     mov     z27.s, p0/m, z0.s
     eor     z27.s, p0/m, z27.s, z1.s
     and     z27.s, p0/m, z27.s, z2.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z3.s, p0/m, z3.s, z24.s
-    add     z7.s, z24.s, z25.s
+    add     z7.s, z24.s, z26.s
 
     // W[57]
     // sigma0(z18)
-    lsr     z24.s, z18.s, #7
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z18.s, #18
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z18.s, #7
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z18.s, #18
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z18.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z15)
-    lsr     z27.s, z15.s, #17
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z15.s, #19
-    mov     z28.s, p0/m, z15.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z15.s, #17
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z15.s, #19
+    mov     z25.s, p0/m, z15.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z15.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z17.s, p0/m, z17.s, z24.s
     add     z17.s, p0/m, z17.s, z27.s
@@ -4376,19 +4574,20 @@ sha256_compress_sve2:
     // round 57: z7..z6
     ld1rw   {z29.s}, p0/z, [x3, #228]
     // Sigma1(z3)
-    lsr     z24.s, z3.s, #6
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z3.s, #11
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z3.s, #6
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z3.s, #11
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z3.s, #25
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z3.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z3,z4,z5)
     mov     z27.s, p0/m, z4.s
@@ -4400,56 +4599,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z17.s
     // Sigma0(z7)
-    lsr     z25.s, z7.s, #2
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z7.s, #13
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z7.s, #22
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z7.s, #2
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z7.s, #13
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z7.s, #22
+    mov     z27.s, p0/m, z7.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z7,z0,z1)
-    mov     z26.s, p0/m, z7.s
-    and     z26.s, p0/m, z26.s, z0.s
+    mov     z25.s, p0/m, z7.s
+    and     z25.s, p0/m, z25.s, z0.s
     mov     z27.s, p0/m, z7.s
     eor     z27.s, p0/m, z27.s, z0.s
     and     z27.s, p0/m, z27.s, z1.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z2.s, p0/m, z2.s, z24.s
-    add     z6.s, z24.s, z25.s
+    add     z6.s, z24.s, z26.s
 
     // W[58]
     // sigma0(z19)
-    lsr     z24.s, z19.s, #7
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z19.s, #18
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z19.s, #7
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z19.s, #18
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z19.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z16)
-    lsr     z27.s, z16.s, #17
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z16.s, #19
-    mov     z28.s, p0/m, z16.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z16.s, #17
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z16.s, #19
+    mov     z25.s, p0/m, z16.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z16.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z18.s, p0/m, z18.s, z24.s
     add     z18.s, p0/m, z18.s, z27.s
@@ -4458,19 +4660,20 @@ sha256_compress_sve2:
     // round 58: z6..z5
     ld1rw   {z29.s}, p0/z, [x3, #232]
     // Sigma1(z2)
-    lsr     z24.s, z2.s, #6
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z2.s, #11
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z2.s, #6
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z2.s, #11
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z2.s, #25
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z2.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z2,z3,z4)
     mov     z27.s, p0/m, z3.s
@@ -4482,56 +4685,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z18.s
     // Sigma0(z6)
-    lsr     z25.s, z6.s, #2
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z6.s, #13
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z6.s, #22
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z6.s, #2
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z6.s, #13
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z6.s, #22
+    mov     z27.s, p0/m, z6.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z6,z7,z0)
-    mov     z26.s, p0/m, z6.s
-    and     z26.s, p0/m, z26.s, z7.s
+    mov     z25.s, p0/m, z6.s
+    and     z25.s, p0/m, z25.s, z7.s
     mov     z27.s, p0/m, z6.s
     eor     z27.s, p0/m, z27.s, z7.s
     and     z27.s, p0/m, z27.s, z0.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z1.s, p0/m, z1.s, z24.s
-    add     z5.s, z24.s, z25.s
+    add     z5.s, z24.s, z26.s
 
     // W[59]
     // sigma0(z20)
-    lsr     z24.s, z20.s, #7
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z20.s, #18
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z20.s, #7
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z20.s, #18
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z20.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z17)
-    lsr     z27.s, z17.s, #17
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z17.s, #19
-    mov     z28.s, p0/m, z17.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z17.s, #17
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z17.s, #19
+    mov     z25.s, p0/m, z17.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z17.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z19.s, p0/m, z19.s, z24.s
     add     z19.s, p0/m, z19.s, z27.s
@@ -4540,19 +4746,20 @@ sha256_compress_sve2:
     // round 59: z5..z4
     ld1rw   {z29.s}, p0/z, [x3, #236]
     // Sigma1(z1)
-    lsr     z24.s, z1.s, #6
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z1.s, #11
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z1.s, #6
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z1.s, #11
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z1.s, #25
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z1.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z1,z2,z3)
     mov     z27.s, p0/m, z2.s
@@ -4564,56 +4771,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z19.s
     // Sigma0(z5)
-    lsr     z25.s, z5.s, #2
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z5.s, #13
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z5.s, #22
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z5.s, #2
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z5.s, #13
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z5.s, #22
+    mov     z27.s, p0/m, z5.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z5,z6,z7)
-    mov     z26.s, p0/m, z5.s
-    and     z26.s, p0/m, z26.s, z6.s
+    mov     z25.s, p0/m, z5.s
+    and     z25.s, p0/m, z25.s, z6.s
     mov     z27.s, p0/m, z5.s
     eor     z27.s, p0/m, z27.s, z6.s
     and     z27.s, p0/m, z27.s, z7.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z0.s, p0/m, z0.s, z24.s
-    add     z4.s, z24.s, z25.s
+    add     z4.s, z24.s, z26.s
 
     // W[60]
     // sigma0(z21)
-    lsr     z24.s, z21.s, #7
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z21.s, #18
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z21.s, #7
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z21.s, #18
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z21.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z18)
-    lsr     z27.s, z18.s, #17
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z18.s, #19
-    mov     z28.s, p0/m, z18.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z18.s, #17
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z18.s, #19
+    mov     z25.s, p0/m, z18.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z18.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z20.s, p0/m, z20.s, z24.s
     add     z20.s, p0/m, z20.s, z27.s
@@ -4622,19 +4832,20 @@ sha256_compress_sve2:
     // round 60: z4..z3
     ld1rw   {z29.s}, p0/z, [x3, #240]
     // Sigma1(z0)
-    lsr     z24.s, z0.s, #6
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z0.s, #11
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z0.s, #6
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z0.s, #11
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z0.s, #25
-    mov     z28.s, p0/m, z0.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z0.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z0,z1,z2)
     mov     z27.s, p0/m, z1.s
@@ -4646,56 +4857,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z20.s
     // Sigma0(z4)
-    lsr     z25.s, z4.s, #2
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z4.s, #13
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z4.s, #22
-    mov     z28.s, p0/m, z4.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z4.s, #2
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z4.s, #13
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z4.s, #22
+    mov     z27.s, p0/m, z4.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z4,z5,z6)
-    mov     z26.s, p0/m, z4.s
-    and     z26.s, p0/m, z26.s, z5.s
+    mov     z25.s, p0/m, z4.s
+    and     z25.s, p0/m, z25.s, z5.s
     mov     z27.s, p0/m, z4.s
     eor     z27.s, p0/m, z27.s, z5.s
     and     z27.s, p0/m, z27.s, z6.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z7.s, p0/m, z7.s, z24.s
-    add     z3.s, z24.s, z25.s
+    add     z3.s, z24.s, z26.s
 
     // W[61]
     // sigma0(z22)
-    lsr     z24.s, z22.s, #7
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z22.s, #18
-    mov     z28.s, p0/m, z22.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z22.s, #7
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z22.s, #18
+    mov     z25.s, p0/m, z22.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z22.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z19)
-    lsr     z27.s, z19.s, #17
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z19.s, #19
-    mov     z28.s, p0/m, z19.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z19.s, #17
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z19.s, #19
+    mov     z25.s, p0/m, z19.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z19.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z21.s, p0/m, z21.s, z24.s
     add     z21.s, p0/m, z21.s, z27.s
@@ -4704,19 +4918,20 @@ sha256_compress_sve2:
     // round 61: z3..z2
     ld1rw   {z29.s}, p0/z, [x3, #244]
     // Sigma1(z7)
-    lsr     z24.s, z7.s, #6
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z7.s, #11
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z7.s, #6
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z7.s, #11
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z7.s, #25
-    mov     z28.s, p0/m, z7.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z7.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z7,z0,z1)
     mov     z27.s, p0/m, z0.s
@@ -4728,56 +4943,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z21.s
     // Sigma0(z3)
-    lsr     z25.s, z3.s, #2
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z3.s, #13
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z3.s, #22
-    mov     z28.s, p0/m, z3.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z3.s, #2
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z3.s, #13
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z3.s, #22
+    mov     z27.s, p0/m, z3.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z3,z4,z5)
-    mov     z26.s, p0/m, z3.s
-    and     z26.s, p0/m, z26.s, z4.s
+    mov     z25.s, p0/m, z3.s
+    and     z25.s, p0/m, z25.s, z4.s
     mov     z27.s, p0/m, z3.s
     eor     z27.s, p0/m, z27.s, z4.s
     and     z27.s, p0/m, z27.s, z5.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z6.s, p0/m, z6.s, z24.s
-    add     z2.s, z24.s, z25.s
+    add     z2.s, z24.s, z26.s
 
     // W[62]
     // sigma0(z23)
-    lsr     z24.s, z23.s, #7
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z23.s, #18
-    mov     z28.s, p0/m, z23.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z23.s, #7
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z23.s, #18
+    mov     z25.s, p0/m, z23.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z23.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z20)
-    lsr     z27.s, z20.s, #17
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z20.s, #19
-    mov     z28.s, p0/m, z20.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z20.s, #17
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z20.s, #19
+    mov     z25.s, p0/m, z20.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z20.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z22.s, p0/m, z22.s, z24.s
     add     z22.s, p0/m, z22.s, z27.s
@@ -4786,19 +5004,20 @@ sha256_compress_sve2:
     // round 62: z2..z1
     ld1rw   {z29.s}, p0/z, [x3, #248]
     // Sigma1(z6)
-    lsr     z24.s, z6.s, #6
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z6.s, #11
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z6.s, #6
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z6.s, #11
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z6.s, #25
-    mov     z28.s, p0/m, z6.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z6.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z6,z7,z0)
     mov     z27.s, p0/m, z7.s
@@ -4810,56 +5029,59 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z22.s
     // Sigma0(z2)
-    lsr     z25.s, z2.s, #2
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z2.s, #13
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z2.s, #22
-    mov     z28.s, p0/m, z2.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z2.s, #2
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z2.s, #13
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z2.s, #22
+    mov     z27.s, p0/m, z2.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z2,z3,z4)
-    mov     z26.s, p0/m, z2.s
-    and     z26.s, p0/m, z26.s, z3.s
+    mov     z25.s, p0/m, z2.s
+    and     z25.s, p0/m, z25.s, z3.s
     mov     z27.s, p0/m, z2.s
     eor     z27.s, p0/m, z27.s, z3.s
     and     z27.s, p0/m, z27.s, z4.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z5.s, p0/m, z5.s, z24.s
-    add     z1.s, z24.s, z25.s
+    add     z1.s, z24.s, z26.s
 
     // W[63]
     // sigma0(z8)
-    lsr     z24.s, z8.s, #7
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #25
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z8.s, #18
-    mov     z28.s, p0/m, z8.s
-    lsl     z28.s, p0/m, z28.s, #14
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z8.s, #7
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #25
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z8.s, #18
+    mov     z25.s, p0/m, z8.s
+    lsl     z25.s, p0/m, z25.s, #14
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z8.s, #3
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // sigma1(z21)
-    lsr     z27.s, z21.s, #17
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #15
-    orr     z27.s, p0/m, z27.s, z28.s
-    lsr     z25.s, z21.s, #19
-    mov     z28.s, p0/m, z21.s
-    lsl     z28.s, p0/m, z28.s, #13
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z21.s, #17
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #15
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z21.s, #19
+    mov     z25.s, p0/m, z21.s
+    lsl     z25.s, p0/m, z25.s, #13
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z21.s, #10
-    eor     z27.s, p0/m, z27.s, z25.s
+    mov     z27.s, p0/m, z28.s
+    eor     z27.s, p0/m, z27.s, z30.s
     eor     z27.s, p0/m, z27.s, z26.s
     add     z23.s, p0/m, z23.s, z24.s
     add     z23.s, p0/m, z23.s, z27.s
@@ -4868,19 +5090,20 @@ sha256_compress_sve2:
     // round 63: z1..z0
     ld1rw   {z29.s}, p0/z, [x3, #252]
     // Sigma1(z5)
-    lsr     z24.s, z5.s, #6
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #26
-    orr     z24.s, p0/m, z24.s, z28.s
-    lsr     z25.s, z5.s, #11
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #21
-    orr     z25.s, p0/m, z25.s, z28.s
+    lsr     z28.s, z5.s, #6
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #26
+    orr     z28.s, p0/m, z28.s, z25.s
+    lsr     z30.s, z5.s, #11
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #21
+    orr     z30.s, p0/m, z30.s, z25.s
     lsr     z26.s, z5.s, #25
-    mov     z28.s, p0/m, z5.s
-    lsl     z28.s, p0/m, z28.s, #7
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z24.s, p0/m, z24.s, z25.s
+    mov     z25.s, p0/m, z5.s
+    lsl     z25.s, p0/m, z25.s, #7
+    orr     z26.s, p0/m, z26.s, z25.s
+    mov     z24.s, p0/m, z28.s
+    eor     z24.s, p0/m, z24.s, z30.s
     eor     z24.s, p0/m, z24.s, z26.s
     // Ch(z5,z6,z7)
     mov     z27.s, p0/m, z6.s
@@ -4892,31 +5115,32 @@ sha256_compress_sve2:
     add     z24.s, p0/m, z24.s, z29.s
     add     z24.s, p0/m, z24.s, z23.s
     // Sigma0(z1)
-    lsr     z25.s, z1.s, #2
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #30
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z25.s, z1.s, #13
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #19
-    orr     z25.s, p0/m, z25.s, z28.s
-    lsr     z26.s, z1.s, #22
-    mov     z28.s, p0/m, z1.s
-    lsl     z28.s, p0/m, z28.s, #10
-    orr     z26.s, p0/m, z26.s, z28.s
-    eor     z25.s, p0/m, z25.s, z25.s
-    eor     z25.s, p0/m, z25.s, z26.s
+    lsr     z28.s, z1.s, #2
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #30
+    orr     z28.s, p0/m, z28.s, z27.s
+    lsr     z30.s, z1.s, #13
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #19
+    orr     z30.s, p0/m, z30.s, z27.s
+    lsr     z25.s, z1.s, #22
+    mov     z27.s, p0/m, z1.s
+    lsl     z27.s, p0/m, z27.s, #10
+    orr     z25.s, p0/m, z25.s, z27.s
+    mov     z26.s, p0/m, z28.s
+    eor     z26.s, p0/m, z26.s, z30.s
+    eor     z26.s, p0/m, z26.s, z25.s
     // Maj(z1,z2,z3)
-    mov     z26.s, p0/m, z1.s
-    and     z26.s, p0/m, z26.s, z2.s
+    mov     z25.s, p0/m, z1.s
+    and     z25.s, p0/m, z25.s, z2.s
     mov     z27.s, p0/m, z1.s
     eor     z27.s, p0/m, z27.s, z2.s
     and     z27.s, p0/m, z27.s, z3.s
-    eor     z26.s, p0/m, z26.s, z27.s
-    add     z25.s, p0/m, z25.s, z26.s
+    eor     z25.s, p0/m, z25.s, z27.s
+    add     z26.s, p0/m, z26.s, z25.s
     // d += T1 ; the register that held h becomes the new a
     add     z4.s, p0/m, z4.s, z24.s
-    add     z0.s, z24.s, z25.s
+    add     z0.s, z24.s, z26.s
 
     // add the midstate back, then write big-endian digests by scatter
     ld1rw   {z31.s}, p0/z, [x0, #0]

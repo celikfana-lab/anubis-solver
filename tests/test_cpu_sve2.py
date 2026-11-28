@@ -103,7 +103,7 @@ def main():
 
     lib.sha256_sve2_width.restype = ctypes.c_long
     lanes = lib.sha256_sve2_width()
-    print("SVE2 kernel: %d lanes (%ld bits)" % (lanes, lanes * 32))
+    print("SVE2 kernel: %d lanes (%ld bits)" % (lanes, lanes * 32), flush=True)
     assert lanes in (4, 8, 16), lanes
 
     # 64-byte prefix, so mid is the state after one full block
@@ -115,12 +115,15 @@ def main():
 
     # hashlib is the independent oracle: prefix + suffix, digested in one go
     trial = 0
+    print("calling the kernel...", flush=True)
     for base in (0, 7, 999_999, 2**32 - 3, 123_456_789):
         for step in range(1, 41):
             for lane in range(lanes):
                 suffix = str(base + step * lane).encode()
                 tails[lane * 64:(lane + 1) * 64] = padded_tail(64, suffix)
             lib.sha256_compress_sve2(mid, tails, out)
+            if trial == 0 and step == 1:
+                print("first call returned", flush=True)
             for lane in range(lanes):
                 suffix = str(base + step * lane).encode()
                 want = hashlib.sha256(prefix + suffix).digest()

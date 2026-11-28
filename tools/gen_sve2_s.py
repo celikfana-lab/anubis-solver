@@ -70,6 +70,7 @@ K = [
 ST = ["z%d" % i for i in range(8)]           # a..h
 W = ["z%d" % i for i in range(8, 24)]        # 16 schedule words
 ACC, R1, R2, MISC = "z24", "z25", "z26", "z27"
+TMP = "z28"   # rotate scratch
 KV, IDX = "z29", "z31"
 
 P = ".s"          # element type
@@ -77,10 +78,16 @@ PRED = "p0/m"
 
 
 def ror(dst, src, n):
-    """dst = ror(src, n) in two instructions (lsr then insert)."""
+    """dst = ror(src, n) as (src >> n) | (src << (32-n)).
+
+    SVE2 has no vector ROR and its SLI insert mask is easy to get wrong, so
+    this spells the rotation out with three unambiguous shift/or instructions.
+    """
     return [
         "    lsr     %s%s, %s%s, #%d" % (dst, P, src, P, n),
-        "    sli     %s%s, %s%s, #%d" % (dst, P, src, P, 32 - n),
+        "    mov     %s%s, %s, %s%s" % (TMP, P, PRED, src, P),
+        "    lsl     %s%s, %s, %s%s, #%d" % (TMP, P, PRED, TMP, P, 32 - n),
+        "    orr     %s%s, %s, %s%s, %s%s" % (dst, P, PRED, dst, P, TMP, P),
     ]
 
 

@@ -94,68 +94,10 @@ jobs:
       - name: SVE2 batch kernel parity
         run: python3 tests/test_cpu_sve2.py
 
-      - name: TEMP candidate and solver benchmark (C, no ctypes)
-        run: |
-          cat > /tmp/bench.c <<'EOF'
-          #define _GNU_SOURCE
-          #include <stdio.h>
-          #include <stdint.h>
-          #include <stdlib.h>
-          #include <string.h>
-          #include <time.h>
-          extern long sha256_sve2_width(void);
-          extern void sha256_compress_sve2(const uint32_t mid[8], const uint8_t tails[][64], uint8_t out[][32]);
-          extern void sha256_block_neon(uint32_t state[8], const uint8_t block[64]);
-          extern int anubis_solve_bits(const char *hex, int difficulty, int threads,
-                                       double budget_ms, uint32_t *nonce, char *hexout, double *ms);
-          static double now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec / 1e9; }
-          int main(void) {
-              long lanes = sha256_sve2_width();
-              uint32_t mid[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
-              static uint8_t tails[16][64], out[16][32];
-              for (long l = 0; l < lanes; l++) {
-                  memset(tails[l], 0, 64);
-                  char s[8]; int n = snprintf(s, sizeof s, "%ld", l);
-                  memcpy(tails[l], s, n); tails[l][n] = 0x80;
-                  uint64_t bits = (64 + n) * 8;
-                  for (int i = 0; i < 8; i++) tails[l][56+i] = (uint8_t)(bits >> (8*(7-i)));
-              }
-              long iters = 100000;
-              sha256_compress_sve2((const uint32_t *)mid, (const uint8_t (*)[64])tails, out);
-              double t0 = now();
-              for (long i = 0; i < iters; i++) sha256_compress_sve2((const uint32_t *)mid, (const uint8_t (*)[64])tails, out);
-              double dt = now() - t0;
-              printf("sve2 batch  : %6.1f ns/candidate  (%ld lanes)\n", dt*1e9/(iters*(double)lanes), lanes);
-              uint32_t st[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
-              sha256_block_neon(st, tails[0]);
-              t0 = now();
-              for (long i = 0; i < iters * lanes; i++) sha256_block_neon(st, tails[0]);
-              dt = now() - t0;
-              printf("neon+crypto : %6.1f ns/block       (1 lane)\n", dt*1e9/(iters*(double)lanes));
-              char hex[129];
-              for (int i = 0; i < 64; i++) snprintf(hex + 2*i, 3, "%02x", i);
-              int reps = 10; double total = 0; uint32_t nonce; char dg[65];
-              for (int r = 0; r < reps; r++) {
-                  double ms = 0;
-                  if (anubis_solve_bits(hex, 20, 1, 60000.0, &nonce, dg, &ms) != 0) { printf("solve failed\n"); return 1; }
-                  total += ms;
-              }
-              printf("solver @20b : %6.2f ms/solve -> %.1f Mh/s (%sSVE2 batch)\n",
-                     total/reps, (1048576.0*reps)/(total/1000.0)/1e6,
-                     getenv("ANUBIS_NO_SVE2") ? "NO " : "");
-              return 0;
-          }
-          EOF
-          cc -O2 -o /tmp/bench /tmp/bench.c -L. -lanubis_solver -Wl,-rpath,"$PWD"
-          echo "--- SVE2 batch path on:"
-          /tmp/bench
-          echo "--- SVE2 batch path off (ANUBIS_NO_SVE2=1):"
-          ANUBIS_NO_SVE2=1 /tmp/bench
-
       - name: Unit tests (cross-checked against hashlib and argon2-cffi)
         run: python3 tests/test_core.py
 
-      - name: Unit tests with the SVE2 batch path off
+      - name: Unit tests with the SVE2 batch path forced on
         env:
-          ANUBIS_NO_SVE2: "1"
+          ANUBIS_SVE2: "1"
         run: python3 tests/test_core.py

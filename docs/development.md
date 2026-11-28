@@ -95,18 +95,32 @@ Dispatch is at run time and per arch: `anubis_batch_lanes()` returns 16
 (AVX-512), 8 (AVX2) or `svcntw()` (SVE2), or 0, and the `fast`/`slow` and
 wasm-`sha256` search loops hash that many nonces per call. Kill switches for
 A/B measurements: `ANUBIS_NO_AVX512`, `ANUBIS_NO_AVX2`, `ANUBIS_NO_SHANI`,
-`ANUBIS_NO_NEON`, `ANUBIS_NO_SVE2`.
+`ANUBIS_NO_NEON`; the SVE2 batch kernel is opt-in with `ANUBIS_SVE2=1`.
 
-### What SVE2 does and does not buy
+### What SVE2 does and does not buy (measured)
 
-Every CPU that implements SVE2 also implements FEAT_SHA256, and one `sha256h`
-block is about 60 cycles. A vectorized SVE2 kernel has no crypto-extension
-shortcut -- it is a plain 64-round vector SHA-256 -- so on a Neoverse N2
-(128-bit SVE) it is roughly 2x *slower* per block than the crypto path. What
-it is for is the batch path on a core where FEAT_SHA2 is missing, and the
-`arm64 asm` CI job, which runs `tests/test_cpu_sve2.py` on real SVE2 hardware
-and prints both numbers from the same binary. Do not quote the SVE2 row as a
-speedup over `neon.s` on a core that has both.
+One `sha256h` folds four rounds in one instruction, so `neon.s` hashes a block
+in ~31 ns; a vectorized SVE2 kernel has no crypto-extension shortcut and is a
+plain 64-round vector SHA-256, which measured ~262 ns per candidate with four
+lanes. On GitHub's `ubuntu-22.04-arm` and `ubuntu-24.04-arm` runners (Arm
+Neoverse N2, Cobalt 100), candidates per second of `anubis_solve_bits` at 20
+bits:
+
+| batch path | ns per candidate | solver |
+|---|---|---|
+| `sve2.s` forced on (`ANUBIS_SVE2=1`) | 262 | 3.9 Mh/s |
+| crypto extension (`neon.s`, default) | 31 | 18.6 Mh/s |
+
+So it is **not** a speedup and is **off by default**: `ANUBIS_SVE2=1` opts in.
+Every CPU that implements SVE2 also implements FEAT_SHA256, which is what the
+kernel is measured against; it exists as the batch path for a core without the
+crypto extension, and the arm64 CI job (`tests/test_cpu_sve2.py`) keeps it
+correct on real SVE2 hardware. The kernel is vector-length agnostic: the same
+code hashes 4 candidates on a 128-bit core, 8 on 256-bit and 16 on 512-bit.
+
+It can also be exercised without arm64 hardware: `qemu-user` implements SVE2,
+and `-cpu max,sve-max-vq=1` pins the vector length to 128 bits so the 4-lane
+path is the one that runs.
 
 The kernel is vector-length agnostic: it uses gather/scatter with an index
 vector, so the same code hashes 4 candidates on a 128-bit core, 8 on 256-bit

@@ -1186,11 +1186,17 @@ extern void sha256_compress_sve2(const uint32_t mid[8],
                                  const uint8_t tails[16][64],
                                  uint8_t out[16][32]);
 
+/* The SVE2 batch kernel is opt-in: ANUBIS_SVE2=1. Measured on a Neoverse N2
+ * (Cobalt 100) it costs ~262 ns per candidate against ~31 ns for neon.s, which
+ * folds a block with sha256h -- a plain 64-round vector SHA-256 cannot compete
+ * with the crypto extension, and every CPU with SVE2 also has FEAT_SHA2. The
+ * kernel is kept (and tested) as the batch path for a core without the crypto
+ * extension, and to keep the SVE2 code honest, not as a speedup. */
 static int anubis_sve2_available(void) {
     static int cached = -1;
     if (cached < 0) {
-        const char *off = getenv("ANUBIS_NO_SVE2");
-        if (off != NULL && off[0] != '\0' && off[0] != '0') {
+        const char *on = getenv("ANUBIS_SVE2");
+        if (on == NULL || on[0] == '\0' || on[0] == '0') {
             cached = 0;
         } else if ((getauxval(AT_HWCAP2) & HWCAP2_SVE2) == 0) {
             cached = 0;

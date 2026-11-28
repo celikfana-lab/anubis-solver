@@ -616,7 +616,7 @@ been run. Backends are auto-detected:
 | found | built |
 |---|---|
 | x86-64 | `src/cpu/x64/`: `avx2.s`, `shani.s` (AVX-512 too when the assembler and CPU support it) |
-| AArch64 | `src/cpu/arm/`: `neon.s` (ARMv8 SHA-2, runtime-checked via `HWCAP_SHA2`), `sve2.s` (4-way batch) |
+| AArch64 | `src/cpu/arm/`: `neon.s` (ARMv8 SHA-2, runtime-checked via `HWCAP_SHA2`), `sve2.s` (opt-in batch, see docs) |
 | `nvcc` | CUDA backends |
 | `level_zero/ze_api.h` | Level Zero backends |
 | `vulkan/vulkan.h` | Vulkan backends |

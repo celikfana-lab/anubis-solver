@@ -46,6 +46,7 @@ node betterAnusbis/tests_js_tensor_v.mjs  # `tensor-v` sample protocol + WebNN h
 ./betterAnusbis/test-meatrider-gate.sh    # suspicion buys a rung; a receipt buys the ASIC rung
 python3 tools/test_wallet.py --check       # the payout fixture derives from its own key
 ./firefox-extension/build-xpi.sh           # the Firefox add-on: build/anubis-solver-firefox-<ver>.xpi
+./firefox-extension/build-dist.sh          # add-on + host + engine for this platform, as a tarball
 python3 firefox-extension/test-native.py --start-gate   # native host vs a real sha256 challenge (--start-anubis for upstream Anubis)
 node firefox-extension/test-webgpu.js       # the WebGPU nonce placement vs node's crypto
 node firefox-extension/test-block.js        # the rule that stops Anubis's own wasm module

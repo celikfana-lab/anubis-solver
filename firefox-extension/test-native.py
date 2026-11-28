@@ -9,6 +9,7 @@ that a challenge from a *live* Anubis is solved and accepted. No browser needed.
     python3 firefox-extension/test-native.py --start-gate             # sha256, 20
     python3 firefox-extension/test-native.py --start-gate --algorithm hashx --difficulty 26
     python3 firefox-extension/test-native.py --start-anubis           # the real Anubis
+    python3 firefox-extension/test-native.py --host /path/anubis_native.py
 
 --start-gate builds a challenge in front of a throwaway backend, so the whole
 Anubis exchange (page, challenge JSON, pass-challenge, cookie) runs against
@@ -200,6 +201,7 @@ def start_anubis(algorithm: str, difficulty: int, binary: Path | None):
 
 def main() -> int:
     base = "http://127.0.0.1:8923/"
+    host = HOST
     algorithm = "sha256"
     difficulty = 20
     start = False
@@ -209,6 +211,8 @@ def main() -> int:
     for i, arg in enumerate(args):
         if arg == "--url" and i + 1 < len(args):
             base = args[i + 1]
+        elif arg == "--host" and i + 1 < len(args):
+            host = Path(args[i + 1])
         elif arg == "--algorithm" and i + 1 < len(args):
             algorithm = args[i + 1]
         elif arg == "--difficulty" and i + 1 < len(args):
@@ -226,8 +230,10 @@ def main() -> int:
     elif real:
         gate, backend, base = start_anubis(algorithm, difficulty, anubis_binary)
 
+    if not host.exists():
+        raise SystemExit(f"no native host at {host}")
     proc = subprocess.Popen(
-        [sys.executable, "-u", str(HOST), "manifest.json", "anubis-solver@celikfana-lab"],
+        [sys.executable, "-u", str(host), "manifest.json", "anubis-solver@celikfana-lab"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=False,
     )
     failures = 0

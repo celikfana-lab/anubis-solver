@@ -114,6 +114,54 @@ On Windows the host is the registry key above and `libanubis_solver` must be a
 `.dll` next to `anubis_native.py`; the extension does not care which of the two
 runs, it only sees whether the host answers.
 
+## Installing it for someone else
+
+Two levels, and the first one needs nothing but the add-on:
+
+**1. Browser only.** Install the `.xpi` (temporary via `about:debugging`, or
+signed for a permanent install). The extension solves challenges with WebGPU
+where the browser has it, otherwise with its bundled 4-wide wasm kernel. No
+Python, no native host, no build.
+
+**2. Add the native host** for the fast path (CUDA/Level Zero/Vulkan/SHA-NI).
+Firefox launches a native host as a separate process, so it is a second install
+and it needs three things on that machine: the host script, the Python module it
+imports, and the compiled engine for that platform.
+
+`./build-dist.sh` builds a directory and tarball with all of it:
+
+```
+build/anubis-solver-<ver>-<os>-<arch>/
+  anubis-solver-firefox-<ver>.xpi   the add-on
+  anubis_native.py                  the host Firefox launches
+  anubis_solver.py                  what it imports
+  libanubis_solver.so               the engine (.dylib/.dll elsewhere)
+  anubis_solver.json, install.sh    manifest template + installer
+  INSTALL.txt, README.md
+```
+
+On the other machine: unpack, `./install.sh`, restart Firefox (native manifests
+are read at startup, not per page), then load the `.xpi`. The host finds the
+module and the engine beside itself, so the directory can live anywhere - and
+`ANUBIS_SOLVER_HOME` / `ANUBIS_SOLVER_LIB` override that if you keep them
+somewhere else.
+
+Caveats, in order of how often they bite:
+
+- **The engine is per platform.** The tarball carries the binary built on the
+  machine that ran `build-dist.sh`: Linux x86-64 builds a `.so`, macOS a
+  `.dylib`, Windows needs `anubis_solver.dll`. There is no cross-build here; run
+  `build-dist.sh` on each platform you support, or give that user the checkout
+  and `make`.
+- **Windows has no `install.sh`.** The manifest goes in the registry:
+  `HKCU\Software\Mozilla\NativeMessagingHosts\anubis_solver`, default value =
+  absolute path of `anubis_solver.json`, whose `path` must name
+  `anubis_native.py` absolutely.
+- **A permanent add-on install needs a signature** (AMO, or
+  `./build-xpi.sh --sign` with AMO keys). `about:debugging` loads are per session.
+- `test-native.py --host <path>` runs the protocol against any host script, which
+  is how the packaged directory above is checked without a browser.
+
 ## The toolbar panel
 
 Clicking the add-on's button opens a panel over the page: solves taken, time

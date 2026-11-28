@@ -35,22 +35,73 @@ from pathlib import Path
 
 MAX_MESSAGE = 1 << 20          # Firefox refuses host messages larger than 1 MB
 
-# The extension is installed beside this checkout; find the library from here.
-HERE = Path(__file__).resolve().parent
-REPO = HERE.parent.parent
+here = Path(__file__).resolve().parent
+HERE = here
 
 
 def _log(*parts: object) -> None:
     print("[anubis-native]", *parts, file=sys.stderr, flush=True)
 
 
+def _solver_roots() -> list[Path]:
+    """Where the Python module and the shared library may live.
+
+    Two layouts have to work, because the same file is used for both:
+
+      checkout   firefox-extension/native-host/anubis_native.py
+                 with anubis_solver.py and libanubis_solver.so two levels up
+      dist       <somewhere>/anubis-solver-<ver>-<os>/
+                 with the module and the library right here, next to the host
+
+    ANUBIS_SOLVER_HOME overrides both, and ANUBIS_SOLVER_LIB names a library
+    file directly.
+    """
+    roots: list[Path] = []
+    env = os.environ.get("ANUBIS_SOLVER_HOME")
+    if env:
+        roots.append(Path(env))
+    roots.extend([HERE, HERE.parent, HERE.parent.parent])
+    seen, out = set(), []
+    for root in roots:
+        try:
+            key = root.resolve()
+        except OSError:
+            continue
+        if key not in seen:
+            seen.add(key)
+            out.append(root)
+    return out
+
+
 def _load_solver():
-    """Import the repository's Python module, wherever this checkout lives."""
-    sys.path.insert(0, str(REPO))
+    """Import anubis_solver from whichever layout we are running in."""
+    roots = _solver_roots()
+    for root in roots:
+        if (root / "anubis_solver.py").exists():
+            sys.path.insert(0, str(root))
+            break
+    else:
+        tried = ", ".join(str(r) for r in roots)
+        raise SystemExit(
+            "cannot find anubis_solver.py next to the host; looked in: "
+            f"{tried}. Set ANUBIS_SOLVER_HOME to the directory that holds it."
+        )
+
+    # A library shipped beside the host wins over anything else, so a dist
+    # directory is self-contained.
+    for name in ("libanubis_solver.so", "libanubis_solver.dylib", "anubis_solver.dll"):
+        candidate = HERE / name
+        if candidate.exists() and not os.environ.get("ANUBIS_SOLVER_LIB"):
+            os.environ["ANUBIS_SOLVER_LIB"] = str(candidate)
+            break
+
     try:
         import anubis_solver  # noqa: PLC0415
-    except Exception as err:  # pragma: no cover - only on a broken checkout
-        raise SystemExit(f"cannot import anubis_solver from {REPO}: {err}") from err
+    except Exception as err:  # pragma: no cover - only on a broken install
+        raise SystemExit(
+            f"cannot import anubis_solver ({err}); set ANUBIS_SOLVER_HOME to the "
+            "directory that holds anubis_solver.py and libanubis_solver.so"
+        ) from err
     return anubis_solver
 
 

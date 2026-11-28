@@ -11,14 +11,34 @@ set -euo pipefail
 
 NAME="anubis_solver"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOST="$HERE/native-host/anubis_native.py"
-MANIFEST_SRC="$HERE/native-host/anubis_solver.json"
+
+# Two layouts: the checkout (host under native-host/) and the distribution built
+# by build-dist.sh (host and manifest next to this script).
+if [ -f "$HERE/native-host/anubis_native.py" ]; then
+  HOST="$HERE/native-host/anubis_native.py"
+  MANIFEST_SRC="$HERE/native-host/anubis_solver.json"
+else
+  HOST="$HERE/anubis_native.py"
+  MANIFEST_SRC="$HERE/anubis_solver.json"
+fi
 
 if [ ! -f "$HOST" ]; then
-  echo "error: $HOST is missing" >&2
+  echo "error: no anubis_native.py here or in native-host/" >&2
+  exit 1
+fi
+if [ ! -f "$MANIFEST_SRC" ]; then
+  echo "error: no anubis_solver.json here or in native-host/" >&2
   exit 1
 fi
 chmod +x "$HOST"
+
+# The host imports anubis_solver.py and loads the engine from its own directory
+# or the ones above it; a distribution ships both beside it.
+if [ ! -f "$HERE/anubis_solver.py" ] && [ ! -f "$HERE/../anubis_solver.py" ] && \
+   [ ! -f "$HERE/../../anubis_solver.py" ]; then
+  echo "warning: anubis_solver.py is not above this script; the host will" >&2
+  echo "         refuse to start unless ANUBIS_SOLVER_HOME points at it" >&2
+fi
 
 case "$(uname -s)" in
   Linux)

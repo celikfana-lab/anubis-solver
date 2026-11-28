@@ -405,7 +405,7 @@ path, so `-o`, `-i`, `-w`, `-X`, `-d` and cookie jars keep working.
 
 ```bash
 cd curl-anubis && ./build.sh     # needs ../curl as the curl source
-./test.sh                        # 17 checks against betterAnusbis
+./test.sh                        # 23 checks against betterAnusbis
 ```
 
 ### betterAnusbis: the gate, in one C file

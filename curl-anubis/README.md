@@ -55,6 +55,34 @@ $ ./curl-anubis -v https://example-anubis-site/ 2>&1 | grep anubis
 * anubis: solved the sha256 challenge at difficulty 4 in 0.3 ms (nonce 40), retrying
 ```
 
+## Cookies, and not solving twice
+
+Anubis's pass is a cookie, so curl's own cookie options are the persistence layer
+and there is nothing new to learn:
+
+```console
+$ ./curl-anubis -c jar.txt https://site/     # solves, writes the jar
+$ ./curl-anubis -b jar.txt https://site/     # reuses it: no challenge, no solve
+```
+
+The auth cookie reaches the jar because the answer to the challenge is injected
+into the transfer's own cookie store, so `-c` records it like any other cookie
+(HttpOnly, with whatever expiry the gate chose — 7 days by default). `-b` hands
+it back on the next run, and the gate serves the page before a challenge is ever
+issued.
+
+Three details that matter for a scraper:
+
+- **One solve per process per host is the normal case.** One invocation with
+  several URLs on the same host solves once and reuses the cookie for the rest,
+  because curl's handles share a cookie store. `curl-anubis -c jar.txt $(cat
+  urls.txt) -O` therefore costs one challenge per host, not one per URL.
+- **A stale or foreign cookie is solved again, not obeyed.** An expired entry, a
+  corrupted token, or a jar from another host gets challenged again and answered;
+  the test suite runs exactly that case rather than trusting it.
+- **The jar is written at exit**, so a killed process persists nothing. That is
+  curl's behaviour and it is the right one.
+
 ## Building
 
 ```console
@@ -85,7 +113,9 @@ It starts a static backend, puts `betterAnusbis` in front of it, and checks that
 plain `curl` gets the interstitial while `curl-anubis` gets the page: with `-o`,
 with `-d` POSTs, with `--no-anubis`, with `-i`, on a site that is not protected
 at all (byte-identical output to plain curl), and with the challenge counted in
-the gate's log so a second request is not silently doubling up.
+the gate's log so a second request is not silently doubling up — and the cookie
+round trip: `-c` writes, `-b` reuses without a second solve, a stale jar is
+solved again.
 
 ## What it costs
 

@@ -16,6 +16,16 @@ GATE=${GATE:-$HERE/../betterAnusbis/betterAnusbis}
 DIFFICULTY=${DIFFICULTY:-4}
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/curl-anubis-test.XXXXXX")
+
+# the ports this script uses; a leftover server on one of them makes every
+# check lie, so say so instead of testing the wrong thing
+for port in 8811 8813 8912 8913 8914; do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+        exec 3>&-
+        echo "test.sh: port $port is already in use; stop that server first" >&2
+        exit 1
+    fi
+done
 PASS=0
 FAIL=0
 BACK_PID=
@@ -163,13 +173,39 @@ wait_port 8913 || { echo "test.sh: difficulty-16 gate did not start" >&2; exit 1
 out=$("$CURL_ANUBIS" -s http://127.0.0.1:8913/)
 [ "$out" = "$BEHIND" ]; check "difficulty 16 is solved and returns the page" $?
 
-# 12. HEAD is the gate's own headers: Anubis sends no challenge body to a HEAD
+# 12. cookies persist: -c writes the jar, -b reads it back, and a jar that has
+#     gone stale is solved again instead of failing.
+JAR="$TMP/jar.txt"
+rm -f "$JAR"
+out=$("$CURL_ANUBIS" -s -c "$JAR" http://127.0.0.1:8913/)
+[ "$out" = "$BEHIND" ]; check "-c writes a cookie jar" $?
+grep -q "anubis-auth" "$JAR" 2>/dev/null
+check "the jar carries the Anubis auth cookie" $?
+
+n=$("$CURL_ANUBIS" -v -b "$JAR" -o /dev/null http://127.0.0.1:8913/ 2>&1 |
+        grep -c "anubis: solved")
+[ "$n" = 0 ]; check "-b reuses the cookie: no second solve (solved $n times)" $?
+
+# a jar whose token is garbage must be challenged again, not obeyed
+awk 'BEGIN{FS=OFS="\t"} /-anubis-auth/ {$7="broken.TOKEN.value"} {print}' \
+    "$JAR" > "$TMP/jar-bad.txt"
+n=$("$CURL_ANUBIS" -v -b "$TMP/jar-bad.txt" -o "$TMP/stale.html" \
+        http://127.0.0.1:8913/ 2>&1 | grep -c "anubis: solved")
+[ "$n" = 1 ]; check "a stale cookie is solved again (solved $n times)" $?
+[ "$(cat "$TMP/stale.html")" = "$BEHIND" ]; check "the stale-cookie run still gets the page" $?
+
+# one invocation, two URLs on the same gate: the cookie is shared, one solve
+n=$("$CURL_ANUBIS" -v -o /dev/null http://127.0.0.1:8913/ \
+        -o /dev/null http://127.0.0.1:8913/ 2>&1 | grep -c "anubis: solved")
+[ "$n" = 1 ]; check "two URLs in one run are solved once (solved $n times)" $?
+
+# 13. HEAD is the gate's own headers: Anubis sends no challenge body to a HEAD
 #     request, so there is nothing to solve and the interstitial headers are what
 #     a HEAD gets, exactly as with plain curl.
 "$CURL_ANUBIS" -s -I http://127.0.0.1:8913/ > "$TMP/head.txt"
 grep -qi "^HTTP/.* 200" "$TMP/head.txt"; check "-I returns the gate's headers" $?
 
-# 13. metarefresh: a timing challenge, no hashing, solved by waiting
+# 14. metarefresh: a timing challenge, no hashing, solved by waiting
 kill "$GATE_PID" 2>/dev/null
 wait "$GATE_PID" 2>/dev/null
 "$GATE" --target http://127.0.0.1:8811 --listen 127.0.0.1:8914 \

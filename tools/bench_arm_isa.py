@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
     }
     double mhs = solves ? (1048576.0 * solves) / (total / 1000.0) / 1e6 : 0.0;
 
-    printf("%ld %ld %ld %.1f %.1f %.2f %.1f %s\n", lanes, iters, solves,
+    printf("%ld %ld %ld %.1f %.1f %.2f %.1f %s\n", lanes, iters, (long)solves,
            sve2_ns, neon_ns, total / (solves ? solves : 1), mhs,
            getenv("ANUBIS_SVE2") ? "on" : "off");
     return 0;

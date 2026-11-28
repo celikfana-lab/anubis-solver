@@ -260,7 +260,7 @@ kernel, so a Python loop measures the FFI boundary instead of the kernel.
 | path | per candidate | `sha256` b20 |
 |---|---:|---:|
 | `src/cpu/arm/neon.s` — one block via `sha256h` (default) | **31 ns** (~62 cycles) | **18.6 MH/s** |
-| `src/cpu/arm/sve2.s` — four candidates, `ANUBIS_SVE2=1` | 262 ns | 3.9 MH/s |
+| `src/cpu/arm/sve2.s` — four candidates, `ANUBIS_SVE2=1` | 261-262 ns | 3.9 MH/s |
 | ratio | 8.5x slower | 4.8x slower |
 
 The cause is instruction count, not stalls — both paths run at about 2 IPC:

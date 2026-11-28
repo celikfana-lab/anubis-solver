@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parity and speed for the SVE2 batch kernel (src/cpu/arm/sve2.s).
+"""Parity for the SVE2 batch kernel (src/cpu/arm/sve2.s).
 
 The kernel hashes N candidate messages that share a midstate:
 
@@ -115,15 +115,12 @@ def main():
 
     # hashlib is the independent oracle: prefix + suffix, digested in one go
     trial = 0
-    print("calling the kernel...", flush=True)
     for base in (0, 7, 999_999, 2**32 - 3, 123_456_789):
         for step in range(1, 41):
             for lane in range(lanes):
                 suffix = str(base + step * lane).encode()
                 tails[lane * 64:(lane + 1) * 64] = padded_tail(64, suffix)
             lib.sha256_compress_sve2(mid, tails, out)
-            if trial == 0 and step == 1:
-                print("first call returned", flush=True)
             for lane in range(lanes):
                 suffix = str(base + step * lane).encode()
                 want = hashlib.sha256(prefix + suffix).digest()
@@ -133,26 +130,10 @@ def main():
             trial += 1
     print("parity: %d digests compared against hashlib" % checks)
 
-    # speed: the SVE2 batch kernel against the 1-way crypto kernel it is
-    # compared with in the dispatch, same padded blocks
-    lib.sha256_block_neon.argtypes = [ctypes.POINTER(ctypes.c_uint32),
-                                      ctypes.POINTER(ctypes.c_uint8)]
-    state = (ctypes.c_uint32 * 8)(*mid_words)
-    block = ctypes.cast(tails, ctypes.POINTER(ctypes.c_uint8))
-    iters = 4000
-    t0 = time.perf_counter()
-    for _ in range(iters):
-        lib.sha256_compress_sve2(mid, tails, out)
-    sve2_ns = (time.perf_counter() - t0) * 1e9 / (iters * lanes)
-    t0 = time.perf_counter()
-    for _ in range(iters * lanes):
-        lib.sha256_block_neon(state, block)
-    neon_ns = (time.perf_counter() - t0) * 1e9 / (iters * lanes)
-    print("  batch sve2 : %8.1f ns per candidate-block (%.1f cycles @2.6GHz)"
-          % (sve2_ns, sve2_ns * 2.6))
-    print("  neon+sha2  : %8.1f ns per candidate-block (%.1f cycles @2.6GHz)"
-          % (neon_ns, neon_ns * 2.6))
-    print("  ratio      : %.2fx (sve2 / neon+sha2)" % (sve2_ns / neon_ns))
+    # No timing here on purpose: one ctypes call is microseconds, which is
+    # 10x the kernel itself, so a per-call loop would measure Python. The
+    # candidate-level comparison lives in docs/development.md, measured with a
+    # C benchmark on arm64 hardware.
 
     if failures:
         print("FAILED (%d of %d)" % (failures, checks))

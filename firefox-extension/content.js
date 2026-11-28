@@ -49,7 +49,36 @@
     worker: null,
     titleHtml: null,
     imageSrc: null,
+    gpu: null,
   };
+
+  /** "Vulkan · Intel(R) Iris(R) Xe Graphics (ADL GT2)" or "AVX-512 · 4 threads". */
+  function engineLabel() {
+    if (state.mode === "gpu") return state.kernel ? `WebGPU · ${state.kernel}` : "WebGPU";
+    if (state.mode === "wasm") return state.kernel || "wasm";
+    if (state.mode !== "native") return "page solver";
+    const kernel = state.kernel || "native";
+    const label = KERNEL_LABEL[kernel] ?? kernel;
+    if (CPU_KERNELS.has(kernel)) {
+      return state.threads ? `${label} · ${state.threads} threads` : label;
+    }
+    return state.gpu ? `${label} · ${state.gpu}` : label;
+  }
+
+  // anubis_active_kernel() names: the GPU backends and the CPU SIMD kernels.
+  const KERNEL_LABEL = {
+    cuda: "CUDA",
+    levelzero: "Level Zero",
+    vulkan: "Vulkan",
+    opencl: "OpenCL",
+    avx512: "AVX-512",
+    avx2: "AVX2",
+    shani: "SHA-NI",
+    cpu: "CPU",
+    tpu: "TPU",
+    hashx: "HashX",
+  };
+  const CPU_KERNELS = new Set(["avx512", "avx2", "shani", "cpu"]);
 
   const MODE_LABEL = {
     native: "Solving natively",
@@ -127,8 +156,8 @@
     }
     const label = MODE_LABEL[state.mode] ?? "Solving";
     const bits = [`${label} · ${state.challenge?.algorithm ?? ""} · difficulty ${state.challenge?.difficulty ?? "?"}`];
+    bits.push(engineLabel());
     if (state.rate) bits.push(humanRate(state.rate));
-    if (state.threads) bits.push(`${state.threads} threads`);
     if (state.phase === "error") bits.push(String(state.error ?? "failed").slice(0, 48));
     else if (pct) bits.push(`${pct.toFixed(0)}%`);
     return bits.join(" — ");
@@ -167,11 +196,7 @@
     // if the page has no such elements (some Anubis versions), fall back to a panel
     if (!status && !progress) ensurePanel();
     if (panelRefs) {
-      panelRefs.engine.textContent =
-        state.mode === "native" ? `${state.kernel}`
-        : state.mode === "gpu" ? `webgpu · ${state.kernel}`
-        : state.mode === "wasm" ? `wasm · ${state.kernel}`
-        : "page solver";
+      panelRefs.engine.textContent = engineLabel();
       panelRefs.fill.style.width = `${pct}%`;
       panelRefs.pct.textContent = `${pct.toFixed(0)}%`;
       panelRefs.rate.textContent = humanRate(state.rate);
@@ -225,6 +250,7 @@
       if (frame.event === "start") {
         state.mode = "native";
         state.kernel = frame.kernel ?? "native";
+        state.gpu = frame.gpu ?? state.gpu;
         state.rate = frame.rate ?? 0;
         state.estimateMs = frame.estimateMs ?? 0;
         state.threads = frame.threads ?? 0;
@@ -233,6 +259,8 @@
       } else if (frame.event === "progress") {
         state.pct = frame.pct ?? 0;
         state.rate = frame.rate ?? state.rate;
+        if (frame.kernel) state.kernel = frame.kernel;
+        state.gpu = frame.gpu ?? state.gpu;
       } else if (frame.event === "done") {
         state.phase = frame.ok ? "done" : "error";
         state.error = frame.error;

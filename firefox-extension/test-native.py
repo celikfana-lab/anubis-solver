@@ -299,8 +299,10 @@ def main() -> int:
                         break
                 start, done = frames[0], frames[-1]
                 check("stream: the first frame names the engine",
-                      start.get("event") == "start" and bool(start.get("kernel")),
-                      f"{start.get('kernel')} at {start.get('rate', 0) / 1e6:.2f} MH/s, "
+                      start.get("event") == "start" and bool(start.get("kernel"))
+                      and bool(start.get("gpu")),
+                      f"{start.get('kernel')} on {start.get('gpu')} at "
+                      f"{start.get('rate', 0) / 1e6:.2f} MH/s, "
                       f"~{start.get('estimateMs', 0) / 1000:.1f} s")
                 check("stream: progress frames are well formed",
                       all(0 <= f.get("pct", 0) <= 99 for f in frames[1:-1]),

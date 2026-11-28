@@ -88,6 +88,18 @@ def write_message(stream, payload: dict) -> None:
     stream.flush()
 
 
+def _engine_hint(solver) -> str:
+    """The backend a solve will most likely pick: the best one that answers."""
+    try:
+        available = solver.backends()
+    except Exception:
+        return solver.active_kernel()
+    for name in ("cuda", "levelzero", "vulkan", "opencl"):
+        if name in available:
+            return name
+    return "cpu"
+
+
 def _payload_solution(module, solver, payload: dict):
     """The library's own payload shape, so its parser does the work."""
     return solver.solve({
@@ -149,9 +161,13 @@ def solve_streaming(solver, payload: dict, emit) -> None:
         except Exception as err:                       # survives a bad challenge
             result.update({"ok": False, "error": f"{type(err).__name__}: {err}"})
 
+    # active_kernel() only knows what the last solve used, so the first frame
+    # names the best backend this machine has and the progress frames replace
+    # it with what is actually running.
     emit({"event": "start", "algorithm": algorithm, "difficulty": difficulty,
-          "kernel": solver.active_kernel(), "rate": rate,
-          "estimateMs": estimate_ms, "threads": solver.threads})
+          "kernel": _engine_hint(solver), "rate": rate,
+          "estimateMs": estimate_ms, "threads": solver.threads,
+          "gpu": solver.gpu, "backends": solver.backends()})
     thread = threading.Thread(target=work, daemon=True)
     thread.start()
     while thread.is_alive():
@@ -159,11 +175,12 @@ def solve_streaming(solver, payload: dict, emit) -> None:
         emit({"event": "progress", "elapsedMs": elapsed,
               "estimateMs": estimate_ms,
               "pct": min(99.0, elapsed / max(estimate_ms, 1.0) * 100.0),
-              "rate": rate, "kernel": solver.active_kernel()})
+              "rate": rate, "kernel": solver.active_kernel(),
+              "gpu": solver.gpu, "threads": solver.threads})
         thread.join(0.12)
     thread.join()
     done = {"event": "done", "kernel": solver.active_kernel(), "rate": rate,
-            "estimateMs": estimate_ms}
+            "estimateMs": estimate_ms, "gpu": solver.gpu}
     done.update(result)
     emit(done)
 

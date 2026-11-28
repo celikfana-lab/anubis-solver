@@ -13,6 +13,17 @@ engines, and paints the result into Anubis's own progress bar:
 3. **wasm 4-wide** — the repository's `wasm/sha256_pow_batch.wasm` in a Worker,
    when neither of the above is available.
 
+The bar names the engine, not just the tier: the native host reports which
+backend actually ran (`vulkan`, `levelzero`, `cuda`, `opencl`, `avx512`, `avx2`,
+`shani`, `cpu`) and the device it ran on, so the line reads
+
+    Solving natively · sha256 · difficulty 32 — Vulkan · Intel(R) Iris(R) Xe Graphics (ADL GT2) — 137.2 MH/s — 42%
+
+or `AVX-512 · 4 threads` on the CPU, or `WebGPU · Intel · Intel(R) Iris(R) Xe
+Graphics` in the browser path. The first frame names the best backend the
+machine has before anything runs; the progress frames replace it with the one
+that is actually working, so it can change once at the start.
+
 Before any of that, the page's own solver is stopped. Anubis's `main.mjs`
 fetches `…/.within.website/x/cmd/anubis/static/wasm/{simd128,baseline}/{alg}.wasm`,
 compiles it with `WebAssembly.compileStreaming`, and posts the module into a

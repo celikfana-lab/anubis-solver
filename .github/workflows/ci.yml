@@ -51,3 +51,50 @@ jobs:
 
       - name: tensor CUDA test (skips without a device)
         run: python3 tests/test_tensor_cuda.py
+
+  # The aarch64 kernels in src/cpu/arm/ are hand-written: neon.s folds one
+  # block with the ARMv8 SHA-2 extension, sve2.s vectorizes N candidates with
+  # SVE2. Neither can be assembled or executed on the x86 job above, so the
+  # same build+test runs here on real arm64 hardware. 24.04 is the current
+  # image, 22.04 the older toolchain (binutils 2.38, gcc 11) that still has to
+  # assemble the .arch directives.
+  arm64:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.os }}
+    name: arm64 asm (${{ matrix.os }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the native library
+        run: make -j"$(nproc)"
+
+      - name: Which kernels this CPU has
+        run: |
+          lscpu | grep -E 'Model name|Model' || true
+          grep -m1 '^Features' /proc/cpuinfo | tr ' ' '\n' | grep -E '^(sve|sve2|sha2|sha3)$' | sort | tr '\n' ' '; echo
+          python3 - <<'PY'
+          import ctypes, os
+          lib = ctypes.CDLL(os.path.abspath("libanubis_solver.so"))
+          if hasattr(lib, "sha256_sve2_width"):
+              lib.sha256_sve2_width.restype = ctypes.c_long
+              print("SVE2 kernel lanes:", lib.sha256_sve2_width())
+          else:
+              print("SVE2 kernel: not built")
+          PY
+
+      - name: Unit tests (cross-checked against hashlib and argon2-cffi)
+        run: python3 tests/test_core.py
+
+      - name: Unit tests with the SVE2 batch path off
+        env:
+          ANUBIS_NO_SVE2: "1"
+        run: python3 tests/test_core.py
+
+      - name: SVE2 batch kernel parity and speed
+        run: python3 tests/test_cpu_sve2.py

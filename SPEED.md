@@ -223,7 +223,7 @@ Raw data: [`results/server-2026-11-12.json`](results/server-2026-11-12.json).
 
 ## Raspberry Pi 5 (Cortex-A76)
 
-ARMv8 SHA-2 hardware path (`src/neon.s`), 4 cores at 2.4 GHz, 2 GB RAM,
+ARMv8 SHA-2 hardware path (`src/cpu/arm/neon.s`), 4 cores at 2.4 GHz, 2 GB RAM,
 measured 2026-11-12:
 
 | threads | `fast` d6 | `sha256` bits20 | `hashx` d15 | `argon2id` |
@@ -801,7 +801,7 @@ spread is wider because ANV recompiles the pipeline on some dispatches).
 Four things are worth being precise about:
 
 - **The kernel is byte-identical across the tier, the *driver* is not.** The
-  SHA-256 compression in `src/cpu/avx2.s` does not care which bytes it is
+  SHA-256 compression in `src/cpu/x64/avx2.s` does not care which bytes it is
   compressing, so `tools/gen_meatrider_s.py` re-emits the `sha256` tier's
   assembly under `meatrider` symbols and `meatrider_simd.c` feeds it Bitcoin
   blocks. The two copies exist so the tiers can diverge — fusing both

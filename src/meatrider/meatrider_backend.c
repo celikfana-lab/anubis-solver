@@ -158,10 +158,15 @@ int meatrider_backend_digest(int id, const meatrider_ctx *ctx, uint32_t nonce,
         meatrider_hash(ctx, nonce, out);
         return 0;
     case MR_BACKEND_SHANI:
+#ifdef MEATRIDER_HAVE_SIMD
         if (!meatrider_shani_available()) return -1;
         meatrider_hash_shani(ctx, nonce, out);
         return 0;
+#else
+        return -1; /* this build has no x86-64 assembly kernels */
+#endif
     case MR_BACKEND_AVX2:
+#ifdef MEATRIDER_HAVE_SIMD
         if (!meatrider_avx2_available()) return -1;
         {
             uint8_t lanes[16][32];
@@ -169,7 +174,11 @@ int meatrider_backend_digest(int id, const meatrider_ctx *ctx, uint32_t nonce,
             memcpy(out, lanes[0], 32);
         }
         return 0;
+#else
+        return -1; /* this build has no x86-64 assembly kernels */
+#endif
     case MR_BACKEND_AVX512:
+#ifdef MEATRIDER_HAVE_SIMD
         if (!meatrider_avx512_available()) return -1;
         {
             uint8_t lanes[16][32];
@@ -177,6 +186,9 @@ int meatrider_backend_digest(int id, const meatrider_ctx *ctx, uint32_t nonce,
             memcpy(out, lanes[0], 32);
         }
         return 0;
+#else
+        return -1; /* this build has no x86-64 assembly kernels */
+#endif
     default:
         /* The accelerators hash to a hit buffer, not a digest buffer, so their
          * per-nonce digest is asked for through the search itself; see

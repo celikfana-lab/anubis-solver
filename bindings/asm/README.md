@@ -111,14 +111,14 @@ The root `Makefile` picks its CPU kernel and its Argon2id implementation from
 ```bash
 make -C $REPO CC=aarch64-linux-gnu-gcc BUILD=$REPO/build-arm64 \
      LIB=$REPO/build-arm64/libanubis_solver.so \
-     NATIVE= ASM_SRC=src/cpu/neon.s CFLAGS="-O3 -fPIC -Wall -Wextra" \
+     NATIVE= ASM_SRC=src/cpu/arm/neon.s CFLAGS="-O3 -fPIC -Wall -Wextra" \
      ARGON2_SRC="third_party/argon2/argon2.c third_party/argon2/core.c \
                  third_party/argon2/encoding.c third_party/argon2/ref.c \
                  third_party/argon2/thread.c third_party/argon2/blake2/blake2b.c" \
      CUDA=0 VULKAN=0
 ```
 
-Without `ASM_SRC=src/cpu/neon.s` it tries to hand the x86 `.s` files to the
+Without `ASM_SRC=src/cpu/arm/neon.s` it tries to hand the x86 `.s` files to the
 AArch64 assembler; without `ARGON2_SRC=...ref.c...` it picks argon2's SSE `opt.c`
 and dies on `emmintrin.h`. `NATIVE=` removes `-march=native`, which a cross
 compiler rejects. This is exactly what `make arm-lib` does.

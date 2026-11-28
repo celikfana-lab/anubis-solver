@@ -242,7 +242,7 @@ def main() -> None:
              "\n    /* initial state */", emit_state_init(),
              "\n    /* 64 rounds: schedule updated in place, roles rotated */",
              emit_rounds(), emit_epilogue()]
-    out = Path(__file__).resolve().parent.parent / "src" / "cpu" / "avx512.s"
+    out = Path(__file__).resolve().parent.parent / "src" / "cpu" / "x64" / "avx512.s"
     with open(out, "w") as f:
         f.write("\n".join(parts))
     print(f"wrote {out}")

@@ -72,7 +72,7 @@ $ make config
    SASS     : measured reference exists - 7 file(s) for sm_75
 2. CPU architecture : x86_64
 3. CPU features     : AVX2 yes, AVX-512F no, SHA-NI yes
-   best SHA-256 path: src/cpu/shani.s (SHA-NI) + src/cpu/avx2.s
+   best SHA-256 path: src/cpu/x64/shani.s (SHA-NI) + src/cpu/x64/avx2.s
 ```
 
 It writes `config.mk` and passes `-arch=` to nvcc — **which the build

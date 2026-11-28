@@ -77,7 +77,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 |---|---|
 | `src/core/anubis_solver.c` | core: hashing, search loop, backend dispatch, verification |
 | `src/hashx/hashx.c/.h` | HashX generator, interpreter, x86-64/AArch64 JITs (LGPL-3.0) |
-| `src/cpu/*.s` | hand-written SHA-256 kernels (AVX2, SHA-NI, AVX-512, NEON) |
+| `src/cpu/x64/*.s`, `src/cpu/arm/*.s` | hand-written SHA-256 kernels: AVX2/AVX-512/SHA-NI, and NEON/SVE2 |
 | `src/meatrider/` | the Bitcoin-header tier: the portable reference, `meatrider_*` clones of the CPU kernels, one kernel per accelerator, the backend table, the PTX kernel, and a README that says which byte is what |
 | `src/nvidia/cuda/*.cu` | CUDA backends (SHA-256, Argon2id, HashX) |
 | `src/intel/xe/` | Intel Xe (gen12lp) assembly for the SHA-256 kernel: a hand-written listing from `tools/gen_xe_sha256.py`, and IGC's own code extracted from a Zebin that ran on the GPU |
@@ -138,7 +138,7 @@ make xe-loader && ./build/xe-loader --text /tmp/intelXe_sha256.krn   # run the h
 | `src/vulkan/argon2id.spv(.h)` | `tools/build_argon2_vk.sh` |
 | `src/intel/levelzero/hashx_l0.spv(.h)`, `src/vulkan/hashx.spv(.h)` | clang/llvm-spirv and `glslangValidator` (see `docs/development.md`) |
 | `src/opencl/opencl_kernels.h` | `python3 tools/embed_opencl_kernels.py` |
-| `src/cpu/avx2.s`, `src/cpu/avx512.s` | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` |
+| `src/cpu/x64/avx2.s`, `src/cpu/x64/avx512.s` | `tools/gen_avx2_s.py`, `tools/gen_avx512_s.py` |
 | `src/meatrider/meatrider_{avx2,avx512,shani}.s` | `python3 tools/gen_meatrider_s.py` (re-emits the `sha256` tier's kernels under meatrider symbols; `--check` fails when stale) |
 | `src/vulkan/meatrider_comp.spv(.h)` | `GLSLANG=/path/to/glslangValidator tools/build_meatrider_vk.sh` |
 | `src/meatrider/meatrider.ptx` | `python3 tools/gen_meatrider_ptx.py --ilp 1` |

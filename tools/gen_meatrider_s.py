@@ -13,7 +13,7 @@ kernels it needs are exactly the ones the `sha256` tier already has:
     meatrider_block_shani(state[8], block[64])
 
 This script re-emits them from tools/gen_avx2_s.py, tools/gen_avx512_s.py and
-src/cpu/shani.s with the meatrider symbol and a meatrider header, so there is
+src/cpu/x64/shani.s with the meatrider symbol and a meatrider header, so there is
 one instruction sequence to review, not two. The copies exist so the two tiers
 can diverge: fusing the two compressions of a Bitcoin hash into one kernel is a
 `meatrider` change and must not disturb the `sha256` tier.
@@ -75,7 +75,7 @@ def build_avx512(gen) -> str:
 
 
 def build_shani() -> str:
-    src = (ROOT / "src" / "cpu" / "shani.s").read_text()
+    src = (ROOT / "src" / "cpu" / "x64" / "shani.s").read_text()
     return strip_header(src).replace("sha256_block_shani",
                                      "meatrider_block_shani")
 
@@ -131,7 +131,7 @@ HEADER_SHANI = """\
  * meatrider_shani.s — SHA-256 single-block compression via Intel SHA
  * extensions, for the `meatrider` tier.
  *
- * Re-emitted from src/cpu/shani.s by tools/gen_meatrider_s.py: the same
+ * Re-emitted from src/cpu/x64/shani.s by tools/gen_meatrider_s.py: the same
  * hand-written sequence the `sha256` tier runs, under the meatrider symbol.
  *
  *   void meatrider_block_shani(uint32_t state[8], const uint8_t block[64]);

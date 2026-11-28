@@ -182,14 +182,14 @@ def main():
         for k, label in keys:
             print("   %-10s %s" % (label, "yes" if cpu.get(k) else "no"))
         print("   best SHA-256 path: %s" % {
-            "avx512": "src/cpu/avx512.s (16-way)",
-            "avx2": ("src/cpu/shani.s (SHA-NI, 1 way) + src/cpu/avx2.s"
-                     if cpu.get("sha_ni") else "src/cpu/avx2.s"),
+            "avx512": "src/cpu/x64/avx512.s (16-way)",
+            "avx2": ("src/cpu/x64/shani.s (SHA-NI, 1 way) + src/cpu/x64/avx2.s"
+                     if cpu.get("sha_ni") else "src/cpu/x64/avx2.s"),
             "portable": "portable C"}[cpu["simd"]])
     else:
         for k, label in [("neon", "NEON/ASIMD"), ("sha2", "SHA-2"), ("sve", "SVE")]:
             print("   %-10s %s" % (label, "yes" if cpu.get(k) else "no"))
-        print("   best SHA-256 path: %s" % ("src/cpu/neon.s" if cpu.get("neon") else "portable C"))
+        print("   best SHA-256 path: %s" % ("src/cpu/arm/neon.s" if cpu.get("neon") else "portable C"))
     print("=" * 66)
 
     cfg = {

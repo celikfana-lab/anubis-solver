@@ -531,7 +531,7 @@ anubis-solver build configuration
    AVX-512F   no
    SHA-NI     yes
    ...
-   best SHA-256 path: src/cpu/shani.s (SHA-NI, 1 way) + src/cpu/avx2.s
+   best SHA-256 path: src/cpu/x64/shani.s (SHA-NI, 1 way) + src/cpu/x64/avx2.s
 ==================================================================
 wrote config.mk
 ```
@@ -557,7 +557,8 @@ include/anubis-solver.h  public C/C++ API
 anubis_solver.py         Python library (ctypes), requests client, CLI
 src/core/anubis_solver.c   C core: hashing, search loop, backend dispatch
 src/hashx/hashx.c/.h       HashX generator, interpreter, x86-64/AArch64 JITs
-src/cpu/*.s                AVX2, SHA-NI, AVX-512 and NEON SHA-256 kernels
+src/cpu/x64/*.s            AVX2, SHA-NI and AVX-512 SHA-256 kernels
+src/cpu/arm/*.s            NEON + ARMv8 SHA-2, and a 4-way SVE2 kernel
 src/nvidia/cuda/*.cu       CUDA backends (SHA-256, Argon2id, HashX, tensor),
                            see src/nvidia/cuda/README.md
 src/intel/levelzero/*.c    Level Zero backends
@@ -614,8 +615,8 @@ been run. Backends are auto-detected:
 
 | found | built |
 |---|---|
-| x86-64 | `avx2.s`, `shani.s` (AVX-512 too when the assembler and CPU support it) |
-| AArch64 | `neon.s` (ARMv8 SHA-2, runtime-checked via `HWCAP_SHA2`) |
+| x86-64 | `src/cpu/x64/`: `avx2.s`, `shani.s` (AVX-512 too when the assembler and CPU support it) |
+| AArch64 | `src/cpu/arm/`: `neon.s` (ARMv8 SHA-2, runtime-checked via `HWCAP_SHA2`), `sve2.s` (4-way batch) |
 | `nvcc` | CUDA backends |
 | `level_zero/ze_api.h` | Level Zero backends |
 | `vulkan/vulkan.h` | Vulkan backends |

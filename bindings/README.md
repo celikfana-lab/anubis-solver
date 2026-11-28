@@ -230,7 +230,7 @@ Both demos are verified: x86-64 natively, AArch64 under `qemu-aarch64` against a
 cross-built library, and they return the *same nonce and hash*, so the two are
 checked against each other. `bindings/asm/README.md` also documents how to
 cross-build the library (the root Makefile keys its kernel choice off `uname -m`,
-so a cross build must pass `ASM_SRC=src/cpu/neon.s` and argon2's `ref.c`).
+so a cross build must pass `ASM_SRC=src/cpu/arm/neon.s` and argon2's `ref.c`).
 
 ## Rust
 

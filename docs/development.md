@@ -8,7 +8,8 @@ include/anubis-solver.h public C/C++ header (extern "C")
 examples/               Python, C and C++ samples
 src/core/anubis_solver.c   C core: hashing, search loop, dispatch
 src/hashx/hashx.c/.h       HashX generator, interpreter, x86-64/AArch64 JITs
-src/cpu/*.s             hand-written SHA-256 kernels
+src/cpu/x64/*.s         AVX2, AVX-512, SHA-NI SHA-256 kernels
+src/cpu/arm/*.s         NEON + ARMv8 SHA-2 and SVE2 SHA-256 kernels
 
 vendor-specific backends are grouped by vendor:
 src/nvidia/cuda/*.cu    CUDA backends (SHA-256, Argon2id, HashX, tensor)

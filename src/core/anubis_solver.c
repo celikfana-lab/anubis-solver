@@ -43,9 +43,11 @@
  * suffix (the decimal digits or the 4 nonce bytes).
  *
  * On x86-64 the hot loops are hand-written assembly:
- *   avx2.s  — sha256_compress8_avx2(), eight candidate messages in one
- *             SHA-256 compression (one __m256i = the same word of 8 messages)
- *   shani.s — sha256_block_shani(), one block via the Intel SHA extension
+ *   src/cpu/x64/avx2.s   — sha256_compress8_avx2(), eight candidate messages
+ *                           in one SHA-256 compression (one __m256i holds the
+ *                           same word of 8 messages)
+ *   src/cpu/x64/shani.s  — sha256_block_shani(), one block via the Intel SHA
+ *                           extension
  * Runtime dispatch picks SHA-NI for single-block hashing and AVX2 for the
  * 8-way batch, falling back to portable C. ANUBIS_NO_AVX2=1 /
  * ANUBIS_NO_SHANI=1 force the lower paths for A/B measurements.
@@ -93,6 +95,9 @@ static int anubis_cpu_count(void) {
 #endif
 #ifndef HWCAP_SHA2
 #define HWCAP_SHA2 (1UL << 6)
+#endif
+#ifndef HWCAP2_SVE2
+#define HWCAP2_SVE2 (1UL << 1)
 #endif
 #endif
 
@@ -1172,6 +1177,81 @@ static int anubis_avx2_available(void) {
     return cached;
 }
 
+#elif defined(__aarch64__) && defined(ANUBIS_HAVE_SVE2_ASM)
+
+/* SVE2 batch path (src/cpu/arm/sve2.s): vectorizes N candidates, lane i =
+ * candidate i, where N is SVCNT (4 on a 128-bit Neoverse N2). */
+extern long sha256_sve2_width(void);
+extern void sha256_compress_sve2(const uint32_t mid[8],
+                                 const uint8_t tails[16][64],
+                                 uint8_t out[16][32]);
+
+static int anubis_sve2_available(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *off = getenv("ANUBIS_NO_SVE2");
+        if (off != NULL && off[0] != '\0' && off[0] != '0') {
+            cached = 0;
+        } else if ((getauxval(AT_HWCAP2) & HWCAP2_SVE2) == 0) {
+            cached = 0;
+        } else {
+            long w = sha256_sve2_width();
+            cached = (w >= 4 && w <= 16) ? 1 : 0; /* buffers hold 16 lanes */
+        }
+    }
+    return cached;
+}
+#endif
+
+/* Candidates per batch kernel call, 0 when the CPU has no usable batch path. */
+static int anubis_batch_lanes(void) {
+#if defined(ANUBIS_HAVE_AVX2)
+    if (anubis_avx512_available()) {
+        return 16;
+    }
+    if (anubis_avx2_available()) {
+        return 8;
+    }
+#elif defined(__aarch64__) && defined(ANUBIS_HAVE_SVE2_ASM)
+    if (anubis_sve2_available()) {
+        return (int)sha256_sve2_width();
+    }
+#endif
+    return 0;
+}
+
+static const char *anubis_batch_name(int lanes) {
+#if defined(ANUBIS_HAVE_AVX2)
+    return lanes == 16 ? "avx512" : lanes == 8 ? "avx2" : "cpu";
+#elif defined(__aarch64__) && defined(ANUBIS_HAVE_SVE2_ASM)
+    return lanes ? "sve2" : "cpu";
+#else
+    (void)lanes;
+    return "cpu";
+#endif
+}
+
+/* One call hashes `lanes` candidate blocks from the same midstate. */
+static void sha256_compress_batch(const uint32_t mid[8],
+                                  const uint8_t tails[16][64],
+                                  uint8_t out[16][32], int lanes) {
+#if defined(ANUBIS_HAVE_AVX2)
+    if (lanes == 16) {
+        sha256_compress16_avx512(mid, (const uint8_t (*)[64])tails, out);
+    } else {
+        sha256_compress8_avx2(mid, (const uint8_t (*)[64])tails, out);
+    }
+#elif defined(__aarch64__) && defined(ANUBIS_HAVE_SVE2_ASM)
+    (void)lanes;
+    sha256_compress_sve2(mid, (const uint8_t (*)[64])tails, out);
+#else
+    (void)mid;
+    (void)tails;
+    (void)out;
+    (void)lanes;
+#endif
+}
+
 static void store_length_be(uint8_t *tail, uint64_t bits) {
     int i;
     for (i = 0; i < 8; i++) {
@@ -1205,11 +1285,7 @@ static int batch_decimals(const batch_ctx *c, uint64_t nonce, uint32_t stride,
         tails[lane][dlen[0]] = 0x80;
         store_length_be(tails[lane], bits);
     }
-    if (lanes == 16) {
-        sha256_compress16_avx512(c->mid, (const uint8_t (*)[64])tails, out);
-    } else {
-        sha256_compress8_avx2(c->mid, (const uint8_t (*)[64])tails, out);
-    }
+    sha256_compress_batch(c->mid, (const uint8_t (*)[64])tails, out, lanes);
     return 1;
 }
 
@@ -1245,32 +1321,10 @@ static int batch_fixed4(const batch_ctx *c, uint64_t nonce, uint32_t stride,
         tails[lane][4] = 0x80;
         store_length_be(tails[lane], bits);
     }
-    if (lanes == 16) {
-        sha256_compress16_avx512(c->mid, (const uint8_t (*)[64])tails, out);
-    } else {
-        sha256_compress8_avx2(c->mid, (const uint8_t (*)[64])tails, out);
-    }
+    sha256_compress_batch(c->mid, (const uint8_t (*)[64])tails, out, lanes);
     return 1;
 }
 
-#else /* no AVX2 host */
-
-static int anubis_avx2_available(void) { return 0; }
-static int anubis_avx512_available(void) { return 0; }
-
-static int batch_decimals(const batch_ctx *c, uint64_t nonce, uint32_t stride,
-                          int lanes, uint8_t out[16][32]) {
-    (void)c; (void)nonce; (void)stride; (void)lanes; (void)out;
-    return 0;
-}
-
-static int batch_fixed4(const batch_ctx *c, uint64_t nonce, uint32_t stride,
-                        int lanes, uint8_t out[16][32]) {
-    (void)c; (void)nonce; (void)stride; (void)lanes; (void)out;
-    return 0;
-}
-
-#endif /* x86-64 */
 
 /* meatrider: unlike the two above, nothing here is x86-64 specific. The nonce
  * sits inside the 80-byte header, so the lanes' block 1 and block 2 are built
@@ -1848,11 +1902,7 @@ int anubis_solve_nibbles(const char *challenge, int difficulty, int threads,
 
     job.batch_lanes = 0;
     if (clen % 64u == 0) {
-        if (anubis_avx512_available()) {
-            job.batch_lanes = 16;
-        } else if (anubis_avx2_available()) {
-            job.batch_lanes = 8;
-        }
+        job.batch_lanes = anubis_batch_lanes();
     }
     job.batch_kind = job.batch_lanes ? BATCH_DECIMALS : BATCH_NONE;
     job.bctx.mid = ctx.base.h;
@@ -2061,11 +2111,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
 
     job.batch_lanes = 0;
     if (raw_len % 64u == 0) {
-        if (anubis_avx512_available()) {
-            job.batch_lanes = 16;
-        } else if (anubis_avx2_available()) {
-            job.batch_lanes = 8;
-        }
+        job.batch_lanes = anubis_batch_lanes();
     }
     job.batch_kind = job.batch_lanes ? BATCH_FIXED4 : BATCH_NONE;
     job.bctx.mid = ctx.base.h;
@@ -2230,8 +2276,7 @@ int anubis_solve_bits(const char *challenge_hex, int difficulty, int threads,
     }
 #endif
 
-    note_kernel(job.batch_lanes == 16 ? "avx512"
-                                      : job.batch_lanes == 8 ? "avx2" : "cpu");
+    note_kernel(anubis_batch_name(job.batch_lanes));
     rc = run_search(&job, &nonce64, out_hex, out_ms);
     if (rc == ANUBIS_OK) {
         *out_nonce = (uint32_t)nonce64;

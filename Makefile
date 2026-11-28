@@ -174,15 +174,16 @@ endif
 # is how the released ARM binaries are produced on an x86 box.
 ARCH     ?= $(shell uname -m)
 
-# Assembly kernels: x86-64 (AVX2 + SHA-NI) or AArch64 (NEON + SHA-2).
+# Assembly kernels: x86-64 (AVX2, AVX-512, SHA-NI) or AArch64 (NEON + SHA-2,
+# plus a 4-way SVE2 kernel).
 # The portable C fallbacks are always compiled.
 ifeq ($(ARCH),x86_64)
-ASM_SRC  := src/cpu/avx2.s src/cpu/shani.s src/cpu/avx512.s \
+ASM_SRC  := src/cpu/x64/avx2.s src/cpu/x64/shani.s src/cpu/x64/avx512.s \
             src/meatrider/meatrider_avx2.s src/meatrider/meatrider_shani.s \
             src/meatrider/meatrider_avx512.s
 else ifeq ($(ARCH),aarch64)
-ASM_SRC  := src/cpu/neon.s
-CFLAGS   += -DANUBIS_HAVE_NEON_ASM
+ASM_SRC  := src/cpu/arm/neon.s src/cpu/arm/sve2.s
+CFLAGS   += -DANUBIS_HAVE_NEON_ASM -DANUBIS_HAVE_SVE2_ASM
 else
 ASM_SRC  :=
 endif

@@ -2,7 +2,7 @@
  * meatrider_shani.s — SHA-256 single-block compression via Intel SHA
  * extensions, for the `meatrider` tier.
  *
- * Re-emitted from src/cpu/shani.s by tools/gen_meatrider_s.py: the same
+ * Re-emitted from src/cpu/x64/shani.s by tools/gen_meatrider_s.py: the same
  * hand-written sequence the `sha256` tier runs, under the meatrider symbol.
  *
  *   void meatrider_block_shani(uint32_t state[8], const uint8_t block[64]);

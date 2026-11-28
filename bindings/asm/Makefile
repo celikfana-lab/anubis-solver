@@ -29,7 +29,7 @@ arm: $(BUILD)/demo-aarch64
 # The root Makefile detects the CPU architecture with `uname -m`, i.e. the host,
 # so a cross build has to say which kernel and which Argon2id implementation to
 # use: neon.s for ARM, and argon2's portable ref.c rather than its SSE opt.c.
-ARM_ARGS := NATIVE= ASM_SRC=src/cpu/neon.s CFLAGS="-O3 -fPIC -Wall -Wextra" \
+ARM_ARGS := NATIVE= ASM_SRC=src/cpu/arm/neon.s CFLAGS="-O3 -fPIC -Wall -Wextra" \
     ARGON2_SRC="third_party/argon2/argon2.c third_party/argon2/core.c \
                  third_party/argon2/encoding.c third_party/argon2/ref.c \
                  third_party/argon2/thread.c third_party/argon2/blake2/blake2b.c"

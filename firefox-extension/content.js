@@ -374,6 +374,7 @@
         state.phase = "done";
         state.elapsedMs = msg.elapsedMs;
         paint(true);
+        noteSolve(chal, "wasm 4-wide", msg.elapsedMs, 0);
         passThrough(chal, msg);
       } else {
         state.phase = "error";
@@ -407,6 +408,7 @@
         state.elapsedMs = res.elapsedMs;
         state.rate = res.rate ?? state.rate;
         paint(true);
+        noteSolve(chal, `webgpu ${gpu.adapter || ""}`.trim(), res.elapsedMs, res.rate ?? 0);
         passThrough(chal, res);
         return;
       }
@@ -428,6 +430,19 @@
     state.error = why;
     paint(true);
     browser.runtime.sendMessage({ type: "anubis-unblock" }).catch(() => {});
+  }
+
+  /** One row for the toolbar panel; the native path is recorded in background.js. */
+  function noteSolve(chal, engine, ms, rate) {
+    if (typeof AnubisStats === "undefined" || !(ms >= 0)) return;
+    AnubisStats.record({
+      algorithm: chal.algorithm,
+      difficulty: chal.difficulty,
+      engine,
+      ms,
+      rate: rate || 0,
+      url: location.href,
+    }).catch(() => {});
   }
 
   function passThrough(chal, solution) {

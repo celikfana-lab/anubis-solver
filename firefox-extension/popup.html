@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>anubis-solver</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    width: 388px; margin: 0; padding: 14px 16px 16px;
+    background: #14161a; color: #e8eaf0;
+    font: 13px/1.45 system-ui, sans-serif;
+  }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  h1 span { color: #8fe3a8; font-family: ui-monospace, monospace; font-size: 12px; }
+  p.what { margin: 0 0 12px; color: #9aa3b2; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .card { background: #1c1f26; border: 1px solid #2c323d; border-radius: 9px; padding: 8px 10px; }
+  .card b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .card span { color: #9aa3b2; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  h2 { font-size: 12px; color: #9aa3b2; text-transform: uppercase; letter-spacing: .05em;
+       margin: 14px 0 6px; font-weight: 600; }
+  svg { display: block; width: 100%; height: auto; }
+  .axis { stroke: #2c323d; stroke-width: 1; }
+  .lbl { fill: #9aa3b2; font-size: 9px; font-family: ui-monospace, monospace; }
+  .val { fill: #e8eaf0; font-size: 9px; font-family: ui-monospace, monospace; }
+  ol { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0;
+       border-bottom: 1px solid #232833; font-family: ui-monospace, monospace; font-size: 11px; }
+  li:last-child { border-bottom: 0; }
+  li .e { color: #8fe3a8; }
+  li .m { color: #9aa3b2; }
+  .empty { color: #6c7484; font-size: 12px; padding: 10px 0; }
+  .row { display: flex; gap: 8px; margin-top: 14px; }
+  button {
+    flex: 1; padding: 7px 10px; border-radius: 8px; cursor: pointer;
+    background: #232833; color: #e8eaf0; border: 1px solid #333b48; font: inherit;
+  }
+  button:hover { background: #2b3240; }
+  button.primary { background: #2a4a38; border-color: #3c6b50; color: #b8f5cd; }
+  .note { color: #6c7484; font-size: 10.5px; margin-top: 10px; line-height: 1.35; }
+</style>
+</head>
+<body>
+  <h1>anubis-solver <span id="version"></span></h1>
+  <p class="what">
+    Solves Anubis proof-of-work with the native engine (CUDA / Level Zero /
+    Vulkan / AVX-512), then WebGPU, then the 4-wide wasm kernel — and paints
+    Anubis's own progress bar while it works. Nothing is sent anywhere: the
+    answers go straight back to the site that asked.
+  </p>
+
+  <div class="grid">
+    <div class="card"><b id="count">0</b><span>solves taken</span></div>
+    <div class="card"><b id="spent">0 s</b><span>time spent</span></div>
+    <div class="card"><b id="saved">0 s</b><span>saved vs the page</span></div>
+    <div class="card"><b id="fastest">—</b><span>fastest engine</span></div>
+  </div>
+
+  <h2>Speed by engine</h2>
+  <div id="engines"></div>
+
+  <h2>Recent solves</h2>
+  <div id="recent"></div>
+
+  <div class="row">
+    <button class="primary" id="resolve">Solve this page</button>
+    <button id="clear">Clear history</button>
+  </div>
+  <p class="note" id="note"></p>
+
+  <script src="stats-store.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -111,11 +111,28 @@ On Windows the host is the registry key above and `libanubis_solver` must be a
 `.dll` next to `anubis_native.py`; the extension does not care which of the two
 runs, it only sees whether the host answers.
 
+## The toolbar panel
+
+Clicking the add-on's button opens a panel over the page: solves taken, time
+spent, time saved against Anubis's own in-page solver, a bar per engine (average
+rate, so `Vulkan` and `AVX-512` and `wasm 4-wide` can be compared at a glance),
+the last solves as bars with the page's own expected time behind them, and a
+short explanation of what the add-on is. The bars come from
+`browser.storage.local`, capped at 500 entries; "Clear history" empties them and
+"Solve this page" re-runs detection on the current tab.
+
+"Saved" is an estimate and the panel says so: it compares each solve with
+`2^difficulty / page rate`, where the page rates are the measured ones from
+`SPEED.md` (1.9 M hashes/s for the shipped sha256 module, 3.2 M for hashx). A
+single solve stops at its first hit, so per-solve numbers are noisy - the
+session totals are the part worth reading.
+
 ## Tests
 
 ```bash
 node test-block.js                               # the block rule vs Anubis's own solver URLs
 node test-block.js --url http://127.0.0.1:8080/  # ...and against a live challenge page
+node test-stats.js                               # the panel's arithmetic (21 checks)
 node test-webgpu.js                              # shader nonce placement vs node crypto (25 checks)
 python3 test-native.py --start-gate              # betterAnusbis, sha256, difficulty 20
 python3 test-native.py --start-anubis            # the real Anubis, built from $ANUBIS_SRC

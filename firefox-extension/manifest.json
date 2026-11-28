@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Anubis native solver",
-  "version": "2.54.1",
+  "version": "2.55.0",
   "description": "Solve Anubis proof-of-work challenges with the native C engine, WebGPU or the better WebAssembly kernel instead of the in-page solver.",
   "browser_specific_settings": {
     "gecko": {
@@ -27,15 +27,17 @@
   "background": {
     "scripts": [
       "block.js",
+      "stats-store.js",
       "background.js"
     ]
   },
   "browser_action": {
-    "default_title": "Solve this Anubis challenge natively",
+    "default_title": "anubis-solver \u2014 solve history",
     "default_icon": {
       "48": "icons/icon-48.png",
       "96": "icons/icon-96.png"
-    }
+    },
+    "default_popup": "popup.html"
   },
   "icons": {
     "48": "icons/icon-48.png",
@@ -49,6 +51,7 @@
       ],
       "js": [
         "webgpu/gpu-solver.js",
+        "stats-store.js",
         "content.js"
       ],
       "run_at": "document_start",

@@ -57,6 +57,12 @@ async function activeTab() {
   return tab ?? null;
 }
 
+/** One row for the toolbar panel. Best effort: a solve never waits on this. */
+function recordSolve(entry) {
+  if (typeof AnubisStats === "undefined") return;
+  AnubisStats.record({ ...entry, at: Date.now() }).catch(() => {});
+}
+
 function passUrl(tabUrl, challenge, solution) {
   const url = new URL(PASS_PATH, tabUrl);
   url.searchParams.set("id", challenge.id ?? "");
@@ -88,9 +94,14 @@ function solveForTab(tabId, tabUrl, challenge) {
   }
 
   let finished = false;
+  let started = null;          // what the start frame said, for the stats panel
 
   port.onMessage.addListener((frame) => {
     relay(tabId, frame);
+    if (frame.event === "start") {
+      started = { kernel: frame.kernel, rate: frame.rate };
+      return;
+    }
     if (frame.event !== "done") return;
     finished = true;
     solving.delete(tabId);
@@ -100,6 +111,14 @@ function solveForTab(tabId, tabUrl, challenge) {
       /* already gone */
     }
     if (frame.ok) {
+      recordSolve({
+        algorithm: challenge.algorithm,
+        difficulty: challenge.difficulty,
+        engine: frame.kernel || started?.kernel || "native",
+        ms: frame.elapsedMs ?? 0,
+        rate: frame.rate ?? started?.rate ?? 0,
+        url: tabUrl,
+      });
       browser.tabs.update(tabId, { url: passUrl(tabUrl, challenge, frame) });
     } else {
       notify("solve failed", frame.error ?? "unknown error");

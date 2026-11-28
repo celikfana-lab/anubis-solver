@@ -52,6 +52,7 @@
       "js": [
         "webgpu/gpu-solver.js",
         "stats-store.js",
+        "copy.js",
         "look.js",
         "content.js"
       ],

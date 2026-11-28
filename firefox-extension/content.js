@@ -170,6 +170,22 @@
     return bits.join(" — ");
   }
 
+  // Anubis's own words: it explains a proof of work the visitor has to do and
+  // credits Techaro. Neither is true on a page this extension is solving, so
+  // copy.js's text goes in instead. The version line at the end of the footer
+  // is left alone -- it still names the Anubis that served the page.
+  function swapCopy() {
+    const details = document.querySelector("details");
+    const footer = document.querySelector("footer");
+    const dP = details ? Array.from(details.querySelectorAll("p")) : [];
+    const fP = footer ? Array.from(footer.querySelectorAll("p")) : [];
+    const targets = AnubisCopy.plan(dP.map((el) => el.textContent), fP.map((el) => el.textContent));
+    for (const t of targets) {
+      const el = (t.where === "details" ? dP : fP)[t.index];
+      if (el && el.textContent !== t.text) el.textContent = t.text;
+    }
+  }
+
   function paint(force) {
     ensureStyle();
     // The page's own solver cannot start (its wasm is cancelled), so it paints
@@ -180,6 +196,7 @@
     const image = $("image");
     const mascot = browser.runtime.getURL(LOOK.mascot);
     if (image && image.getAttribute("src") !== mascot) image.setAttribute("src", mascot);
+    swapCopy();
     const status = $("status");
     if (status) {
       const text = wantStatus();

@@ -22,6 +22,17 @@ repaint because the page's own solver fails to start (its wasm is cancelled) and
 falls back to a "Calculation error!" panel. The status line also counts seconds,
 so a long solve never looks frozen at 99%.
 
+The page's own prose goes too (`copy.js`): Anubis's "this is a CAPTCHA where
+your browser does the work" explanation and its JShelter warning are replaced
+with a line about this extension solving the challenge natively, and the footer
+credits become *Project made by celikfana & DeepSeek. Made with ❤️ in 🇳🇱 &
+🇨🇳.* and *Mascot design by ChatGPT.* Anubis renders those paragraphs from its
+localization files with no id or class (`explanation.templ`'s `<details>`, the
+first two `<p>`s in `index.templ`'s `<footer>`), so they are targeted by
+position — and the last footer paragraph, the Anubis version line, is left
+alone because it is still true. `node test-copy.js` checks the targeting
+(21 checks), including that the version line survives.
+
 The progress bar no longer invents a denominator. A solve stops at its first
 qualifying nonce, and every `solve` call pays a fixed start-up cost, so probing
 the rate with short searches measured 1.8-127 MH/s on an engine that actually
@@ -185,6 +196,7 @@ node test-block.js                               # the block rule vs Anubis's ow
 node test-block.js --url http://127.0.0.1:8080/  # ...and against a live challenge page
 node test-stats.js                               # the panel's arithmetic (21 checks)
 node test-look.js                                # the mascot/headline odds (13 checks)
+node test-copy.js                                # the page prose/credits swap (21 checks)
 node test-webgpu.js                              # shader nonce placement vs node crypto (25 checks)
 python3 test-native.py --start-gate              # betterAnusbis, sha256, difficulty 20
 python3 test-native.py --start-anubis            # the real Anubis, built from $ANUBIS_SRC

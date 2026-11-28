@@ -301,12 +301,18 @@ def main() -> int:
                 check("stream: the first frame names the engine",
                       start.get("event") == "start" and bool(start.get("kernel"))
                       and bool(start.get("gpu")),
-                      f"{start.get('kernel')} on {start.get('gpu')} at "
-                      f"{start.get('rate', 0) / 1e6:.2f} MH/s, "
-                      f"~{start.get('estimateMs', 0) / 1000:.1f} s")
+                      f"{start.get('kernel')} on {start.get('gpu')}, "
+                      + (f"~{(start.get('rate') or 0) / 1e6:.2f} MH/s, "
+                         f"~{(start.get('estimateMs') or 0) / 1000:.1f} s"
+                         if start.get("rate") else "no measured rate yet"))
+                # pct is null until the host has measured this challenge shape:
+                # the first solve of a shape reports no percentage rather than a
+                # made-up one, and the bar runs indeterminate instead.
+                pcts = [f.get("pct") for f in frames[1:-1]]
                 check("stream: progress frames are well formed",
-                      all(0 <= f.get("pct", 0) <= 99 for f in frames[1:-1]),
-                      f"{len(frames) - 2} progress frame(s)")
+                      all(p is None or 0 <= p <= 95 for p in pcts),
+                      f"{len(pcts)} progress frame(s), "
+                      f"{sum(p is None for p in pcts)} without a percentage")
                 check("stream: the last frame carries the proof",
                       done.get("event") == "done" and done.get("ok") is True
                       and done.get("nonce") is not None,

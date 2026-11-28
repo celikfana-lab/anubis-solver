@@ -111,28 +111,28 @@ def _payload_solution(module, solver, payload: dict):
     })
 
 
-def _calibrate(solver, algorithm: str, difficulty: int) -> float:
-    """Hashes per second for this algorithm here, measured a few bits lower.
+# Throughput this process has actually measured, per (algorithm, payload size).
+# A solve stops at its first hit, so its own work/elapsed is a true sample; the
+# first solve for a shape has no denominator and reports no percentage instead
+# of inventing one. Every solve after that gets a real estimate.
+_RATES: dict[tuple[str, int], float] = {}
 
-    A bar needs a denominator. Asking for a difficulty 8 bits under the real one
-    is 1/256 of the work on the same program, threads and cache, and the elapsed
-    time the library reports turns that into a rate.
-    """
-    d = max(10, min(difficulty - 4, 20))
-    best = 0.0
-    for _ in range(3):
-        probe = {"algorithm": algorithm, "difficulty": d,
-                 "randomData": os.urandom(32).hex()}
-        started = time.perf_counter()
-        _payload_solution(None, solver, probe)
-        elapsed = max(time.perf_counter() - started, 1e-6)
-        if elapsed > 0.6 and d > 10:
-            d -= 4                       # too slow to be a probe: shrink, retry
-            continue
-        # the first probe pays the library's warm-up; a maximum over the probes
-        # is closer to the steady-state rate the real solve will see
-        best = max(best, (2 ** d) / elapsed)
-    return best or 1e6
+
+def _rate_key(algorithm: str, random_data: str) -> tuple[str, int]:
+    return (algorithm, max(0, len(random_data) // 2))
+
+
+def _known_rate(algorithm: str, random_data: str) -> float | None:
+    return _RATES.get(_rate_key(algorithm, random_data))
+
+
+def _remember_rate(algorithm: str, random_data: str, nonce: int, elapsed: float) -> float:
+    if elapsed > 0 and nonce >= 0:
+        rate = (nonce + 1) / elapsed
+        if rate > 0 and rate < 1e12:
+            _RATES[_rate_key(algorithm, random_data)] = rate
+            return rate
+    return 0.0
 
 
 def solve_streaming(solver, payload: dict, emit) -> None:
@@ -143,8 +143,9 @@ def solve_streaming(solver, payload: dict, emit) -> None:
     """
     algorithm = str(payload.get("algorithm", "sha256")).lower()
     difficulty = int(payload.get("difficulty", 0))
-    rate = _calibrate(solver, algorithm, difficulty)
-    estimate_ms = (2 ** difficulty) / max(rate, 1.0) * 1000.0
+    random_data = str(payload.get("randomData", ""))
+    rate = _known_rate(algorithm, random_data)
+    estimate_ms = ((2 ** difficulty) / rate * 1000.0) if rate else None
     result: dict = {}
     started = time.perf_counter()
 
@@ -174,13 +175,20 @@ def solve_streaming(solver, payload: dict, emit) -> None:
         elapsed = (time.perf_counter() - started) * 1000.0
         emit({"event": "progress", "elapsedMs": elapsed,
               "estimateMs": estimate_ms,
-              "pct": min(99.0, elapsed / max(estimate_ms, 1.0) * 100.0),
+              "pct": (min(95.0, elapsed / estimate_ms * 100.0)
+                      if estimate_ms else None),
               "rate": rate, "kernel": solver.active_kernel(),
               "gpu": solver.gpu, "threads": solver.threads})
         thread.join(0.12)
     thread.join()
-    done = {"event": "done", "kernel": solver.active_kernel(), "rate": rate,
-            "estimateMs": estimate_ms, "gpu": solver.gpu}
+    measured = 0.0
+    if result.get("ok"):
+        measured = _remember_rate(algorithm, random_data,
+                                  int(result.get("nonce") or 0),
+                                  float(result.get("elapsedMs") or 0) / 1000.0)
+    done = {"event": "done", "kernel": solver.active_kernel(),
+            "rate": measured or rate, "estimateMs": estimate_ms,
+            "gpu": solver.gpu, "measured": bool(measured)}
     done.update(result)
     emit(done)
 

@@ -162,15 +162,17 @@
     const label = MODE_LABEL[state.mode] ?? "Solving";
     const bits = [`${label} · ${state.challenge?.algorithm ?? ""} · difficulty ${state.challenge?.difficulty ?? "?"}`];
     bits.push(engineLabel());
-    if (state.rate) bits.push(humanRate(state.rate));
+    if (state.rate) bits.push(`~${humanRate(state.rate)}`);
     if (state.phase === "error") bits.push(String(state.error ?? "failed").slice(0, 48));
     else if (pct) bits.push(`${pct.toFixed(0)}%`);
+    else if (state.phase !== "done") bits.push("searching");
     const elapsed = state.elapsedMs ?? (state.started ? performance.now() - state.started : 0);
     if (elapsed > 1000 && state.phase !== "done") bits.push(`${(elapsed / 1000).toFixed(0)} s`);
     return bits.join(" — ");
   }
 
   function paint(force) {
+    ensureStyle();
     // The page's own solver cannot start (its wasm is cancelled), so it paints
     // "Calculation error!" and the reject mascot. Keep our headline and our
     // mascot there instead, on every repaint.
@@ -187,7 +189,9 @@
     }
     const progress = $("progress");
     const inner = progress?.querySelector?.(".bar-inner");
+    const indeterminate = state.phase !== "done" && state.pct == null && state.mode === "native";
     const pct = state.phase === "done" ? 100 : Math.min(99, state.pct ?? 0);
+    if (inner) inner.classList.toggle("anubis-indeterminate", indeterminate);
     if (progress) progress.style.display = "";   // the page hides it on error
     if (inner) inner.style.width = `${pct}%`;
     if (progress && progress.setAttribute) {
@@ -203,6 +207,27 @@
       panelRefs.pct.textContent = `${pct.toFixed(0)}%`;
       panelRefs.rate.textContent = humanRate(state.rate);
     }
+  }
+
+  // A bar cannot show progress it does not know: while the host has no measured
+  // rate for this challenge shape, pulse instead of filling a fake bar.
+  function ensureStyle() {
+    if (document.getElementById("anubis-solver-style")) return;
+    const style = document.createElement("style");
+    style.id = "anubis-solver-style";
+    style.textContent = `
+      @keyframes anubis-indeterminate {
+        0%   { background-position: -120% 0; }
+        100% { background-position: 220% 0; }
+      }
+      .bar-inner.anubis-indeterminate {
+        width: 100% !important;
+        background: linear-gradient(90deg, #1b1e24 0%, #58c8ff 40%, #8fe3a8 60%, #1b1e24 100%);
+        background-size: 60% 100%;
+        background-repeat: no-repeat;
+        animation: anubis-indeterminate 1.4s linear infinite;
+      }`;
+    document.documentElement.appendChild(style);
   }
 
   let panelRefs = null;

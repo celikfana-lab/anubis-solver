@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Anubis native solver",
-  "version": "2.53.0",
+  "version": "2.54.0",
   "description": "Solve Anubis proof-of-work challenges with the native C engine, WebGPU or the better WebAssembly kernel instead of the in-page solver.",
   "browser_specific_settings": {
     "gecko": {

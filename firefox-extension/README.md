@@ -19,6 +19,14 @@ repaint because the page's own solver fails to start (its wasm is cancelled) and
 falls back to a "Calculation error!" panel. The status line also counts seconds,
 so a long solve never looks frozen at 99%.
 
+The progress bar no longer invents a denominator. A solve stops at its first
+qualifying nonce, and every `solve` call pays a fixed start-up cost, so probing
+the rate with short searches measured 1.8-127 MH/s on an engine that actually
+runs at ~25-90 MH/s. The first solve of a given (algorithm, payload size) now
+reports **no percentage** and the bar pulses; the host then remembers the rate it
+really got (`nonces hashed / seconds`) and the next solve has a real estimate.
+The status also counts seconds, so it never looks frozen.
+
 The bar names the engine, not just the tier: the native host reports which
 backend actually ran (`vulkan`, `levelzero`, `cuda`, `opencl`, `avx512`, `avx2`,
 `shani`, `cpu`) and the device it ran on, so the line reads

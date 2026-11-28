@@ -430,6 +430,47 @@
     browser.runtime.sendMessage({ type: "anubis-unblock" }).catch(() => {});
   }
 
+  /**
+   * Anubis has its own page for "your browser is configured to disable
+   * cookies", shown when /pass-challenge arrives without its verification
+   * cookie. That is a server-side cookie problem, not something the extension
+   * causes or can fix, but it is easy to misread as the extension failing:
+   * Anubis's default cookie is Secure; SameSite=None; Partitioned, and a
+   * Partitioned cookie without Secure is rejected by Firefox, so a local http
+   * server that passes -cookie-secure=false but forgets
+   * -cookie-partitioned=false silently drops its own cookie.
+   */
+  function noteCookiePage() {
+    const text = (document.body?.innerText || "").toLowerCase();
+    if (!text.includes("disable cookies") || !text.includes("anubis")) return;
+    if (document.getElementById("anubis-solver-cookie-hint")) return;
+    const host = document.createElement("div");
+    host.id = "anubis-solver-cookie-hint";
+    host.style.cssText =
+      "position:fixed;right:16px;bottom:16px;z-index:2147483647;max-width:330px";
+    const root = host.attachShadow({ mode: "closed" });
+    root.innerHTML = `
+      <style>
+        .c{background:#1c1f26;color:#e8eaf0;border:1px solid #3a4150;border-radius:10px;
+           padding:11px 13px;font:12px/1.45 system-ui,sans-serif}
+        b{color:#ffcf7a} code{font-family:ui-monospace,monospace;color:#8fe3a8;font-size:11px}
+        .x{float:right;cursor:pointer;color:#9aa3b2;margin-left:8px}
+      </style>
+      <div class="c">
+        <span class="x" id="x">dismiss</span>
+        <b>This is Anubis's own cookie page.</b>
+        Its challenge cookie was dropped before <code>/pass-challenge</code>, so the
+        server never saw it. If you run this gate yourself, add
+        <code>-cookie-partitioned=false</code>: Anubis sends a Partitioned cookie,
+        Firefox rejects those unless they are also Secure, and
+        <code>-cookie-secure=false</code> (needed on plain http) removes Secure.
+        The full local set is
+        <code>-cookie-secure=false -cookie-partitioned=false -cookie-same-site=Lax -use-remote-address</code>.
+      </div>`;
+    document.documentElement.appendChild(host);
+    root.getElementById("x").addEventListener("click", () => host.remove());
+  }
+
   /** One row for the toolbar panel; the native path is recorded in background.js. */
   function noteSolve(chal, engine, ms, rate) {
     if (typeof AnubisStats === "undefined" || !(ms >= 0)) return;
@@ -456,7 +497,10 @@
   // ---- start -----------------------------------------------------------
 
   const chal = await whenChallenge();
-  if (!chal) return;
+  if (!chal) {
+    noteCookiePage();
+    return;
+  }
   state.challenge = chal;
   state.mode = "native";             // until the host says otherwise
   state.phase = "running";

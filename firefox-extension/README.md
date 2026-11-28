@@ -170,6 +170,21 @@ does:
 `X-Real-IP` header and answers every request with a 500. Over https none of this
 applies.
 
+The flag people forget is `-cookie-partitioned=false`. Anubis defaults to
+`Secure; SameSite=None; Partitioned`, and turning off `Secure` for a local http
+server leaves a **Partitioned cookie without Secure** - which Firefox rejects
+outright, so the challenge cookie silently never exists and every
+`pass-challenge` lands on the cookies-disabled page. Check what your server
+sends:
+
+```bash
+curl -sD- -o /dev/null http://127.0.0.1:8080/ | grep -i set-cookie
+```
+
+`SameSite=Lax` with no `Secure` and no `Partitioned` is what a local http gate
+should show. The extension now spots that page and says so in the corner of the
+window instead of leaving you to guess.
+
 ## Try it in a browser
 
 ```bash

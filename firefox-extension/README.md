@@ -33,6 +33,9 @@ position — and the last footer paragraph, the Anubis version line, is left
 alone because it is still true. `node test-copy.js` checks the targeting
 (21 checks), including that the version line survives.
 
+![the takeover page: Hijacked Anubis headline, the anti-anti-AI mascot, the live
+status line, and Anubis's own prose and credits replaced](../docs/img/firefox-takeover.png)
+
 The progress bar no longer invents a denominator. A solve stops at its first
 qualifying nonce, and every `solve` call pays a fixed start-up cost, so probing
 the rate with short searches measured 1.8-127 MH/s on an engine that actually

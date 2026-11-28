@@ -450,6 +450,11 @@ the same challenge:
 | our wasm, 4 nonces wide | ~3.4 M hashes/s |
 | official Anubis wasm | ~1.9 M hashes/s |
 
+<p align="center">
+<img src="docs/img/firefox-takeover.png" width="430" alt="The Anubis challenge page taken over: 'Hijacked Anubis' headline, the anti-anti-AI mascot, a live 'Solving natively / sha256 / difficulty 32 / Vulkan / Intel Iris Xe / ~103.59 MH/s / 34% / 14 s' status line, and the page's own prose replaced with the solver's explanation and the credits changed to celikfana &amp; DeepSeek and ChatGPT"><br>
+<sub>the page is Anubis's own; the mascot, the status line, the prose and the credits are ours</sub>
+</p>
+
 `python3 firefox-extension/test-native.py` drives the host exactly as Firefox does
 — framing, live challenge, pass-challenge exchange — and asserts the protected page
 comes back. See [firefox-extension/README.md](firefox-extension/README.md) for the

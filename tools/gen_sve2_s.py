@@ -219,12 +219,12 @@ def main():
     for i in range(8):
         L.append("    ld1rw   {%s%s}, p0/z, [x0, #%d]" % (ST[i], P, 4 * i))
     L += ["", "    // W[0..15]: gather word w of every candidate, then swap to host order",
-          "    mov     w4, #16                 // lane stride: 64 bytes = 16 words"]
+          "    mov     w6, #16                 // lane stride: 64 bytes = 16 words"]
     for w in range(16):
         # index is in elements: the gather's UXTW #2 scales it by 4 bytes, so
         # word w of lane i sits at w + 16*i (64-byte lane stride).
-        L.append("    mov     w3, #%d" % w)
-        L.append("    index   %s%s, w3, w4" % (IDX, P))
+        L.append("    mov     w5, #%d" % w)
+        L.append("    index   %s%s, w5, w6" % (IDX, P))
         L.append("    ld1w    {%s%s}, p0/z, [x1, %s%s, uxtw #2]" % (W[w], P, IDX, P))
         L.append("    revb    %s%s, %s, %s%s" % (W[w], P, PRED, W[w], P))
     L += ["", "    // 64 rounds, register names rotated at generation time"]
@@ -240,10 +240,10 @@ def main():
         L.append("    ld1rw   {%s%s}, p0/z, [x0, #%d]" % (IDX, P, 4 * i))
         L.append("    add     %s%s, %s, %s%s, %s%s" % (ST[i], P, PRED, ST[i], P, IDX, P))
         L.append("    revb    %s%s, %s, %s%s" % (ST[i], P, PRED, ST[i], P))
-    L += ["    mov     w4, #8                  // out stride: 32 bytes = 8 words"]
+    L += ["    mov     w6, #8                  // out stride: 32 bytes = 8 words"]
     for i in range(8):
-        L.append("    mov     w3, #%d" % i)
-        L.append("    index   %s%s, w3, w4" % (IDX, P))
+        L.append("    mov     w5, #%d" % i)
+        L.append("    index   %s%s, w5, w6" % (IDX, P))
         L.append("    st1w    {%s%s}, p0, [x2, %s%s, uxtw #2]" % (ST[i], P, IDX, P))
     L += ["", "    ldr     q8, [sp, #0]", "    ldr     q9, [sp, #16]",
           "    ldr     q10, [sp, #32]", "    ldr     q11, [sp, #48]",

@@ -66,69 +66,69 @@ sha256_compress_sve2:
     ld1rw   {z7.s}, p0/z, [x0, #28]
 
     // W[0..15]: gather word w of every candidate, then swap to host order
-    mov     w4, #16                 // lane stride: 64 bytes = 16 words
-    mov     w3, #0
-    index   z31.s, w3, w4
+    mov     w6, #16                 // lane stride: 64 bytes = 16 words
+    mov     w5, #0
+    index   z31.s, w5, w6
     ld1w    {z8.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z8.s, p0/m, z8.s
-    mov     w3, #1
-    index   z31.s, w3, w4
+    mov     w5, #1
+    index   z31.s, w5, w6
     ld1w    {z9.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z9.s, p0/m, z9.s
-    mov     w3, #2
-    index   z31.s, w3, w4
+    mov     w5, #2
+    index   z31.s, w5, w6
     ld1w    {z10.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z10.s, p0/m, z10.s
-    mov     w3, #3
-    index   z31.s, w3, w4
+    mov     w5, #3
+    index   z31.s, w5, w6
     ld1w    {z11.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z11.s, p0/m, z11.s
-    mov     w3, #4
-    index   z31.s, w3, w4
+    mov     w5, #4
+    index   z31.s, w5, w6
     ld1w    {z12.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z12.s, p0/m, z12.s
-    mov     w3, #5
-    index   z31.s, w3, w4
+    mov     w5, #5
+    index   z31.s, w5, w6
     ld1w    {z13.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z13.s, p0/m, z13.s
-    mov     w3, #6
-    index   z31.s, w3, w4
+    mov     w5, #6
+    index   z31.s, w5, w6
     ld1w    {z14.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z14.s, p0/m, z14.s
-    mov     w3, #7
-    index   z31.s, w3, w4
+    mov     w5, #7
+    index   z31.s, w5, w6
     ld1w    {z15.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z15.s, p0/m, z15.s
-    mov     w3, #8
-    index   z31.s, w3, w4
+    mov     w5, #8
+    index   z31.s, w5, w6
     ld1w    {z16.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z16.s, p0/m, z16.s
-    mov     w3, #9
-    index   z31.s, w3, w4
+    mov     w5, #9
+    index   z31.s, w5, w6
     ld1w    {z17.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z17.s, p0/m, z17.s
-    mov     w3, #10
-    index   z31.s, w3, w4
+    mov     w5, #10
+    index   z31.s, w5, w6
     ld1w    {z18.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z18.s, p0/m, z18.s
-    mov     w3, #11
-    index   z31.s, w3, w4
+    mov     w5, #11
+    index   z31.s, w5, w6
     ld1w    {z19.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z19.s, p0/m, z19.s
-    mov     w3, #12
-    index   z31.s, w3, w4
+    mov     w5, #12
+    index   z31.s, w5, w6
     ld1w    {z20.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z20.s, p0/m, z20.s
-    mov     w3, #13
-    index   z31.s, w3, w4
+    mov     w5, #13
+    index   z31.s, w5, w6
     ld1w    {z21.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z21.s, p0/m, z21.s
-    mov     w3, #14
-    index   z31.s, w3, w4
+    mov     w5, #14
+    index   z31.s, w5, w6
     ld1w    {z22.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z22.s, p0/m, z22.s
-    mov     w3, #15
-    index   z31.s, w3, w4
+    mov     w5, #15
+    index   z31.s, w5, w6
     ld1w    {z23.s}, p0/z, [x1, z31.s, uxtw #2]
     revb    z23.s, p0/m, z23.s
 
@@ -3791,30 +3791,30 @@ sha256_compress_sve2:
     ld1rw   {z31.s}, p0/z, [x0, #28]
     add     z7.s, p0/m, z7.s, z31.s
     revb    z7.s, p0/m, z7.s
-    mov     w4, #8                  // out stride: 32 bytes = 8 words
-    mov     w3, #0
-    index   z31.s, w3, w4
+    mov     w6, #8                  // out stride: 32 bytes = 8 words
+    mov     w5, #0
+    index   z31.s, w5, w6
     st1w    {z0.s}, p0, [x2, z31.s, uxtw #2]
-    mov     w3, #1
-    index   z31.s, w3, w4
+    mov     w5, #1
+    index   z31.s, w5, w6
     st1w    {z1.s}, p0, [x2, z31.s, uxtw #2]
-    mov     w3, #2
-    index   z31.s, w3, w4
+    mov     w5, #2
+    index   z31.s, w5, w6
     st1w    {z2.s}, p0, [x2, z31.s, uxtw #2]
-    mov     w3, #3
-    index   z31.s, w3, w4
+    mov     w5, #3
+    index   z31.s, w5, w6
     st1w    {z3.s}, p0, [x2, z31.s, uxtw #2]
-    mov     w3, #4
-    index   z31.s, w3, w4
+    mov     w5, #4
+    index   z31.s, w5, w6
     st1w    {z4.s}, p0, [x2, z31.s, uxtw #2]
-    mov     w3, #5
-    index   z31.s, w3, w4
+    mov     w5, #5
+    index   z31.s, w5, w6
     st1w    {z5.s}, p0, [x2, z31.s, uxtw #2]
-    mov     w3, #6
-    index   z31.s, w3, w4
+    mov     w5, #6
+    index   z31.s, w5, w6
     st1w    {z6.s}, p0, [x2, z31.s, uxtw #2]
-    mov     w3, #7
-    index   z31.s, w3, w4
+    mov     w5, #7
+    index   z31.s, w5, w6
     st1w    {z7.s}, p0, [x2, z31.s, uxtw #2]
 
     ldr     q8, [sp, #0]

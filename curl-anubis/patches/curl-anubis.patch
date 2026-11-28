@@ -1,0 +1,865 @@
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 69554ee..8820717 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -98,7 +98,10 @@ CFLAGS += @CURL_CFLAG_EXTRAS@
+ # Prevent LIBS from being used for all link targets
+ LIBS = $(BLANK_AT_MAKETIME)
+ 
+-curl_LDADD = $(top_builddir)/lib/libcurl.la @LIBCURL_PC_LIBS_PRIVATE@
++# curl-anubis links the anubis-solver engine; ANUBIS_LIBS is empty in a
++# plain curl build, so nothing changes there.
++curl_LDADD = $(top_builddir)/lib/libcurl.la @LIBCURL_PC_LIBS_PRIVATE@ \
++  $(ANUBIS_LIBS)
+ 
+ # if unit tests are enabled, build a static library to link them with
+ if BUILD_UNITTESTS
+diff --git a/src/Makefile.inc b/src/Makefile.inc
+index 45ee6a3..bb01998 100644
+--- a/src/Makefile.inc
++++ b/src/Makefile.inc
+@@ -85,6 +85,7 @@ CURL_CFILES = \
+   tool_cb_rea.c \
+   tool_cb_see.c \
+   tool_cb_soc.c \
++  tool_anubis.c \
+   tool_cb_wrt.c \
+   tool_cfgable.c \
+   tool_dirhie.c \
+@@ -129,6 +130,7 @@ CURL_HFILES = \
+   tool_cb_rea.h \
+   tool_cb_see.h \
+   tool_cb_soc.h \
++  tool_anubis.h \
+   tool_cb_wrt.h \
+   tool_cfgable.h \
+   tool_dirhie.h \
+diff --git a/src/config2setopts.c b/src/config2setopts.c
+index a92dcf3..11ba8c8 100644
+--- a/src/config2setopts.c
++++ b/src/config2setopts.c
+@@ -571,6 +571,12 @@ static CURLcode cookie_setopts(struct OperationConfig *config, CURL *curl)
+       MY_SETOPT_STR(curl, CURLOPT_COOKIEFILE, cfl->data);
+   }
+ 
++  /* curl-anubis: Anubis hands the challenge page a verification cookie and
++   * only takes the answer from a client that sends it back, so the cookie
++   * engine has to be on even when the user did not ask for a jar. */
++  if(config->anubis && !config->cookiefiles)
++    my_setopt_str(curl, CURLOPT_COOKIEFILE, "");
++
+   if(config->cookiejar)
+     MY_SETOPT_STR(curl, CURLOPT_COOKIEJAR, config->cookiejar);
+ 
+diff --git a/src/tool_anubis.c b/src/tool_anubis.c
+new file mode 100644
+index 0000000..3b80c7a
+--- /dev/null
++++ b/src/tool_anubis.c
+@@ -0,0 +1,539 @@
++/***************************************************************************
++ *                                  _   _ ____  _
++ *  Project                     ___| | | |  _ \| |
++ *                             / __| | | | |_) | |
++ *                            | (__| |_| |  _ <| |___
++ *                             \___|\___/|_| \_\_____|
++ *
++ * Copyright (C) Daniel Stenberg, <daniel@haxx.se>, et al.
++ *
++ * This software is licensed as described in the file COPYING, which
++ * you should have received as part of this distribution. The terms
++ * are also available at https://curl.se/docs/copyright.html.
++ *
++ * You may opt to use, copy, modify, merge, publish, distribute and/or sell
++ * copies of the Software, and permit persons to whom the Software is
++ * furnished to do so, under the terms of the COPYING file.
++ *
++ * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
++ * KIND, either express or implied.
++ *
++ * SPDX-License-Identifier: curl
++ *
++ ***************************************************************************/
++/*
++ * Anubis support for the curl tool.
++ *
++ * Anubis (https://anubis.techaro.lol) is a proof-of-work gate: it answers a
++ * request with an interstitial that carries a challenge, and the client has to
++ * find a nonce whose digest has some leading zero bits (the WebAssembly
++ * algorithms) or hex nibbles (the older `fast`/`slow` ones) before it is given
++ * a cookie and let through to the origin.
++ *
++ * This file does three things: it holds back the first bytes of a response to
++ * see whether they are that interstitial, it solves the challenge with the
++ * anubis-solver engine, and it fetches the answer URL that Anubis documents on
++ * the page itself, so the cookie lands in this handle's cookie jar and the
++ * transfer can simply be tried again. Everything else stays ordinary curl:
++ * the retry goes through the tool's own retry machinery, so -o, -i, -w, -X,
++ * cookies and multiplexing behave as they always did.
++ */
++#include "tool_setup.h"
++
++#include "tool_anubis.h"
++#include "tool_cb_wrt.h"
++#include "tool_cfgable.h"
++#include "tool_msgs.h"
++#include "tool_operate.h"
++
++#include <anubis-solver.h>
++
++#define ANUBIS_UA                                                       \
++  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like "    \
++  "Gecko) Chrome/141.0.0.0 Safari/537.36"
++
++#define ANUBIS_CHALLENGE_ID "anubis_challenge"
++#define ANUBIS_PREFIX_ID    "anubis_base_prefix"
++#define ANUBIS_PASS_PATH    "/.within.website/x/cmd/anubis/api/pass-challenge"
++
++/* memmem() is GNU-only, and this file is built on more than glibc. */
++static const char *anubis_memmem(const char *hay, size_t haylen,
++                                 const char *needle, size_t needlelen)
++{
++  size_t i;
++  if(!needlelen)
++    return hay;
++  if(needlelen > haylen)
++    return NULL;
++  for(i = 0; i <= haylen - needlelen; i++) {
++    if(hay[i] == needle[0] && !memcmp(hay + i, needle, needlelen))
++      return hay + i;
++  }
++  return NULL;
++}
++
++/* The content of <script id="ID" type="application/json">...</script>, or
++ * NULL. The caller frees. */
++static char *anubis_script(const char *html, size_t len, const char *id)
++{
++  char needle[64];
++  const char *p, *gt, *end, *start;
++  size_t n, begin, finish;
++
++  curl_msnprintf(needle, sizeof(needle), "id=\"%s\"", id);
++  p = anubis_memmem(html, len, needle, strlen(needle));
++  if(!p)
++    return NULL;
++  gt = memchr(p, '>', (size_t)((html + len) - p));
++  if(!gt)
++    return NULL;
++  start = gt + 1;
++  end = anubis_memmem(start, (size_t)((html + len) - start),
++                      "</script>", 9);
++  if(!end)
++    return NULL;
++
++  begin = (size_t)(start - html);
++  finish = (size_t)(end - html);
++  while(begin < finish && ISSPACE(html[begin]))
++    begin++;
++  while(finish > begin && ISSPACE(html[finish - 1]))
++    finish--;
++
++  n = finish - begin;
++  p = html + begin;
++  {
++    char *out = malloc(n + 1);
++    if(!out)
++      return NULL;
++    memcpy(out, p, n);
++    out[n] = 0;
++    return out;
++  }
++}
++
++/* "key":"value" out of that JSON. The caller frees. */
++static char *anubis_json_str(const char *json, const char *key)
++{
++  char needle[64];
++  const char *p, *q;
++  size_t n;
++  char *out;
++
++  curl_msnprintf(needle, sizeof(needle), "\"%s\":\"", key);
++  p = strstr(json, needle);
++  if(!p)
++    return NULL;
++  p += strlen(needle);
++  q = p;
++  while(*q && *q != '"') {
++    if(*q == '\\' && q[1])
++      q++;
++    q++;
++  }
++  n = (size_t)(q - p);
++  out = malloc(n + 1);
++  if(!out)
++    return NULL;
++  memcpy(out, p, n);
++  out[n] = 0;
++  return out;
++}
++
++/* "key":123 out of that JSON, or -1. */
++static long anubis_json_num(const char *json, const char *key)
++{
++  char needle[64];
++  const char *p;
++  curl_msnprintf(needle, sizeof(needle), "\"%s\":", key);
++  p = strstr(json, needle);
++  if(!p)
++    return -1;
++  return strtol(p + strlen(needle), NULL, 10);
++}
++
++/* Write out what we held back, so a page we cannot solve is shown exactly as
++ * plain curl would have shown it. */
++static void anubis_flush(struct per_transfer *per)
++{
++  struct anubis_state *a = &per->anubis;
++  if(a->len && a->buf)
++    (void)tool_write_cb_body(a->buf, 1, a->len, per);
++  a->len = 0;
++  a->challenge = FALSE;
++  a->sniffing = FALSE;
++}
++
++void anubis_begin(struct per_transfer *per)
++{
++  struct anubis_state *a = &per->anubis;
++  struct OperationConfig *config = per->config;
++
++  if(!config || !config->anubis) {
++    a->enabled = FALSE;
++    return;
++  }
++  a->enabled = TRUE;
++  /* a new attempt: sniff from the beginning, keep the attempt counter */
++  a->sniffing = TRUE;
++  a->challenge = FALSE;
++  a->len = 0;
++
++  /* A gate that only walls browsers is walling the User-Agent, so give it one
++   * unless the user asked for a specific one. -A always wins. */
++  if(!config->useragent)
++    (void)curl_easy_setopt(per->curl, CURLOPT_USERAGENT, ANUBIS_UA);
++}
++
++bool anubis_sniff(struct per_transfer *per, const char *buf, size_t len)
++{
++  struct anubis_state *a = &per->anubis;
++  size_t take;
++
++  if(!a->enabled)
++    return FALSE;
++  if(a->challenge)
++    return TRUE; /* drop the rest of the interstitial */
++  if(!a->sniffing)
++    return FALSE;
++
++  if(!a->buf) {
++    a->buf = malloc(ANUBIS_SNIFF_MAX);
++    if(!a->buf) {
++      a->sniffing = FALSE;
++      return FALSE;
++    }
++  }
++
++  take = (len <= ANUBIS_SNIFF_MAX - a->len) ? len : ANUBIS_SNIFF_MAX - a->len;
++  if(take) {
++    memcpy(a->buf + a->len, buf, take);
++    a->len += take;
++  }
++
++  if(anubis_memmem(a->buf, a->len, ANUBIS_CHALLENGE_ID,
++                   strlen(ANUBIS_CHALLENGE_ID))) {
++    /* It is the gate's page. Keep the JSON, drop the rest of the body. */
++    a->challenge = TRUE;
++    a->sniffing = FALSE;
++    return TRUE;
++  }
++
++  if((a->len >= ANUBIS_SNIFF_MAX) || (take < len)) {
++    /* too much for an interstitial: this is just a page, show it */
++    anubis_flush(per);
++    if(take < len)
++      (void)tool_write_cb_body((char *)buf + take, 1, len - take, per);
++    return TRUE;
++  }
++
++  return TRUE; /* still holding the first bytes back */
++}
++
++void anubis_flush_pending(struct per_transfer *per)
++{
++  if(per->anubis.enabled && per->anubis.sniffing && per->anubis.len)
++    anubis_flush(per);
++}
++
++bool anubis_pending(struct per_transfer *per)
++{
++  return per->anubis.enabled && per->anubis.challenge;
++}
++
++/* GET the answer URL and keep whatever cookies it sets. */
++static bool anubis_pass(struct per_transfer *per, const char *params)
++{
++  struct OperationConfig *config = per->config;
++  CURL *easy;
++  CURLcode result;
++  struct curl_slist *cookies = NULL;
++  struct curl_slist *node;
++  char *prefix = NULL;
++  char *url = NULL;
++  char origin_buf[512];
++  size_t urllen;
++  bool ok = FALSE;
++
++  /* Anubis serves the page from a base prefix when it is mounted under one,
++   * and tells the page that prefix in a script tag of its own. */
++  if(per->anubis.len) {
++    prefix = anubis_script(per->anubis.buf, per->anubis.len, ANUBIS_PREFIX_ID);
++    /* the prefix is a JSON string: "/anubis" (quotes included) */
++    if(prefix) {
++      size_t plen = strlen(prefix);
++      if(plen >= 2 && prefix[0] == '"' && prefix[plen - 1] == '"') {
++        memmove(prefix, prefix + 1, plen - 2);
++        prefix[plen - 2] = 0;
++      }
++    }
++  }
++
++  /* scheme://host[:port] out of the URL this transfer asked for: the answer
++   * URL Anubis documents is a path on the same origin, so a relative URL would
++   * be useless to curl. */
++  {
++    const char *p = strstr(per->url ? per->url : "", "://");
++    const char *slash;
++    size_t origin;
++    if(!p)
++      goto out;
++    slash = strchr(p + 3, '/');
++    origin = slash ? (size_t)(slash - per->url) : strlen(per->url);
++    if(!origin || origin >= 512)
++      goto out;
++    memcpy(origin_buf, per->url, origin);
++    origin_buf[origin] = 0;
++  }
++
++  urllen = strlen(origin_buf) + strlen(prefix ? prefix : "") +
++    strlen(ANUBIS_PASS_PATH) + strlen(params) + 8;
++  url = malloc(urllen);
++  if(!url)
++    goto out;
++  curl_msnprintf(url, urllen, "%s%s%s?%s", origin_buf, prefix ? prefix : "",
++                 ANUBIS_PASS_PATH, params);
++
++  easy = curl_easy_init();
++  if(!easy)
++    goto out;
++
++  (void)curl_easy_setopt(easy, CURLOPT_URL, url);
++  (void)curl_easy_setopt(easy, CURLOPT_COOKIEFILE, "");
++  (void)curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 0L);
++  (void)curl_easy_setopt(easy, CURLOPT_TIMEOUT, 60L);
++  (void)curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
++  /* the answer body is the redirect page, not something to keep */
++  (void)curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, NULL);
++  if(config->useragent)
++    (void)curl_easy_setopt(easy, CURLOPT_USERAGENT, config->useragent);
++  else
++    (void)curl_easy_setopt(easy, CURLOPT_USERAGENT, ANUBIS_UA);
++  if(config->insecure_ok) {
++    (void)curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 0L);
++    (void)curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 0L);
++  }
++  if(config->proxy)
++    (void)curl_easy_setopt(easy, CURLOPT_PROXY, config->proxy);
++  if(config->cacert)
++    (void)curl_easy_setopt(easy, CURLOPT_CAINFO, config->cacert);
++  if(config->capath)
++    (void)curl_easy_setopt(easy, CURLOPT_CAPATH, config->capath);
++
++  /* the verification cookie Anubis handed to the challenge page */
++  if(!curl_easy_getinfo(per->curl, CURLINFO_COOKIELIST, &cookies)) {
++    for(node = cookies; node; node = node->next)
++      (void)curl_easy_setopt(easy, CURLOPT_COOKIELIST, node->data);
++    curl_slist_free_all(cookies);
++    cookies = NULL;
++  }
++
++  result = curl_easy_perform(easy);
++  if(result == CURLE_OK) {
++    long status = 0;
++    (void)curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &status);
++    /* 200/204/302 all mean "answered"; the cookies are what we came for */
++    ok = (status >= 200 && status < 400);
++    if(!ok)
++      warnf("anubis: the answer was refused with HTTP %ld", status);
++  }
++  else
++    warnf("anubis: could not reach the answer URL: %s",
++          curl_easy_strerror(result));
++
++  if(ok) {
++    /* and the auth cookie it just set goes into the transfer's own jar, so
++     * the retry (and anything after it) carries it */
++    if(!curl_easy_getinfo(easy, CURLINFO_COOKIELIST, &cookies)) {
++      for(node = cookies; node; node = node->next)
++        (void)curl_easy_setopt(per->curl, CURLOPT_COOKIELIST, node->data);
++      curl_slist_free_all(cookies);
++    }
++  }
++
++  curl_easy_cleanup(easy);
++
++out:
++  free(prefix);
++  free(url);
++  return ok;
++}
++
++bool anubis_handle_challenge(struct per_transfer *per)
++{
++  struct anubis_state *a = &per->anubis;
++  struct OperationConfig *config = per->config;
++  char *payload = NULL;
++  char *algorithm = NULL;
++  char *random = NULL;
++  char *challenge_id = NULL;
++  char nonce[32];
++  char hex[65];
++  char elapsed[32];
++  char *redir = NULL;
++  long difficulty;
++  int rc;
++  double ms = 0.0;
++  bool armed = FALSE;
++
++  if(!a->challenge)
++    return FALSE;
++
++  if(!config || a->attempts >= config->anubis_max_retries) {
++    warnf("anubis: still challenged after %d attempt%s, showing the page",
++          a->attempts, a->attempts == 1 ? "" : "s");
++    anubis_flush(per);
++    return FALSE;
++  }
++
++  payload = anubis_script(a->buf, a->len, ANUBIS_CHALLENGE_ID);
++  if(!payload)
++    goto giveup;
++
++  algorithm = anubis_json_str(payload, "algorithm");
++  random = anubis_json_str(payload, "randomData");
++  challenge_id = anubis_json_str(payload, "id");
++  difficulty = anubis_json_num(payload, "difficulty");
++  if(!algorithm || !random || !challenge_id || difficulty < 0 ||
++     difficulty > 64)
++    goto giveup;
++
++  nonce[0] = hex[0] = elapsed[0] = 0;
++  redir = per->url;
++
++  if(!strcmp(algorithm, "metarefresh")) {
++    /* Not a proof of work at all: the gate wants the client to wait
++     * difficulty*800ms and then present the challenge value it was given.
++     * The page says "difficulty+1 seconds", and being a second late is free. */
++    int wait_ms = (int)((difficulty + 1) * 1000);
++    char *e_id = curl_easy_escape(NULL, challenge_id, 0);
++    char *e_challenge = curl_easy_escape(NULL, random, 0);
++    char *e_redir = curl_easy_escape(NULL, redir ? redir : "/", 0);
++    bool sent = FALSE;
++    if(e_id && e_challenge && e_redir) {
++      size_t need = strlen(e_id) + strlen(e_challenge) + strlen(e_redir) + 32;
++      char *params = malloc(need);
++      if(params) {
++        curl_msnprintf(params, need, "id=%s&challenge=%s&redir=%s",
++                       e_id, e_challenge, e_redir);
++        notef("anubis: waiting %d ms for the metarefresh gate", wait_ms);
++        curlx_wait_ms((unsigned int)wait_ms);
++        a->attempts++;
++        if(anubis_pass(per, params)) {
++          notef("anubis: the metarefresh gate let us through, retrying");
++          a->len = 0;
++          a->challenge = FALSE;
++          a->sniffing = TRUE;
++          armed = TRUE;
++          sent = TRUE;
++        }
++        free(params);
++      }
++    }
++    curl_free(e_id);
++    curl_free(e_challenge);
++    curl_free(e_redir);
++    if(!sent)
++      warnf("anubis: the metarefresh gate did not accept the answer");
++    if(sent)
++      goto out;
++    goto giveup;
++  }
++
++  if(!strcmp(algorithm, "fast") || !strcmp(algorithm, "slow")) {
++    uint64_t n = 0;
++    rc = anubis_solve_nibbles(random, (int)difficulty, 0, 0, 0.0,
++                              &n, hex, &ms);
++    curl_msnprintf(nonce, sizeof(nonce), "%llu", (unsigned long long)n);
++  }
++  else if(!strcmp(algorithm, "sha256")) {
++    uint32_t n = 0;
++    rc = anubis_solve_bits(random, (int)difficulty, 0, 0.0, &n, hex, &ms);
++    curl_msnprintf(nonce, sizeof(nonce), "%lu", (unsigned long)n);
++  }
++  else if(!strcmp(algorithm, "hashx")) {
++    uint32_t n = 0;
++    rc = anubis_solve_hashx(random, (int)difficulty, 0, 0.0, &n, hex, &ms);
++    curl_msnprintf(nonce, sizeof(nonce), "%lu", (unsigned long)n);
++  }
++  else if(!strcmp(algorithm, "argon2id")) {
++    uint32_t n = 0;
++    rc = anubis_solve_argon2id(random, (int)difficulty, 0, 0.0, &n, hex, &ms);
++    curl_msnprintf(nonce, sizeof(nonce), "%lu", (unsigned long)n);
++  }
++  else {
++    warnf("anubis: the %s challenge is not supported by this build",
++          algorithm);
++    goto giveup;
++  }
++
++  if(rc != ANUBIS_OK) {
++    warnf("anubis: could not solve the %s challenge at difficulty %ld (rc %d)",
++          algorithm, difficulty, rc);
++    goto giveup;
++  }
++
++  /* Anubis reports solve time as a metric; it wants a number, not a clock. */
++  curl_msnprintf(elapsed, sizeof(elapsed), "%d",
++                 ms > 0.0 ? (int)(ms + 0.5) : 0);
++  if(atoi(elapsed) <= 0)
++    curl_msnprintf(elapsed, sizeof(elapsed), "1");
++
++  {
++    char *e_id = curl_easy_escape(NULL, challenge_id, 0);
++    char *e_response = curl_easy_escape(NULL, hex, 0);
++    char *e_nonce = curl_easy_escape(NULL, nonce, 0);
++    char *e_redir = curl_easy_escape(NULL, redir ? redir : "/", 0);
++    char *e_elapsed = curl_easy_escape(NULL, elapsed, 0);
++    bool sent = FALSE;
++    if(e_id && e_response && e_nonce && e_redir && e_elapsed) {
++      size_t need = strlen(e_id) + strlen(e_response) + strlen(e_nonce) +
++        strlen(e_redir) + strlen(e_elapsed) + 64;
++      char *params = malloc(need);
++      if(params) {
++        curl_msnprintf(params, need,
++                       "id=%s&response=%s&nonce=%s&redir=%s&elapsedTime=%s",
++                       e_id, e_response, e_nonce, e_redir, e_elapsed);
++        a->attempts++;
++        if(anubis_pass(per, params)) {
++          notef("anubis: solved the %s challenge at difficulty %ld in %.1f ms "
++                "(nonce %s), retrying", algorithm, difficulty, ms, nonce);
++          a->len = 0;
++          a->challenge = FALSE;
++          a->sniffing = TRUE; /* the retry gets sniffed too */
++          armed = TRUE;
++          sent = TRUE;
++        }
++        free(params);
++      }
++    }
++    curl_free(e_id);
++    curl_free(e_response);
++    curl_free(e_nonce);
++    curl_free(e_redir);
++    curl_free(e_elapsed);
++    if(!sent) {
++      warnf("anubis: the challenge was solved but the answer was not accepted");
++      goto giveup;
++    }
++  }
++
++  goto out;
++
++giveup:
++  anubis_flush(per);
++
++out:
++  free(payload);
++  free(algorithm);
++  free(random);
++  free(challenge_id);
++  return armed;
++}
++
++void anubis_free(struct per_transfer *per)
++{
++  free(per->anubis.buf);
++  per->anubis.buf = NULL;
++  per->anubis.len = 0;
++}
+diff --git a/src/tool_anubis.h b/src/tool_anubis.h
+new file mode 100644
+index 0000000..30a7a78
+--- /dev/null
++++ b/src/tool_anubis.h
+@@ -0,0 +1,69 @@
++#ifndef HEADER_CURL_TOOL_ANUBIS_H
++#define HEADER_CURL_TOOL_ANUBIS_H
++/***************************************************************************
++ *                                  _   _ ____  _
++ *  Project                     ___| | | |  _ \| |
++ *                             / __| | | | |_) | |
++ *                            | (__| |_| |  _ <| |___
++ *                             \___|\___/|_| \_\_____|
++ *
++ * Copyright (C) Daniel Stenberg, <daniel@haxx.se>, et al.
++ *
++ * This software is licensed as described in the file COPYING, which
++ * you should have received as part of this distribution. The terms
++ * are also available at https://curl.se/docs/copyright.html.
++ *
++ * You may opt to use, copy, modify, merge, publish, distribute and/or sell
++ * copies of the Software, and permit persons to whom the Software is
++ * furnished to do so, under the terms of the COPYING file.
++ *
++ * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
++ * KIND, either express or implied.
++ *
++ * SPDX-License-Identifier: curl
++ *
++ ***************************************************************************/
++#include "tool_setup.h"
++
++struct per_transfer;
++
++/* How much of a response body is held back while we decide whether it is an
++ * Anubis challenge page. The challenge script sits in the first couple of
++ * kilobytes of every page Anubis serves; 16 KiB is generous, and a body that
++ * is not a challenge is flushed as soon as the window is filled. */
++#define ANUBIS_SNIFF_MAX (16 * 1024)
++
++struct anubis_state {
++  bool enabled;    /* --anubis in effect for this transfer */
++  bool sniffing;   /* still holding the first bytes back, undecided */
++  bool challenge;  /* the held-back bytes are a challenge page */
++  int attempts;    /* how many challenges already solved for this transfer */
++  size_t len;      /* bytes in buf */
++  char *buf;       /* the held-back prefix of the body, malloced */
++};
++
++/* Called before a transfer starts: arms the sniffer and, when the user did
++ * not choose a User-Agent, gives Anubis a browser one. */
++void anubis_begin(struct per_transfer *per);
++
++/* Called with each received body chunk. Returns TRUE when the chunk has been
++ * dealt with here (held back, or flushed as a non-challenge) and the caller
++ * must not write it; FALSE when the caller should write it normally. */
++bool anubis_sniff(struct per_transfer *per, const char *buf, size_t len);
++
++/* Write out a body that was held back and turned out not to be a challenge;
++ * needed at the end of a transfer shorter than the sniff window. */
++void anubis_flush_pending(struct per_transfer *per);
++
++/* TRUE when a challenge page is buffered and not yet answered. */
++bool anubis_pending(struct per_transfer *per);
++
++/* Solve the buffered challenge, collect the auth cookie and arm a retry.
++ * Returns TRUE when the transfer should be retried. When it returns FALSE the
++ * buffered page is written out as the response, the way plain curl would. */
++bool anubis_handle_challenge(struct per_transfer *per);
++
++/* Release anything held for this transfer. */
++void anubis_free(struct per_transfer *per);
++
++#endif /* HEADER_CURL_TOOL_ANUBIS_H */
+diff --git a/src/tool_cb_wrt.c b/src/tool_cb_wrt.c
+index 2a17df0..f18fad9 100644
+--- a/src/tool_cb_wrt.c
++++ b/src/tool_cb_wrt.c
+@@ -27,6 +27,7 @@
+ #include "tool_msgs.h"
+ #include "tool_cb_wrt.h"
+ #include "tool_operate.h"
++#include "tool_anubis.h"
+ 
+ #ifdef _WIN32
+ #define OPENMODE (_S_IREAD | _S_IWRITE)
+@@ -287,6 +288,20 @@ static size_t win_console(intptr_t fhnd, struct OutStruct *outs,
+  * callback for CURLOPT_WRITEFUNCTION
+  */
+ size_t tool_write_cb(char *buffer, size_t sz, size_t nmemb, void *userdata)
++{
++  struct per_transfer *per = userdata;
++
++  /* curl-anubis: hold the first bytes of a body back until we know whether
++   * they are the gate's challenge page. Anything that is not is written
++   * from here, unchanged. */
++  if(per && anubis_sniff(per, buffer, sz * nmemb))
++    return sz * nmemb;
++
++  return tool_write_cb_body(buffer, sz, nmemb, userdata);
++}
++
++size_t tool_write_cb_body(char *buffer, size_t sz, size_t nmemb,
++                          void *userdata)
+ {
+   size_t rc;
+   struct per_transfer *per = userdata;
+diff --git a/src/tool_cb_wrt.h b/src/tool_cb_wrt.h
+index c99bd7c..bb2c9f1 100644
+--- a/src/tool_cb_wrt.h
++++ b/src/tool_cb_wrt.h
+@@ -30,6 +30,13 @@
+  */
+ size_t tool_write_cb(char *buffer, size_t sz, size_t nmemb, void *userdata);
+ 
++/* the same write callback, past the Anubis body sniffer: writes bytes to
++ * wherever the output is going. Only curl-anubis calls this directly, to
++ * flush a body it held back while deciding, or because a challenge page it
++ * could not answer should be shown the way plain curl would show it. */
++size_t tool_write_cb_body(char *buffer, size_t sz, size_t nmemb,
++                          void *userdata);
++
+ /* create a local file for writing, return TRUE on success */
+ bool tool_create_output_file(struct OutStruct *outs,
+                              struct OperationConfig *config);
+diff --git a/src/tool_cfgable.c b/src/tool_cfgable.c
+index 26b44f8..a7b3d93 100644
+--- a/src/tool_cfgable.c
++++ b/src/tool_cfgable.c
+@@ -49,6 +49,8 @@ struct OperationConfig *config_alloc(void)
+   config->proto_redir_present = FALSE;
+   config->proto_default = NULL;
+   config->tcp_nodelay = TRUE; /* enabled by default */
++  config->anubis = TRUE; /* curl-anubis answers challenges by default */
++  config->anubis_max_retries = 3;
+   config->happy_eyeballs_timeout_ms = CURL_HET_DEFAULT;
+   config->http09_allowed = FALSE;
+   config->ftp_skip_ip = TRUE;
+diff --git a/src/tool_cfgable.h b/src/tool_cfgable.h
+index 7a587f6..6516e78 100644
+--- a/src/tool_cfgable.h
++++ b/src/tool_cfgable.h
+@@ -185,6 +185,7 @@ struct OperationConfig {
+   long req_retry;           /* number of retries */
+   uint32_t retry_delay_ms; /* delay between retries (in milliseconds), 0 means
+                               increase exponentially */
++  long anubis_max_retries; /* --anubis-max-retries */
+   long retry_maxtime_ms;    /* maximum time to keep retrying */
+ 
+   unsigned long mime_options; /* Mime option flags. */
+@@ -218,6 +219,7 @@ struct OperationConfig {
+   BIT(remote_name_all);   /* --remote-name-all */
+   BIT(remote_time);
+   BIT(cookiesession);       /* new session? */
++  BIT(anubis);              /* --anubis: answer Anubis challenges */
+   BIT(encoding);            /* Accept-Encoding please */
+   BIT(tr_encoding);         /* Transfer-Encoding please */
+   BIT(use_resume);
+diff --git a/src/tool_getparam.c b/src/tool_getparam.c
+index 8861507..97e8628 100644
+--- a/src/tool_getparam.c
++++ b/src/tool_getparam.c
+@@ -77,6 +77,8 @@ static const struct LongShort aliases[] = {
+   {"abstract-unix-socket",       ARG_FILE, ' ', C_ABSTRACT_UNIX_SOCKET},
+   {"alpn",                       ARG_BOOL|ARG_NO|ARG_TLS, ' ', C_ALPN},
+   {"alt-svc",                    ARG_STRG, ' ', C_ALT_SVC},
++  {"anubis",                     ARG_BOOL, ' ', C_ANUBIS},
++  {"anubis-max-retries",         ARG_STRG, ' ', C_ANUBIS_MAX_RETRIES},
+   {"anyauth",                    ARG_NONE, ' ', C_ANYAUTH},
+   {"append",                     ARG_BOOL, 'a', C_APPEND},
+   {"aws-sigv4",                  ARG_STRG, ' ', C_AWS_SIGV4},
+@@ -2014,6 +2016,9 @@ static ParameterError opt_bool(struct OperationConfig *config,
+   case C_PATH_AS_IS: /* --path-as-is */
+     config->path_as_is = toggle;
+     break;
++  case C_ANUBIS: /* --anubis */
++    config->anubis = toggle;
++    break;
+   case C_TFTP_NO_OPTIONS: /* --tftp-no-options */
+     config->tftp_no_options = toggle;
+     break;
+@@ -2558,6 +2563,11 @@ static ParameterError opt_string(struct OperationConfig *config,
+   case C_CREATE_FILE_MODE: /* --create-file-mode */
+     err = oct2nummax(&config->create_file_mode, nextarg, 0777);
+     break;
++  case C_ANUBIS_MAX_RETRIES: /* --anubis-max-retries */
++    err = str2num(&config->anubis_max_retries, nextarg);
++    if(!err && (config->anubis_max_retries < 0))
++      err = PARAM_BAD_NUMERIC;
++    break;
+   case C_MAX_REDIRS: /* --max-redirs */
+     /* specified max no of redirects (http(s)), this accepts -1 as a
+        special condition */
+diff --git a/src/tool_getparam.h b/src/tool_getparam.h
+index 92495a4..f17c3cf 100644
+--- a/src/tool_getparam.h
++++ b/src/tool_getparam.h
+@@ -281,6 +281,8 @@ typedef enum {
+   C_TEST_DUPHANDLE,
+   C_TEST_EVENT,
+   C_TFTP_BLKSIZE,
++  C_ANUBIS,
++  C_ANUBIS_MAX_RETRIES,
+   C_TFTP_NO_OPTIONS,
+   C_TIME_COND,
+   C_TLS_EARLYDATA,
+diff --git a/src/tool_operate.c b/src/tool_operate.c
+index dfebf89..136a250 100644
+--- a/src/tool_operate.c
++++ b/src/tool_operate.c
+@@ -234,6 +234,7 @@ static struct per_transfer *del_per_transfer(struct per_transfer *per)
+   else
+     transfersl = p;
+ 
++  anubis_free(per);
+   curlx_free(per->uploadfile);
+   curlx_free(per->outfile);
+   curlx_free(per->url);
+@@ -249,6 +250,8 @@ static CURLcode pre_transfer(struct per_transfer *per)
+   curlx_struct_stat fileinfo;
+   CURLcode result = CURLE_OK;
+ 
++  anubis_begin(per);
++
+   if(per->uploadfile && !stdin_upload(per->uploadfile)) {
+     /* VMS Note:
+      *
+@@ -774,6 +777,18 @@ static CURLcode post_per_transfer(struct per_transfer *per,
+     result = post_check_result(per, result);
+     result = post_output_handling(per, result);
+ 
++    /* curl-anubis: a body short enough that the sniff window never filled is
++     * still being held back. Nothing else has written it yet. */
++    anubis_flush_pending(per);
++
++    /* curl-anubis: the body was the gate's interstitial. Solve it, take the
++     * cookie and let the retry machinery run the transfer again. */
++    if(anubis_handle_challenge(per)) {
++      *retryp = TRUE;
++      *delay = 0;
++      return CURLE_OK;
++    }
++
+     /* if retry-max-time is non-zero, make sure we have not exceeded the
+        time */
+     if(per->retry_remaining &&
+diff --git a/src/tool_operate.h b/src/tool_operate.h
+index d5ee481..9bad0b0 100644
+--- a/src/tool_operate.h
++++ b/src/tool_operate.h
+@@ -28,6 +28,7 @@
+ #include "tool_cb_hdr.h"
+ #include "tool_cb_prg.h"
+ #include "tool_cfgable.h"
++#include "tool_anubis.h"
+ 
+ struct per_transfer {
+   char errorbuffer[CURL_ERROR_SIZE];
+@@ -53,6 +54,7 @@ struct per_transfer {
+   struct OutStruct heads;
+   struct OutStruct etag_save;
+   struct HdrCbData hdrcbdata;
++  struct anubis_state anubis;
+   long num_headers;
+   time_t startat; /* when doing parallel transfers, this is a retry transfer
+                      that has been set to sleep until this time before it

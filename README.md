@@ -258,6 +258,10 @@ make test-impersonate         # local TLS server: GREASE present/absent per prof
   one C file (every algorithm, the honeypot included), and
   `firefox-extension/`, which lets the browser solve with the native library over
   native messaging — **10x** the in-page wasm at difficulty 20.
+- **`curl-anubis`**: curl, with Anubis support. Same binary, same flags, and a
+  challenge page never reaches stdout — it solves the challenge and asks for the
+  page again. One extra request, and only when the response really was the gate.
+  See [`curl-anubis/`](curl-anubis/README.md).
 - **`libanubis_solver.so` is 22x lighter than Anubis's server and half the CPU**
   per request, measured from `/proc`.
 - **A readable site in [`web/`](web/)**: the beginner walkthrough, the six
@@ -388,6 +392,20 @@ verification, and each ships with tests that run against the real library:
 (cd bindings/java   && make test)                                # 15 checks
 (cd bindings/rust   && cargo test)                               # 10 tests
 (cd bindings/asm    && make run && make run-arm)                 # both arches
+```
+
+### curl-anubis: the client side
+
+`curl-anubis/` is a patch over the curl tool — a new `src/tool_anubis.c` and a
+dozen small edits — that builds a curl which answers Anubis challenges itself. It
+holds the first bytes of a response back until it knows whether they are the
+gate's interstitial, solves it with `libanubis_solver`, fetches the answer URL
+Anubis documents on the page, and re-runs the transfer through curl's own retry
+path, so `-o`, `-i`, `-w`, `-X`, `-d` and cookie jars keep working.
+
+```bash
+cd curl-anubis && ./build.sh     # needs ../curl as the curl source
+./test.sh                        # 17 checks against betterAnusbis
 ```
 
 ### betterAnusbis: the gate, in one C file
